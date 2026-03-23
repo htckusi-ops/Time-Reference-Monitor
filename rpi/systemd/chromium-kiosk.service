@@ -1,0 +1,25 @@
+[Unit]
+Description=Chromium Kiosk (LTC Clock Display)
+# Start after the backend is up and the network is online.
+# We do not use Requires= so a backend crash does not kill the display.
+After=time-reference-monitor.service network-online.target
+Wants=time-reference-monitor.service
+
+[Service]
+Type=simple
+User=pi
+# Run on VT7 so the console login on VT1 remains accessible via Ctrl+Alt+F1
+TTYPath=/dev/tty7
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+
+# xinit starts X on display :0 on VT7, then runs kiosk.sh inside that X session.
+# -nocursor removes the X root cursor (unclutter handles per-window hiding).
+ExecStart=/usr/bin/xinit /opt/time-reference-monitor/rpi/scripts/kiosk.sh -- :0 vt7 -nocursor
+
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
