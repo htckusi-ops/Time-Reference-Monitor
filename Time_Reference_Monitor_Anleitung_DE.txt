@@ -1,0 +1,192 @@
+Time Reference Monitor – Studio Bundeshaus
+Bedienungsanleitung (DE)
+Stand: 2026-01-12
+
+1. Zweck / Überblick
+-------------------
+Der "Time Reference Monitor – Studio Bundeshaus" ist ein reines Monitoring‑Tool für Zeitreferenzen in IP‑Netzwerken
+und optional über LTC (Linear Timecode). Er diszipliniert die Systemzeit nicht, sondern zeigt und bewertet:
+
+- PTP (IEEE 1588 / linuxptp): Offset, Delay, Port-State, GM-Identity, Validität, Zeitdarstellung (nur wenn gültig)
+- NTP (chrony): Synchronisationsstatus (tracking), Stratum/RefID, Statusänderungen
+- Optional LTC: Zeitcode (HH:MM:SS:FF), Präsenz/Verlust, Decode‑Fehler, Delta zu PTP
+- Rolling Error Summary: rollierende Ereignis-/Fehlerzähler in einem definierten Zeitfenster
+- Event-Liste: letzte Ereignisse (INFO/WARN/ALARM) mit Timestamp
+
+Wichtig:
+- Wenn PTP nicht verfügbar/ungültig ist, wird KEINE PTP-Zeit angezeigt. Dadurch fällt PTP‑Ausfall sofort auf.
+- Beim Pausieren der UI (PAUSE) “friert” die UI‑Anzeige ein (keine lokale Fortschreibung), bis wieder RESUME gewählt wird.
+- NTP wird im Hintergrund zyklisch via "chronyc tracking" ausgelesen (kein direkter Remote‑Poll).
+
+2. Voraussetzungen
+------------------
+Allgemein (Raspberry Pi / Debian / Ubuntu):
+- Python 3.10+ (bei dir: Python 3.13)
+- Abhängigkeiten aus requirements.txt (insb. Flask)
+
+PTP (real):
+- linuxptp installiert: ptp4l, pmc
+- PTP Netzwerk ist auf dem gewählten Interface verfügbar
+- Empfohlen: ptp4l separat starten (Monitoring-only Setup). Beispiel:
+    sudo ptp4l -i eth0 -m -q
+
+NTP:
+- chrony installiert und aktiv
+- "chronyc tracking" muss lokal funktionieren
+
+LTC (optional):
+- Ein Decoder-Tool, das fortlaufend Zeilen ausgibt, aus denen HH:MM:SS:FF geparst werden kann.
+  Wenn du ein anderes Tool verwendest, setze --ltc-cmd entsprechend.
+
+3. Start / Aufruf
+-----------------
+Du startest den Monitor aus dem Projektverzeichnis (v01), z.B.:
+
+    cd ~/ptp-monitor/v01
+    python3 run.py [OPTIONEN...]
+
+Web:
+- UI:  http://<host>:<port>/
+- API: http://<host>:<port>/api/status
+
+4. Web-UI: Bedienung und Anzeigen
+---------------------------------
+A) Reference Time
+- PTP: Nur sichtbar, wenn PTP valid ist. Bei Ausfall erscheint "NO PTP SYNC" (o.ä.).
+- NTP: Anzeige plus NTP‑Statuszeile (aus chrony)
+- LTC: Statuszeile (wenn aktiviert) plus Delta zu PTP
+- Delta:
+  - Δ(NTP-PTP) in Millisekunden
+  - Δ(LTC-PTP) in Millisekunden (wenn LTC aktiv und PTP valid)
+
+B) Status / Meta
+- State: OK / WARN / ALARM
+  - ALARM typischerweise: PTP invalid oder PTP stale (zu alte Daten)
+  - WARN typischerweise: NTP unsynced/unknown, LTC absent (wenn aktiviert), GM-Wechsel, Flaps
+  - OK: PTP valid und nicht stale, NTP synced (und ggf. LTC present wenn aktiviert)
+
+C) Rolling Error Summary + Events
+- Rolling‑Zähler in einem Zeitfenster (z.B. 3600s) + Totals
+- Event-Liste: Begrenzte Anzahl Events, die im UI angezeigt werden (intern ebenfalls begrenzt, siehe DB/Retention)
+
+5. Datenbank (Events) / Retention
+---------------------------------
+Für Dauerbetrieb:
+- Begrenze die DB auf z.B. 5000 Events (Retention), damit die Datei nicht unendlich wächst.
+- UI/Memory begrenzt Events zusätzlich (z.B. deque maxlen).
+
+6. CLI-Optionen (vollständig)
+-----------------------------
+Grundparameter
+- --source mock|real
+- --iface IFACE
+- --domain DOMAIN
+- --poll SECONDS
+
+HTTP / Web
+- --http
+- --http-host HOST
+- --http-port PORT
+
+UI-Refresh / API-Poll
+- --ui-refresh-ms MS
+- --ui-api-poll-ms MS
+- --stale-threshold-ms MS
+
+Fenster / Summaries
+- --gm-window-s SECONDS
+- --error-window-s SECONDS
+- --startup-grace-s SECONDS (falls vorhanden)
+
+Tracing / Debug
+- --trace
+
+NTP
+- --ntp-refresh-s SECONDS
+
+LTC (optional)
+- --ltc
+- --ltc-device ALSADEV
+- --ltc-fps FPS
+- --ltc-cmd CMD
+- --ltc-refresh-s SECONDS
+
+Mock-Simulation (nur bei --source mock)
+- --mock-jitter-ns N
+- --mock-wander-ns N
+- --mock-wander-period-s S
+- --mock-drift-ppb N
+- --mock-step-every-s S
+- --mock-step-ns N
+- --mock-dropout-every-s S
+- --mock-dropout-duration-s S
+- --mock-gm-flap-every-s S
+
+7. Beispiele (alle mit poll=0.25)
+---------------------------------
+A) Mock: UI-Test mit Jitter/Wander/Steps/Dropout/GM-Flaps
+
+    python3 run.py \
+      --source mock \
+      --http --http-host 0.0.0.0 --http-port 8088 \
+      --poll 0.25 \
+      --ui-refresh-ms 20 \
+      --ui-api-poll-ms 250 \
+      --stale-threshold-ms 2000 \
+      --error-window-s 3600 \
+      --mock-jitter-ns 80000 \
+      --mock-wander-ns 200000 \
+      --mock-wander-period-s 12 \
+      --mock-drift-ppb 40 \
+      --mock-step-every-s 45 \
+      --mock-step-ns -3000000 \
+      --mock-dropout-every-s 30 \
+      --mock-dropout-duration-s 4 \
+      --mock-gm-flap-every-s 20
+
+B) Real: PTP Monitoring (ptp4l separat starten)
+
+    sudo ptp4l -i eth0 -m -q
+    python3 run.py \
+      --source real \
+      --iface eth0 \
+      --domain 0 \
+      --http --http-host 0.0.0.0 --http-port 8088 \
+      --poll 0.25 \
+      --ui-refresh-ms 20 \
+      --ui-api-poll-ms 250 \
+      --stale-threshold-ms 2000 \
+      --error-window-s 3600
+
+C) Real + LTC
+
+    sudo ptp4l -i eth0 -m -q
+    python3 run.py \
+      --source real \
+      --iface eth0 \
+      --domain 0 \
+      --http --http-host 0.0.0.0 --http-port 8088 \
+      --poll 0.25 \
+      --ui-refresh-ms 20 \
+      --ui-api-poll-ms 250 \
+      --stale-threshold-ms 2000 \
+      --error-window-s 3600 \
+      --ltc \
+      --ltc-device hw:1,0 \
+      --ltc-fps 25
+
+8. Dokumentation im Web-UI (neues Fenster)
+------------------------------------------
+A) Dateien ablegen (Beispiel):
+- docs/Time_Reference_Monitor_Anleitung_DE.txt
+- docs/Time_Reference_Monitor_API_Referenz_DE.txt
+
+B) Webroute hinzufügen (Flask):
+- GET /docs/manual  -> text/plain
+- GET /docs/api     -> text/plain
+
+C) UI-Link (öffnet neues Fenster/Tab):
+- <a href="/docs/manual" target="_blank">Manual</a>
+- <a href="/docs/api" target="_blank">API</a>
+
+Programmed by markus.gerber@srgssr.ch

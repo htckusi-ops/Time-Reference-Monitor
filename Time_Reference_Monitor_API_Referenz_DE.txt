@@ -1,0 +1,61 @@
+Time Reference Monitor – Studio Bundeshaus
+API-Referenz (DE)
+Stand: 2026-01-12
+
+Base URL
+--------
+- UI:         GET /
+- Status API:  GET /api/status
+
+1) GET /api/status
+------------------
+Beschreibung:
+Liefert den aktuellen Snapshot der Monitoring-Daten als JSON. Die UI pollt diesen Endpunkt zyklisch
+(--ui-api-poll-ms). Die PTP/NTP/LTC Threads aktualisieren den Status im Hintergrund.
+
+Antwort (JSON)
+--------------
+Top-Level Keys:
+- meta
+- status   (PTPStatus)
+- ntp      (NTPStatus)
+- ltc      (LTCStatus)
+- events   (Array<Event>)
+
+meta (Auszug):
+- ts_utc, iface, domain, source, poll_s
+- stale_threshold_ms, trace, display_decimals
+- gm_window_s, error_window_s
+- summaries (Totals)
+- summaries_rolling (Rolling in Window)
+
+PTPStatus (status):
+- ptp_valid, gm_present, port_state, ptp_versions, gm_identity
+- offset_ns, mean_path_delay_ns
+- ptp_time_utc_iso (nur wenn ptp_valid)
+- poll_age_ms
+- no_ptp_since_utc, last_ok_utc
+
+NTPStatus (ntp):
+- status ("synced"|"unsynced"|"unknown")
+- stratum, ref
+- last_update_utc, last_update_age_s
+- raw (optional, trace)
+
+LTCStatus (ltc):
+- enabled, device, fps
+- present, timecode
+- last_update_utc, last_update_age_s
+- no_ltc_since_utc
+- decode_errors_total, decode_errors_rolling
+- raw (optional, trace)
+
+Event (events[]):
+- ts_utc, severity ("INFO"|"WARN"|"ALARM"), type, message
+
+Empfohlene Doku-Routen:
+-----------------------
+- GET /docs/manual -> text/plain (Bedienungsanleitung)
+- GET /docs/api    -> text/plain (API-Referenz)
+
+Programmed by markus.gerber@srgssr.ch
