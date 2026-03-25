@@ -1,0 +1,47 @@
+[Unit]
+Description=Time Reference Monitor (PTP/NTP/LTC)
+After=network-online.target chrony.service
+Wants=network-online.target
+# Uncomment if ptp4l runs as a systemd service:
+# After=network-online.target chrony.service ptp4l.service
+# BindsTo=ptp4l.service
+
+[Service]
+Type=simple
+User=pi
+Group=audio
+WorkingDirectory=/opt/time-reference-monitor
+
+# --- Core: PTP polling via pmc, NTP via chronyc ---
+# --source real  = live pmc queries (requires ptp4l running)
+# --iface        = network interface with PTP (e.g. eth0)
+# --domain       = PTP domain number (default 0)
+# --poll         = polling interval in seconds
+ExecStart=/opt/time-reference-monitor/venv/bin/python3 run.py \
+    --source real \
+    --iface eth0 \
+    --domain 0 \
+    --poll 0.25 \
+    --http \
+    --http-host 0.0.0.0 \
+    --http-port 8088 \
+    --ui-refresh-ms 20 \
+    --ui-api-poll-ms 250 \
+    --ltc \
+    --ltc-device dsnoop_ltc \
+    --ltc-fps 25 \
+    --ltc-cmd "/usr/local/bin/alsaltc -d dsnoop_ltc -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE" \
+    --ltc-dropout-timeout-ms 800 \
+    --ltc-jump-tolerance-frames 2 \
+    --db /var/lib/time-reference-monitor/events.sqlite
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Allow access to pmc socket
+SupplementaryGroups=audio video
+
+[Install]
+WantedBy=multi-user.target
