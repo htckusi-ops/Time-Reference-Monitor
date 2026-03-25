@@ -7,7 +7,7 @@
 set -euo pipefail
 
 BACKEND_URL="http://localhost:8088"
-KIOSK_URL="${BACKEND_URL}/ltc-clock"
+KIOSK_URL="${BACKEND_URL}/"
 WAIT_TIMEOUT=60   # seconds to wait for backend before opening anyway
 
 # ── Display tweaks ────────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ echo "[kiosk] Backend ready – starting Chromium."
 # --overscroll-history-navigation=0 : disable swipe-back/forward
 # --disable-restore-session-state   : never show "restore pages?" dialog
 # --temp-profile       : do not persist browsing state between sessions
-exec /usr/bin/chromium-browser \
+exec /usr/bin/chromium \
     --kiosk \
     --noerrdialogs \
     --disable-infobars \
