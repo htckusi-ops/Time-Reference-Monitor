@@ -18,7 +18,9 @@ StandardInput=tty
 # -nocursor removes the X root cursor (unclutter handles per-window hiding).
 ExecStart=/usr/bin/xinit /opt/time-reference-monitor/rpi/scripts/kiosk.sh -- :0 vt7 -nocursor
 
-Restart=on-failure
+# always restart: catches clean exits (e.g. Chromium closed via JS confirm dialog)
+# as well as crashes, so the kiosk is always recovered automatically.
+Restart=always
 RestartSec=10
 
 [Install]

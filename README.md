@@ -144,6 +144,7 @@ sudo reboot
 |--------|-------------|
 | `time-reference-monitor.service` | Python-Backend (PTP/NTP/LTC), Port 8088 |
 | `chromium-kiosk.service` | X11 auf VT7 + Chromium im Kiosk-Modus |
+| `ssh.service` | SSH-Server (wird durch setup.sh aktiviert) |
 
 ```bash
 # Logs beobachten
@@ -153,6 +154,44 @@ journalctl -fu chromium-kiosk
 # Dienste manuell starten (ohne Reboot)
 sudo systemctl start time-reference-monitor
 sudo systemctl start chromium-kiosk
+```
+
+### SSH-Zugang
+
+`setup.sh` installiert und aktiviert `openssh-server` automatisch. Nach dem ersten Boot ist der Pi per SSH erreichbar:
+
+```bash
+ssh ptp@<ip-adresse>
+```
+
+Da der `ptp`-User kein Passwort hat, muss die Authentifizierung über SSH-Key erfolgen. SSH-Key vor dem ersten Reboot hinterlegen:
+
+```bash
+# Auf dem Pi (als root, nach setup.sh):
+mkdir -p /home/ptp/.ssh
+echo "ssh-ed25519 AAAA... dein-public-key" >> /home/ptp/.ssh/authorized_keys
+chown -R ptp:ptp /home/ptp/.ssh
+chmod 700 /home/ptp/.ssh
+chmod 600 /home/ptp/.ssh/authorized_keys
+```
+
+### Konsolenzugang / Kiosk beenden
+
+Der Chromium-Kiosk läuft auf **Virtual Terminal 7** (VT7). Folgende Wege führen zurück auf eine Textkonsole:
+
+| Methode | Aktion |
+|---------|--------|
+| Tastatur am Gerät | `Ctrl+Alt+F1` → VT1 (autologin als `ptp`) |
+| Tastatur am Gerät | `Ctrl+Alt+F2` → VT2 (Login-Prompt) |
+| Zurück zum Kiosk | `Ctrl+Alt+F7` |
+| SSH | `ssh ptp@<ip>` von einem anderen Rechner |
+| Kiosk-Service stoppen | `sudo systemctl stop chromium-kiosk` (via SSH oder Konsole) |
+
+`Ctrl+Alt+Fn` wird vom Linux-Kernel verarbeitet — Chromium kann diese Tastenkombination nicht blockieren, auch nicht im `--kiosk`-Modus.
+
+**Browser-Absturz:** `chromium-kiosk.service` ist mit `Restart=always` konfiguriert und startet den Kiosk nach jedem Absturz oder sauberem Beenden automatisch neu (nach 10 s). Um den Kiosk dauerhaft zu beenden:
+```bash
+sudo systemctl stop chromium-kiosk
 ```
 
 ---
