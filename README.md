@@ -254,4 +254,4 @@ Vollständige Beschreibung: `Time_Reference_Monitor_Anleitung_DE.txt`
 
 ---
 
-*Programmed by markus.gerber@srgssr.ch*
+*Markus Gerber &lt;dev@npn.ch&gt;*

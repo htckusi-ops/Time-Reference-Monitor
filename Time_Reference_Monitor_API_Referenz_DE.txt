@@ -58,4 +58,4 @@ Empfohlene Doku-Routen:
 - GET /docs/manual -> text/plain (Bedienungsanleitung)
 - GET /docs/api    -> text/plain (API-Referenz)
 
-Programmed by markus.gerber@srgssr.ch
+Markus Gerber <dev@npn.ch>

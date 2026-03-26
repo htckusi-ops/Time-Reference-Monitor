@@ -1,6 +1,6 @@
 APP_TITLE = "Time Reference Monitor – Studio Bundeshaus"
 APP_SUBTITLE = "PTP / NTP / optional LTC · Monitoring only"
-FOOTER_TEXT = "Monitoring only – no time discipline is applied. • Programmed by markus.gerber@srgssr.ch"
+FOOTER_TEXT = "Monitoring only – no time discipline is applied. • Markus Gerber <dev@npn.ch>"
 
 # bounded in-memory event list (UI/API)
 EVENTS_MAXLEN = 500
