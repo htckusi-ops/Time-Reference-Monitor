@@ -44,6 +44,8 @@ def ui_html() -> str:
     .btn{{cursor:pointer; user-select:none; border:1px solid var(--line); background:rgba(255,255,255,.03); color:var(--text);
          border-radius:12px; padding:8px 10px; font-family:var(--mono); font-size:12px;}}
     .btn:hover{{background:rgba(255,255,255,.06);}}
+    .btn-sys{{border-color:rgba(255,80,80,.4); color:rgba(255,130,130,.9);}}
+    .btn-sys:hover{{background:rgba(255,60,60,.12);}}
     .split{{display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;}}
     .table{{width:100%; border-collapse:collapse; font-size:12px;}}
     .table th, .table td{{padding:8px 10px; border-bottom:1px solid rgba(38,50,71,.7); vertical-align:top;}}
@@ -113,6 +115,8 @@ def ui_html() -> str:
           <div class="btn" id="btnPause">PAUSE</div>
           <a class="btn" href="/ltc-clock" target="_blank" rel="noopener">LTC Clock…</a>
           <a class="btn" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">LTC Spectrum…</a>
+          <div class="btn btn-sys" id="btnReboot">REBOOT</div>
+          <div class="btn btn-sys" id="btnShutdown">SHUTDOWN</div>
         </div>
       </div>
 
@@ -564,6 +568,16 @@ function renderLedMeter(ledRms, ledPeak){{
     try {{
       await fetch(paused ? '/api/pause' : '/api/resume', {{method:'POST'}});
     }} catch(e) {{}}
+  }});
+
+  els('btnReboot').addEventListener('click', async () => {{
+    if (!confirm('System jetzt neu starten?')) return;
+    try {{ await fetch('/api/system/reboot', {{method:'POST'}}); }} catch(e) {{}}
+  }});
+
+  els('btnShutdown').addEventListener('click', async () => {{
+    if (!confirm('System jetzt herunterfahren?')) return;
+    try {{ await fetch('/api/system/shutdown', {{method:'POST'}}); }} catch(e) {{}}
   }});
 
   const params = new URLSearchParams(window.location.search);

@@ -157,6 +157,25 @@ sudo systemctl start chromium-kiosk
 
 ---
 
+### Software-Update
+
+```bash
+sudo bash rpi/update.sh
+```
+
+Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
+
+1. `git pull` im Repository
+2. Rsync der Applikationsdateien nach `/opt/time-reference-monitor/`
+3. Python-Abhängigkeiten aktualisieren (`pip install -r requirements.txt`)
+4. `alsaltc` neu kompilieren — **nur wenn der C-Source neuer als das installierte Binary ist**
+5. Systemd-Service-Dateien aktualisieren + `daemon-reload`
+6. `time-reference-monitor` neu starten
+
+Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sobald der Backend-Dienst wieder antwortet.
+
+---
+
 ## Web-UI und API
 
 | URL | Inhalt |
@@ -167,6 +186,14 @@ sudo systemctl start chromium-kiosk
 | `http://<host>:8088/api/status` | JSON-Snapshot aller Status-Werte |
 | `http://<host>:8088/api/ltc/level` | Audio-Pegel (RMS/Peak in dBFS) |
 | `http://<host>:8088/api/events` | Event-Liste |
+| `POST /api/system/reboot` | System neu starten (Kiosk-Funktion) |
+| `POST /api/system/shutdown` | System herunterfahren (Kiosk-Funktion) |
+
+### Reboot / Shutdown im Kiosk
+
+Im Haupt-Dashboard sind zwei Buttons **REBOOT** und **SHUTDOWN** vorhanden (rot hervorgehoben). Beide zeigen einen Browser-Bestätigungsdialog bevor der Befehl ausgeführt wird.
+
+Voraussetzung: Die sudoers-Regel aus `setup.sh` muss installiert sein (`/etc/sudoers.d/time-reference-monitor`), damit der `ptp`-User `sudo /sbin/reboot` und `sudo /sbin/poweroff` ohne Passwort ausführen darf.
 
 ### Beispiel `/api/status`
 
