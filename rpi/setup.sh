@@ -21,7 +21,7 @@
 set -euo pipefail
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-APP_USER="${APP_USER:-pi}"
+APP_USER="${APP_USER:-ptp}"
 INSTALL_DIR="/opt/time-reference-monitor"
 DATA_DIR="/var/lib/time-reference-monitor"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,6 +33,20 @@ error() { echo -e "\e[31m[setup]\e[0m  $*" >&2; exit 1; }
 
 require_root() {
     [ "$(id -u)" -eq 0 ] || error "Please run as root: sudo bash $0"
+}
+
+# ── 0. Create application user ────────────────────────────────────────────────
+create_user() {
+    if id "$APP_USER" &>/dev/null; then
+        info "User ${APP_USER} already exists – skipping."
+    else
+        info "Creating user ${APP_USER}…"
+        # Regular user (not --system) so that X11 / xinit works.
+        # No password is set; login is only via sudo or the kiosk session.
+        useradd --create-home --shell /bin/bash --groups audio,video "$APP_USER"
+        passwd -l "$APP_USER"   # lock password (no direct login)
+        info "User ${APP_USER} created (password locked)."
+    fi
 }
 
 # ── 1. System packages ────────────────────────────────────────────────────────
@@ -149,6 +163,7 @@ info "Data dir    : ${DATA_DIR}"
 info "User        : ${APP_USER}"
 echo
 
+create_user
 install_packages
 build_alsaltc
 install_app

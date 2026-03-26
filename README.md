@@ -96,17 +96,33 @@ python3 run.py \
 
 Für den stabilen Gerätebetrieb: Raspberry Pi OS nativ, systemd-Dienste, Chromium-Kiosk beim Booten.
 
+### Betriebsuser `ptp`
+
+Alle Dienste laufen unter dem dedizierten User **`ptp`**. Dieser User existiert auf einem frischen Raspberry Pi OS nicht — das Setup-Script legt ihn automatisch an:
+
+- Home-Verzeichnis: `/home/ptp` (benötigt von X11/xinit)
+- Gruppen: `audio`, `video`
+- Passwort gesperrt (kein direkter Login)
+
+Der Standardname `ptp` kann überschrieben werden:
+```bash
+sudo APP_USER=anderer-user bash rpi/setup.sh
+```
+
+### Installation
+
 ```bash
 # Einmalig als root ausführen:
 sudo bash rpi/setup.sh
 ```
 
 Das Skript:
-1. Installiert alle System-Pakete (`chromium`, `xorg`, `openbox`, `libltc-dev`, …)
-2. Kompiliert `alsaltc` aus den Quellen für ARM
-3. Legt `/opt/time-reference-monitor/` mit Python-venv an
-4. Installiert `/etc/asound.conf` (dsnoop-Config)
-5. Aktiviert systemd-Dienste
+1. Legt den User `ptp` an (falls nicht vorhanden)
+2. Installiert alle System-Pakete (`chromium`, `xorg`, `openbox`, `libltc-dev`, …)
+3. Kompiliert `alsaltc` aus den Quellen für ARM
+4. Legt `/opt/time-reference-monitor/` mit Python-venv an
+5. Installiert `/etc/asound.conf` (dsnoop-Config)
+6. Aktiviert systemd-Dienste
 
 Nach dem Setup:
 
