@@ -44,16 +44,10 @@ install_packages() {
     apt-get install -y \
         python3 python3-venv python3-pip \
         linuxptp chrony \
-        alsa-utils libltc-dev \
+        alsa-utils libasound2-dev libltc-dev \
         gcc make pkg-config \
         xorg openbox unclutter curl \
-        chromium-browser
-
-    # chromium-browser is the RPi OS package name.
-    # On some Debian/Ubuntu it may be named "chromium" – try fallback:
-    if ! command -v chromium-browser &>/dev/null; then
-        apt-get install -y chromium || warn "Could not install chromium – install manually."
-    fi
+        chromium
 }
 
 # ── 2. Compile alsaltc ────────────────────────────────────────────────────────

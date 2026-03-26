@@ -189,4 +189,4 @@ C) UI-Link (öffnet neues Fenster/Tab):
 - <a href="/docs/manual" target="_blank">Manual</a>
 - <a href="/docs/api" target="_blank">API</a>
 
-Programmed by markus.gerber@srgssr.ch
+Markus Gerber <dev@npn.ch>
