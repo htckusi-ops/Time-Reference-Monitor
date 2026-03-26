@@ -37,6 +37,7 @@ sudo -u "$APP_USER" git -C "$REPO_DIR" pull --ff-only \
 # ── 2. rsync application files ────────────────────────────────────────────────
 info "Syncing files to ${INSTALL_DIR}…"
 rsync -a --delete \
+    --exclude='venv/' \
     --exclude='rpi/' \
     --exclude='.git/' \
     --exclude='__pycache__/' \
