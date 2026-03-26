@@ -61,7 +61,12 @@ install_packages() {
         alsa-utils libasound2-dev libltc-dev \
         gcc make pkg-config \
         xorg openbox unclutter curl \
-        chromium
+        chromium \
+        openssh-server
+
+    info "Enabling SSH server…"
+    systemctl enable ssh
+    systemctl start ssh
 }
 
 # ── 2. Compile alsaltc ────────────────────────────────────────────────────────
