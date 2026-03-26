@@ -13,6 +13,8 @@ import io
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict
 
+import subprocess
+
 from flask import Flask, Response, jsonify, request, send_file
 import os
 from flask import send_from_directory
@@ -136,6 +138,20 @@ def create_app(
             return jsonify({"ok": False, "message": "No image available yet."}), 404
 
         return send_file(io.BytesIO(b), mimetype="image/png")
+
+    # ---------------------------
+    # System control (kiosk)
+    # ---------------------------
+
+    @app.post("/api/system/reboot")
+    def api_system_reboot() -> Response:
+        subprocess.Popen(["sudo", "/sbin/reboot"])
+        return jsonify({"ok": True, "ts_utc": _utc_iso_ms()})
+
+    @app.post("/api/system/shutdown")
+    def api_system_shutdown() -> Response:
+        subprocess.Popen(["sudo", "/sbin/poweroff"])
+        return jsonify({"ok": True, "ts_utc": _utc_iso_ms()})
 
     from config import LTC_ALSA_DEVICE
     from ltc_level import read_ltc_level

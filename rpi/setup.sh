@@ -138,7 +138,16 @@ install_services() {
     info "  sudo systemctl start chromium-kiosk"
 }
 
-# ── 6. Console autologin for kiosk ────────────────────────────────────────────
+# ── 6. sudoers: allow ptp user to reboot/poweroff ────────────────────────────
+configure_sudoers() {
+    local rule_file="/etc/sudoers.d/time-reference-monitor"
+    info "Installing sudoers rule for ${APP_USER} (reboot/poweroff)…"
+    echo "${APP_USER} ALL=(ALL) NOPASSWD: /sbin/reboot, /sbin/poweroff" > "$rule_file"
+    chmod 440 "$rule_file"
+    info "Sudoers rule installed: ${rule_file}"
+}
+
+# ── 7. Console autologin for kiosk ────────────────────────────────────────────
 # The chromium-kiosk service runs X on VT7 via xinit.
 # No desktop autologin is required – systemd starts X directly.
 # However, if you want a fallback text login on VT1, ensure it is configured:
@@ -169,6 +178,7 @@ build_alsaltc
 install_app
 install_alsa
 install_services
+configure_sudoers
 configure_autologin
 
 echo
