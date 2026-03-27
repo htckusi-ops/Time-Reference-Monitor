@@ -252,6 +252,18 @@ DISPLAY=:0 xrandr --query
 - RPi 5 / neuere Kernel: `HDMI-A-1` / `HDMI-A-2`
 - Das Script probiert alle Varianten automatisch durch
 
+**RPi Firmware-Konfiguration (wird von `setup.sh` automatisch gesetzt):**
+
+`setup.sh` trägt folgende Zeilen in `/boot/firmware/config.txt` ein:
+
+```ini
+hdmi_force_hotplug=1   # HDMI aktiv halten, auch wenn SDI-Konverter kein EDID sendet
+hdmi_group=1           # CEA (Broadcast), nicht DMT (PC-Monitor)
+hdmi_mode=31           # 1080p50
+```
+
+`hdmi_force_hotplug=1` ist besonders wichtig: Viele HDMI→SDI-Konverter schicken kein EDID zurück — ohne diesen Parameter gibt der RPi gar kein Bildsignal aus. Die drei Parameter sind idempotent (werden nicht doppelt eingetragen).
+
 ---
 
 ### Software-Update
