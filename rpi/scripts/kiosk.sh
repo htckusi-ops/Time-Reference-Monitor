@@ -21,6 +21,36 @@ if command -v unclutter &>/dev/null; then
     unclutter -idle 1 -root &
 fi
 
+# ── Output-Auflösung: 1920×1080 @ 50 Hz (1080p50, SMPTE 274M) ────────────────
+# Ziel: HDMI-Ausgabe als 1080p50 für HDMI→SDI-Konverter.
+# Modeline entspricht dem Broadcast-Standard (Pixelclock 148.5 MHz).
+#
+# Den korrekten Output-Namen ermitteln: xrandr --query
+# Üblich auf RPi: HDMI-1 (RPi 4) oder HDMI-A-1 (RPi 5 / neuere Kernel)
+# Falls der HDMI-Ausgang anders heisst, OUTPUT unten anpassen.
+
+OUTPUT=""
+for name in HDMI-1 HDMI-A-1 HDMI-2 HDMI-A-2; do
+    if xrandr --query | grep -q "^${name} connected"; then
+        OUTPUT="$name"
+        break
+    fi
+done
+
+if [ -n "$OUTPUT" ]; then
+    echo "[kiosk] Setze ${OUTPUT} auf 1920x1080@50Hz (1080p50)…"
+    # Standard CEA-861 / SMPTE 274M Modeline für 1080p50
+    xrandr --newmode "1920x1080_50" 148.50 \
+        1920 2448 2492 2640 \
+        1080 1084 1089 1125 \
+        +hsync +vsync 2>/dev/null || true   # ignorieren falls Modus schon existiert
+    xrandr --addmode "$OUTPUT" "1920x1080_50" 2>/dev/null || true
+    xrandr --output "$OUTPUT" --mode "1920x1080_50"
+    echo "[kiosk] Auflösung gesetzt: 1920x1080 @ 50Hz"
+else
+    echo "[kiosk] WARN: Kein verbundener HDMI-Output gefunden – Auflösung nicht gesetzt."
+fi
+
 # ── Wait for the backend ──────────────────────────────────────────────────────
 echo "[kiosk] Waiting for backend at ${BACKEND_URL} …"
 deadline=$(( $(date +%s) + WAIT_TIMEOUT ))
@@ -42,6 +72,7 @@ echo "[kiosk] Backend ready – starting Chromium."
 # --overscroll-history-navigation=0 : disable swipe-back/forward
 # --disable-restore-session-state   : never show "restore pages?" dialog
 # --temp-profile       : do not persist browsing state between sessions
+# --window-size        : explizit 1920x1080 für SDI-Ausgabe
 exec /usr/bin/chromium \
     --kiosk \
     --noerrdialogs \
@@ -53,4 +84,6 @@ exec /usr/bin/chromium \
     --overscroll-history-navigation=0 \
     --disable-restore-session-state \
     --temp-profile \
+    --window-size=1920,1080 \
     "${KIOSK_URL}"
+

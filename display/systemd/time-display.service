@@ -1,0 +1,29 @@
+[Unit]
+Description=LED Matrix Zeitanzeige (Time Reference Monitor)
+After=time-reference-monitor.service
+Wants=time-reference-monitor.service
+
+[Service]
+Type=simple
+User=ptp
+WorkingDirectory=/opt/time-reference-monitor
+
+# ── Anpassbare Parameter ───────────────────────────────────────────────────
+# --modules     Anzahl MAX7219 8×8 Module (10 = ~32cm)
+# --source      PTP | LTC | NTP  (weglassen = automatisch wechseln)
+# --cycle-s     Sekunden pro Quelle beim automatischen Wechsel
+# --brightness  0–255 (64 = angenehm für Innenraum)
+# --scroll      Text einmal durchscrollen beim Quellenwechsel
+ExecStart=/opt/time-reference-monitor/venv/bin/python3 \
+    /opt/time-reference-monitor/display/display_driver.py \
+    --modules 10 \
+    --cycle-s 5 \
+    --brightness 64
+
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

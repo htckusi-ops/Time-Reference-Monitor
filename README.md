@@ -131,12 +131,45 @@ Nach dem Setup:
 arecord -l
 sudo nano /etc/asound.conf          # hw:X,0 setzen
 
-# PTP-Interface prüfen:
+# Monitor-Konfiguration anpassen (Interface, Domain, LTC-FPS …):
 sudo nano /etc/systemd/system/time-reference-monitor.service
-# → --iface eth0 und --domain 0 anpassen
+sudo systemctl daemon-reload
 
 sudo reboot
 ```
+
+### Konfiguration des Monitor-Dienstes
+
+Die aktiven Start-Parameter stehen in:
+```
+/etc/systemd/system/time-reference-monitor.service
+```
+
+Das Template dazu liegt im Repository unter `rpi/systemd/time-reference-monitor.service` und wird von `setup.sh` / `update.sh` nach `/etc/systemd/system/` kopiert. **Anpassungen immer in `/etc/systemd/system/` vornehmen**, nicht im Repo-Template — sonst werden sie beim nächsten `update.sh` überschrieben.
+
+Nach jeder Änderung:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart time-reference-monitor
+```
+
+**Aktuelle Defaults nach setup.sh:**
+
+| Parameter | Default | Anmerkung |
+|-----------|---------|-----------|
+| `--source` | `real` | `mock` nur für Tests ohne PTP-Hardware |
+| `--iface` | `eth0` | **anpassen** falls anderes Interface |
+| `--domain` | `0` | PTP-Domain-Nummer |
+| `--poll` | `0.25` s | PTP-Abfrageintervall |
+| `--http-host` | `0.0.0.0` | von allen Interfaces erreichbar |
+| `--http-port` | `8088` | |
+| `--ltc` | aktiviert | LTC deaktivieren: Zeile entfernen |
+| `--ltc-device` | `dsnoop_ltc` | ALSA-Gerät (aus asound.conf) |
+| `--ltc-fps` | `25` | **anpassen** bei 29.97/30 fps LTC |
+| `--ltc-cmd` | `alsaltc -d dsnoop_ltc -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE` | |
+| `--ltc-dropout-timeout-ms` | `800` | |
+| `--ltc-jump-tolerance-frames` | `2` | |
+| `--db` | `/var/lib/time-reference-monitor/events.sqlite` | |
 
 ### Dienste
 
@@ -194,6 +227,43 @@ Der Chromium-Kiosk läuft auf **Virtual Terminal 7** (VT7). Folgende Wege führe
 sudo systemctl stop chromium-kiosk
 ```
 
+### Auflösung 1920×1080 @ 50 Hz (für HDMI→SDI-Konverter)
+
+`kiosk.sh` setzt die HDMI-Auflösung automatisch auf **1080p50** (SMPTE 274M, Pixelclock 148.5 MHz) — dem Broadcast-Standard, den HDMI→SDI-Konverter erwarten.
+
+Der HDMI-Output wird beim Start automatisch erkannt (versucht `HDMI-1`, `HDMI-A-1`, `HDMI-2`). Falls der Output-Name abweicht:
+
+```bash
+# Verfügbare Outputs anzeigen (im laufenden X-System):
+xrandr --query
+
+# Anpassen in kiosk.sh, Zeile "for name in HDMI-1 HDMI-A-1 …":
+sudo nano /opt/time-reference-monitor/rpi/scripts/kiosk.sh
+```
+
+Auflösung im laufenden Kiosk prüfen:
+```bash
+# Via SSH, mit dem DISPLAY der X-Session:
+DISPLAY=:0 xrandr --query
+```
+
+**Hinweis RPi 4 vs. RPi 5:**
+- RPi 4: Output heisst `HDMI-1` (erster Anschluss) / `HDMI-2` (zweiter)
+- RPi 5 / neuere Kernel: `HDMI-A-1` / `HDMI-A-2`
+- Das Script probiert alle Varianten automatisch durch
+
+**RPi Firmware-Konfiguration (wird von `setup.sh` automatisch gesetzt):**
+
+`setup.sh` trägt folgende Zeilen in `/boot/firmware/config.txt` ein:
+
+```ini
+hdmi_force_hotplug=1   # HDMI aktiv halten, auch wenn SDI-Konverter kein EDID sendet
+hdmi_group=1           # CEA (Broadcast), nicht DMT (PC-Monitor)
+hdmi_mode=31           # 1080p50
+```
+
+`hdmi_force_hotplug=1` ist besonders wichtig: Viele HDMI→SDI-Konverter schicken kein EDID zurück — ohne diesen Parameter gibt der RPi gar kein Bildsignal aus. Die drei Parameter sind idempotent (werden nicht doppelt eingetragen).
+
 ---
 
 ### Software-Update
@@ -212,6 +282,88 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 6. `time-reference-monitor` neu starten
 
 Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sobald der Backend-Dienst wieder antwortet.
+
+---
+
+## LED-Matrix Zeitanzeige (optional)
+
+Optionale Hardware-Erweiterung: MAX7219 8×8 LED-Matrix Module zeigen PTP-, LTC- oder NTP-Zeit direkt am Gerät an — unabhängig vom Kiosk-Browser, als eigenständiger systemd-Dienst.
+
+### Hardware
+
+**Empfohlen:** MAX7219 8×8 LED-Matrix Module (cascaded)
+
+| Eigenschaft | Wert |
+|-------------|------|
+| Module für ~32cm | 10 Stück (10 × 32mm = 320mm) |
+| Module für ~38cm | 12 Stück |
+| Interface | SPI (5 Kabel) |
+| Preis | ~1–2 CHF/Modul, als 4er-Strip erhältlich |
+| Lesbarkeit | Gut bis ~5m Abstand |
+
+**Verkabelung (SPI):**
+
+| Display-Pin | RPi GPIO | RPi Pin |
+|-------------|----------|---------|
+| VCC | 5V | Pin 2 |
+| GND | GND | Pin 6 |
+| DIN | GPIO 10 (MOSI) | Pin 19 |
+| CS | GPIO 8 (CE0) | Pin 24 |
+| CLK | GPIO 11 (CLK) | Pin 23 |
+
+Bei mehreren Modulen (Daisy-Chain): `DOUT` des ersten Moduls → `DIN` des nächsten. VCC/GND/CLK/CS parallel.
+
+### Installation
+
+```bash
+# Nach setup.sh ausführen:
+sudo bash display/setup-display.sh
+```
+
+Das Script:
+1. Aktiviert SPI in `/boot/firmware/config.txt`
+2. Fügt User `ptp` zu Gruppen `spi` und `gpio` hinzu
+3. Installiert `luma.led_matrix` ins Python-venv
+4. Aktiviert `time-display.service`
+
+```bash
+# Falls SPI neu aktiviert wurde:
+sudo reboot
+
+# Danach startet der Dienst automatisch. Manuell:
+sudo systemctl start time-display
+journalctl -fu time-display
+```
+
+### Konfiguration
+
+Aktive Parameter in `/etc/systemd/system/time-display.service`:
+
+| Parameter | Default | Bedeutung |
+|-----------|---------|-----------|
+| `--modules` | `10` | Anzahl 8×8 Module |
+| `--source` | _(keiner)_ | `PTP`, `LTC` oder `NTP` fix; ohne Angabe: automatisch wechseln |
+| `--cycle-s` | `5` | Sekunden pro Quelle beim automatischen Wechsel |
+| `--brightness` | `64` | Helligkeit 0–255 (64 = angenehm für Innenraum) |
+| `--scroll` | _(aus)_ | Text bei jedem Wechsel einmal durchscrollen |
+
+Nach Änderungen:
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart time-display
+```
+
+### Anzeigeformat
+
+```
+PTP 10:23:45    ← PTP-Zeit (nur wenn ptp_valid=true)
+LTC 10:23:45    ← LTC-Zeit ohne Frames (nur wenn present=true)
+NTP 10:23:45    ← Systemzeit (von chrony diszipliniert)
+
+PTP ------      ← Quelle nicht verfügbar
+NO API          ← Backend nicht erreichbar
+```
+
+Das Script `display/display_driver.py` läuft vollständig unabhängig vom Monitor-Backend und pollt nur `GET /api/status`.
 
 ---
 

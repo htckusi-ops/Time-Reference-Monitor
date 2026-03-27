@@ -152,7 +152,29 @@ configure_sudoers() {
     info "Sudoers rule installed: ${rule_file}"
 }
 
-# ── 7. Console autologin for kiosk ────────────────────────────────────────────
+# ── 7. HDMI-Ausgabe: 1080p50 für HDMI→SDI-Konverter ─────────────────────────
+# hdmi_force_hotplug=1  – HDMI aktiv halten, auch wenn der SDI-Konverter
+#                         kein EDID zurückschickt (bei vielen Konvertern so)
+# hdmi_group=1          – CEA (Broadcast-Standard), nicht DMT (PC-Monitor)
+# hdmi_mode=31          – 1080p50 (SMPTE 274M)
+configure_hdmi_sdi() {
+    local cfg=""
+    for f in /boot/firmware/config.txt /boot/config.txt; do
+        [ -f "$f" ] && cfg="$f" && break
+    done
+    if [ -z "$cfg" ]; then
+        warn "config.txt nicht gefunden – HDMI-SDI-Konfiguration übersprungen."
+        return
+    fi
+    info "Konfiguriere HDMI-Ausgabe für 1080p50 / SDI in ${cfg}…"
+    # Idempotent: nur hinzufügen wenn noch nicht vorhanden
+    grep -q "hdmi_force_hotplug=1" "$cfg" || echo "hdmi_force_hotplug=1" >> "$cfg"
+    grep -q "hdmi_group=1"         "$cfg" || echo "hdmi_group=1"         >> "$cfg"
+    grep -q "hdmi_mode=31"         "$cfg" || echo "hdmi_mode=31"         >> "$cfg"
+    info "HDMI 1080p50 konfiguriert (wirksam nach Reboot)."
+}
+
+# ── 8. Console autologin for kiosk ────────────────────────────────────────────
 # The chromium-kiosk service runs X on VT7 via xinit.
 # No desktop autologin is required – systemd starts X directly.
 # However, if you want a fallback text login on VT1, ensure it is configured:
@@ -184,6 +206,7 @@ install_app
 install_alsa
 install_services
 configure_sudoers
+configure_hdmi_sdi
 configure_autologin
 
 echo
