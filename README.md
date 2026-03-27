@@ -131,12 +131,45 @@ Nach dem Setup:
 arecord -l
 sudo nano /etc/asound.conf          # hw:X,0 setzen
 
-# PTP-Interface prüfen:
+# Monitor-Konfiguration anpassen (Interface, Domain, LTC-FPS …):
 sudo nano /etc/systemd/system/time-reference-monitor.service
-# → --iface eth0 und --domain 0 anpassen
+sudo systemctl daemon-reload
 
 sudo reboot
 ```
+
+### Konfiguration des Monitor-Dienstes
+
+Die aktiven Start-Parameter stehen in:
+```
+/etc/systemd/system/time-reference-monitor.service
+```
+
+Das Template dazu liegt im Repository unter `rpi/systemd/time-reference-monitor.service` und wird von `setup.sh` / `update.sh` nach `/etc/systemd/system/` kopiert. **Anpassungen immer in `/etc/systemd/system/` vornehmen**, nicht im Repo-Template — sonst werden sie beim nächsten `update.sh` überschrieben.
+
+Nach jeder Änderung:
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart time-reference-monitor
+```
+
+**Aktuelle Defaults nach setup.sh:**
+
+| Parameter | Default | Anmerkung |
+|-----------|---------|-----------|
+| `--source` | `real` | `mock` nur für Tests ohne PTP-Hardware |
+| `--iface` | `eth0` | **anpassen** falls anderes Interface |
+| `--domain` | `0` | PTP-Domain-Nummer |
+| `--poll` | `0.25` s | PTP-Abfrageintervall |
+| `--http-host` | `0.0.0.0` | von allen Interfaces erreichbar |
+| `--http-port` | `8088` | |
+| `--ltc` | aktiviert | LTC deaktivieren: Zeile entfernen |
+| `--ltc-device` | `dsnoop_ltc` | ALSA-Gerät (aus asound.conf) |
+| `--ltc-fps` | `25` | **anpassen** bei 29.97/30 fps LTC |
+| `--ltc-cmd` | `alsaltc -d dsnoop_ltc -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE` | |
+| `--ltc-dropout-timeout-ms` | `800` | |
+| `--ltc-jump-tolerance-frames` | `2` | |
+| `--db` | `/var/lib/time-reference-monitor/events.sqlite` | |
 
 ### Dienste
 
