@@ -72,7 +72,6 @@ echo "[kiosk] Backend ready – starting Chromium."
 # --overscroll-history-navigation=0 : disable swipe-back/forward
 # --disable-restore-session-state   : never show "restore pages?" dialog
 # --temp-profile       : do not persist browsing state between sessions
-# --window-size        : explizit 1920x1080 für SDI-Ausgabe
 exec /usr/bin/chromium \
     --kiosk \
     --noerrdialogs \
@@ -84,6 +83,5 @@ exec /usr/bin/chromium \
     --overscroll-history-navigation=0 \
     --disable-restore-session-state \
     --temp-profile \
-    --window-size=1920,1080 \
     "${KIOSK_URL}"
 

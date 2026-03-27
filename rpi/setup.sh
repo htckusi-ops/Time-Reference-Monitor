@@ -134,6 +134,14 @@ install_services() {
         "${REPO_DIR}/rpi/systemd/chromium-kiosk.service" \
         > /etc/systemd/system/chromium-kiosk.service
 
+    # Disable lightdm (RPi OS Desktop) if present – it would take over the
+    # display and fight with our xinit-based kiosk on the same VT.
+    if systemctl list-unit-files lightdm.service &>/dev/null 2>&1; then
+        info "Deaktiviere lightdm (Display-Manager)…"
+        systemctl disable lightdm 2>/dev/null || true
+        systemctl stop    lightdm 2>/dev/null || true
+    fi
+
     systemctl daemon-reload
     systemctl enable time-reference-monitor.service
     systemctl enable chromium-kiosk.service
