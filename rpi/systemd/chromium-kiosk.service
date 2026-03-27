@@ -15,8 +15,9 @@ TTYVHangup=yes
 StandardInput=tty
 
 # Remove stale X lock files left over from unclean shutdowns/reboots.
-# The leading '-' tells systemd to ignore the exit code if the files don't exist.
-ExecStartPre=-/bin/rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
+# '+' runs this command as root (needed: lock files are owned by root).
+# '-' ignores the exit code if the files don't exist.
+ExecStartPre=-+/bin/rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
 
 # xinit starts X on display :0 on VT7, then runs kiosk.sh inside that X session.
 # -nocursor removes the X root cursor (unclutter handles per-window hiding).
