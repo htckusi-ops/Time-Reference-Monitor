@@ -248,6 +248,88 @@ Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sob
 
 ---
 
+## LED-Matrix Zeitanzeige (optional)
+
+Optionale Hardware-Erweiterung: MAX7219 8×8 LED-Matrix Module zeigen PTP-, LTC- oder NTP-Zeit direkt am Gerät an — unabhängig vom Kiosk-Browser, als eigenständiger systemd-Dienst.
+
+### Hardware
+
+**Empfohlen:** MAX7219 8×8 LED-Matrix Module (cascaded)
+
+| Eigenschaft | Wert |
+|-------------|------|
+| Module für ~32cm | 10 Stück (10 × 32mm = 320mm) |
+| Module für ~38cm | 12 Stück |
+| Interface | SPI (5 Kabel) |
+| Preis | ~1–2 CHF/Modul, als 4er-Strip erhältlich |
+| Lesbarkeit | Gut bis ~5m Abstand |
+
+**Verkabelung (SPI):**
+
+| Display-Pin | RPi GPIO | RPi Pin |
+|-------------|----------|---------|
+| VCC | 5V | Pin 2 |
+| GND | GND | Pin 6 |
+| DIN | GPIO 10 (MOSI) | Pin 19 |
+| CS | GPIO 8 (CE0) | Pin 24 |
+| CLK | GPIO 11 (CLK) | Pin 23 |
+
+Bei mehreren Modulen (Daisy-Chain): `DOUT` des ersten Moduls → `DIN` des nächsten. VCC/GND/CLK/CS parallel.
+
+### Installation
+
+```bash
+# Nach setup.sh ausführen:
+sudo bash display/setup-display.sh
+```
+
+Das Script:
+1. Aktiviert SPI in `/boot/firmware/config.txt`
+2. Fügt User `ptp` zu Gruppen `spi` und `gpio` hinzu
+3. Installiert `luma.led_matrix` ins Python-venv
+4. Aktiviert `time-display.service`
+
+```bash
+# Falls SPI neu aktiviert wurde:
+sudo reboot
+
+# Danach startet der Dienst automatisch. Manuell:
+sudo systemctl start time-display
+journalctl -fu time-display
+```
+
+### Konfiguration
+
+Aktive Parameter in `/etc/systemd/system/time-display.service`:
+
+| Parameter | Default | Bedeutung |
+|-----------|---------|-----------|
+| `--modules` | `10` | Anzahl 8×8 Module |
+| `--source` | _(keiner)_ | `PTP`, `LTC` oder `NTP` fix; ohne Angabe: automatisch wechseln |
+| `--cycle-s` | `5` | Sekunden pro Quelle beim automatischen Wechsel |
+| `--brightness` | `64` | Helligkeit 0–255 (64 = angenehm für Innenraum) |
+| `--scroll` | _(aus)_ | Text bei jedem Wechsel einmal durchscrollen |
+
+Nach Änderungen:
+```bash
+sudo systemctl daemon-reload && sudo systemctl restart time-display
+```
+
+### Anzeigeformat
+
+```
+PTP 10:23:45    ← PTP-Zeit (nur wenn ptp_valid=true)
+LTC 10:23:45    ← LTC-Zeit ohne Frames (nur wenn present=true)
+NTP 10:23:45    ← Systemzeit (von chrony diszipliniert)
+
+PTP ------      ← Quelle nicht verfügbar
+NO API          ← Backend nicht erreichbar
+```
+
+Das Script `display/display_driver.py` läuft vollständig unabhängig vom Monitor-Backend und pollt nur `GET /api/status`.
+
+---
+
 ## Web-UI und API
 
 | URL | Inhalt |
