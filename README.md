@@ -227,6 +227,31 @@ Der Chromium-Kiosk läuft auf **Virtual Terminal 7** (VT7). Folgende Wege führe
 sudo systemctl stop chromium-kiosk
 ```
 
+### Auflösung 1920×1080 @ 50 Hz (für HDMI→SDI-Konverter)
+
+`kiosk.sh` setzt die HDMI-Auflösung automatisch auf **1080p50** (SMPTE 274M, Pixelclock 148.5 MHz) — dem Broadcast-Standard, den HDMI→SDI-Konverter erwarten.
+
+Der HDMI-Output wird beim Start automatisch erkannt (versucht `HDMI-1`, `HDMI-A-1`, `HDMI-2`). Falls der Output-Name abweicht:
+
+```bash
+# Verfügbare Outputs anzeigen (im laufenden X-System):
+xrandr --query
+
+# Anpassen in kiosk.sh, Zeile "for name in HDMI-1 HDMI-A-1 …":
+sudo nano /opt/time-reference-monitor/rpi/scripts/kiosk.sh
+```
+
+Auflösung im laufenden Kiosk prüfen:
+```bash
+# Via SSH, mit dem DISPLAY der X-Session:
+DISPLAY=:0 xrandr --query
+```
+
+**Hinweis RPi 4 vs. RPi 5:**
+- RPi 4: Output heisst `HDMI-1` (erster Anschluss) / `HDMI-2` (zweiter)
+- RPi 5 / neuere Kernel: `HDMI-A-1` / `HDMI-A-2`
+- Das Script probiert alle Varianten automatisch durch
+
 ---
 
 ### Software-Update
