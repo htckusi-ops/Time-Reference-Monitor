@@ -64,3 +64,38 @@ Kein Eingriff in `ptp4l` oder andere Systemdienste — nur der Python-Prozess se
 
 - [ ] **Keine Persistenz**: Beim Neustart des Prozesses gelten wieder die CLI-Startparameter.
   (Optional später: Werte in eine lokale JSON-Datei schreiben und beim Start laden.)
+
+---
+
+## Ebene 2: Authentifizierung für Remote-Zugriff
+
+Ziel: Localhost (Kiosk auf dem Pi selbst) greift ohne Login auf das Webinterface zu.
+Alle anderen IP-Adressen (Remote-Geräte) benötigen eine Authentifizierung.
+
+### Anforderungen
+
+- Kiosk (`127.0.0.1` / `::1`) → **kein Auth** (sonst würde der Kiosk-Browser blockiert)
+- Alle anderen IPs → **HTTP Basic Auth** (Benutzername + Passwort)
+- Credentials sicher gespeichert (kein Klartext im Service-File)
+- Konfigurierbar ohne Code-Änderung (z.B. via Umgebungsvariable oder Datei)
+
+### Backend (`webapp.py`)
+
+- [ ] **`before_request`-Hook** in Flask:
+  Prüft `request.remote_addr`. Bei `127.0.0.1` oder `::1` → direkt weiter.
+  Sonst: prüft `Authorization`-Header (HTTP Basic Auth).
+  Bei fehlendem/falschem Credential → `401 Unauthorized` mit `WWW-Authenticate`-Header.
+
+- [ ] **Credential-Verwaltung**:
+  Passwort als bcrypt-Hash in einer Datei (z.B. `/etc/time-reference-monitor/htpasswd`)
+  oder als Umgebungsvariable `TRM_AUTH_PASSWORD_HASH` im systemd-Service.
+  Kein Klartext-Passwort im Repository oder in Service-Files.
+
+- [ ] **Helper-Script `rpi/set-password.sh`**:
+  Interaktiv: fragt nach neuem Passwort, schreibt Hash in die Config-Datei,
+  startet den Dienst neu. Kein Python-Wissen vorausgesetzt.
+
+### Kein nginx vorschalten
+
+Bewusste Entscheidung: Auth direkt in Flask, kein zusätzlicher Reverse-Proxy.
+Weniger Abhängigkeiten, einfacheres Deployment auf dem Pi.
