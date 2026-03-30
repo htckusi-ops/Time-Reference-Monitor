@@ -26,8 +26,8 @@ SupplementaryGroups=audio video input
 ExecStartPre=-+/bin/rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
 
 # xinit starts X on display :0 on VT7, then runs kiosk.sh inside that X session.
-# -nocursor removes the X root cursor (unclutter handles per-window hiding).
-ExecStart=/usr/bin/xinit /opt/time-reference-monitor/rpi/scripts/kiosk.sh -- :0 vt7 -nocursor
+# -nocursor removed: mouse cursor visibility is managed by unclutter in kiosk.sh.
+ExecStart=/usr/bin/xinit /opt/time-reference-monitor/rpi/scripts/kiosk.sh -- :0 vt7
 
 # always restart: catches clean exits (e.g. Chromium closed via JS confirm dialog)
 # as well as crashes, so the kiosk is always recovered automatically.

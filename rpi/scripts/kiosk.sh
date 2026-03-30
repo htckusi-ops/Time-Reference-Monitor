@@ -13,6 +13,8 @@ WAIT_TIMEOUT=60   # seconds to wait for backend before opening anyway
 # ── Runtime configuration ─────────────────────────────────────────────────────
 # Defaults (overridden by /etc/time-reference-monitor.conf)
 HDMI_MODE=sdi-1080i50
+HDMI_OUTPUT=""    # empty = auto-detect
+PAGE_ZOOM=""      # empty = no scaling; e.g. 1.5 = 150%
 
 KIOSK_CONF="/etc/time-reference-monitor.conf"
 # shellcheck source=/dev/null
@@ -141,7 +143,11 @@ if [ -n "$OUTPUT" ]; then
     echo "[kiosk] Auflösung aktiv: $(xrandr --query | grep "^${OUTPUT}" | grep -o '[0-9]*x[0-9]*+[0-9]*+[0-9]*' | head -1)"
 else
     echo "[kiosk] WARN: Kein HDMI-Output gefunden – Auflösung nicht gesetzt."
+    FB_SIZE=""
 fi
+
+# WIN_SIZE für Chromium: FB_SIZE "1920x1080" → "1920,1080" (Chromium-Format)
+WIN_SIZE="${FB_SIZE/x/,}"
 
 # ── Wait for the backend ──────────────────────────────────────────────────────
 echo "[kiosk] Waiting for backend at ${BACKEND_URL} …"
@@ -155,25 +161,48 @@ while ! curl -sf --max-time 2 "${BACKEND_URL}/api/status" >/dev/null 2>&1; do
 done
 echo "[kiosk] Backend ready – starting Chromium."
 
+# ── Openbox (leichtgewichtiger WM) ───────────────────────────────────────────
+# Ohne WM positioniert Chromium das Fenster frei und klebt an der linken Seite.
+# Openbox stellt sauberes Fullscreen-Management sicher.
+if command -v openbox >/dev/null 2>&1; then
+    echo "[kiosk] Starte Openbox …"
+    openbox &
+    sleep 1
+else
+    echo "[kiosk] WARN: openbox nicht gefunden – sudo apt install openbox"
+fi
+
 # ── Chromium kiosk ───────────────────────────────────────────────────────────
-# --kiosk              : full-screen, no window decorations, no address bar
-# --noerrdialogs       : suppress crash / error pop-ups
-# --disable-infobars   : no "Chrome is being controlled…" bar
-# --no-first-run       : skip first-run wizard
-# --disable-pinch      : disable touchscreen zoom gestures
-# --overscroll-history-navigation=0 : disable swipe-back/forward
-# --disable-restore-session-state   : never show "restore pages?" dialog
-# --temp-profile       : do not persist browsing state between sessions
-exec /usr/bin/chromium \
-    --kiosk \
-    --noerrdialogs \
-    --disable-infobars \
-    --disable-session-crashed-bubble \
-    --disable-features=TranslateUI \
-    --no-first-run \
-    --disable-pinch \
-    --overscroll-history-navigation=0 \
-    --disable-restore-session-state \
-    --temp-profile \
-    "${KIOSK_URL}"
+# Argumente dynamisch aufbauen (WIN_SIZE und PAGE_ZOOM aus Konfiguration)
+CHROMIUM_ARGS=(
+    --kiosk
+    --start-fullscreen
+    --window-position=0,0
+    --noerrdialogs
+    --disable-infobars
+    --disable-session-crashed-bubble
+    --disable-features=TranslateUI
+    --no-first-run
+    --disable-pinch
+    --overscroll-history-navigation=0
+    --disable-restore-session-state
+    --temp-profile
+)
+
+# Fenstergrösse: aus HDMI_MODE abgeleitet (1920,1080 / 1280,720 / leer für auto)
+if [ -n "${WIN_SIZE:-}" ]; then
+    echo "[kiosk] Chromium window-size: ${WIN_SIZE}"
+    CHROMIUM_ARGS+=(--window-size="${WIN_SIZE}")
+fi
+
+# Seitenskalierung: PAGE_ZOOM=1.5 → 150% Zoom
+# Konfigurierbar in /etc/time-reference-monitor.conf
+# Kleine Auflösung (720p) → z.B. PAGE_ZOOM=0.75
+# Grosse Auflösung (1080p) → z.B. PAGE_ZOOM=1.0 oder PAGE_ZOOM=1.25
+if [ -n "${PAGE_ZOOM:-}" ]; then
+    echo "[kiosk] Chromium device-scale-factor: ${PAGE_ZOOM}"
+    CHROMIUM_ARGS+=(--force-device-scale-factor="${PAGE_ZOOM}")
+fi
+
+exec /usr/bin/chromium "${CHROMIUM_ARGS[@]}" "${KIOSK_URL}"
 
