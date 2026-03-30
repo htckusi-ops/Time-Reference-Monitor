@@ -102,6 +102,28 @@ else
     info "ALSA config unchanged."
 fi
 
+# Remove user-level ~/.asoundrc – conflicts with /etc/asound.conf when both
+# define ltc_left_mono (duplicate dsnoop instances → "Slave PCM not usable").
+ASOUNDRC="/home/${APP_USER}/.asoundrc"
+if [ -f "$ASOUNDRC" ]; then
+    mv "$ASOUNDRC" "${ASOUNDRC}.disabled"
+    warn "~/.asoundrc deaktiviert (→ .asoundrc.disabled) – /etc/asound.conf gilt."
+fi
+
+# ── ptp4l UDS socket drop-in ──────────────────────────────────────────────────
+mkdir -p /etc/systemd/system/ptp4l.service.d
+if ! diff -q "${REPO_DIR}/rpi/systemd/ptp4l.service.d/uds-permissions.conf" \
+    /etc/systemd/system/ptp4l.service.d/uds-permissions.conf &>/dev/null 2>&1; then
+    cp "${REPO_DIR}/rpi/systemd/ptp4l.service.d/uds-permissions.conf" \
+        /etc/systemd/system/ptp4l.service.d/uds-permissions.conf
+    systemctl daemon-reload
+    info "ptp4l UDS drop-in aktualisiert."
+    if systemctl is-active --quiet ptp4l.service 2>/dev/null; then
+        systemctl restart ptp4l.service
+        info "ptp4l neu gestartet (Socket-Berechtigungen wirksam)."
+    fi
+fi
+
 # ── 7. Kiosk conf file (install only if missing) ──────────────────────────────
 KIOSK_CONF="/etc/time-reference-monitor.conf"
 if [ ! -f "$KIOSK_CONF" ]; then
