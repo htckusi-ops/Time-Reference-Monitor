@@ -39,12 +39,26 @@ def _run_pmc(domain: int, cmd: str, timeout_s: float = config.PMC_TIMEOUT_S) -> 
 def _parse_pmc_kv(text: str) -> Dict[str, str]:
     kv: Dict[str, str] = {}
     for line in text.splitlines():
-        m = _PMC_RE.match(line)
-        if not m:
+        s = line.strip()
+        if not s:
             continue
-        kv[m.group(1).strip().lower()] = m.group(2).strip()
-    return kv
+        if s.startswith("sending:"):
+            continue
+        if " RESPONSE MANAGEMENT " in s:
+            continue
 
+        if ":" in s:
+            k, v = s.split(":", 1)
+        elif "=" in s:
+            k, v = s.split("=", 1)
+        else:
+            parts = s.split(None, 1)
+            if len(parts) != 2:
+                continue
+            k, v = parts
+
+        kv[k.strip().lower()] = v.strip()
+    return kv
 
 def _parse_int(v: Optional[str]) -> Optional[int]:
     if v is None:
