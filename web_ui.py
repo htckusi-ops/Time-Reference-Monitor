@@ -129,17 +129,21 @@ def ui_html() -> str:
           <div class="ptpLabel">Status</div>
           <div class="ptpValue mono" id="ptpStatusLine"><span class="ptpNo">NO PTP SYNC</span></div>
         </div>
+        <div class="ptpLine">
+          <div class="ptpLabel">NTP</div>
+          <div class="ptpValue mono" id="ntpTimeBig">—</div>
+        </div>
+        <div class="ptpLine">
+          <div class="ptpLabel">LTC</div>
+          <div class="ptpValue mono" id="ltcTimeBig">—</div>
+        </div>
+        <div class="ptpLine">
+          <div class="ptpLabel">Δ(LTC-NTP)</div>
+          <div class="ptpValue mono" id="deltaLtcNtpLine">—</div>
+        </div>
       </div>
-      
-<div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
 
-      <div class="smalltime" id="ntpTime">NTP: —</div>
-      <div class="smalltime" id="ltcTop">LTC: —</div>
-      <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
-      <div class="smalltime" id="deltaLtcLine">Δ(LTC-PTP): —</div>
-      <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
-      <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
-      <div class="smalltime" id="ltcTzLine">TZ: —</div>
+<div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
       <div class="smalltime">
       LTC Audio Level ({config.LTC_ALSA_DEVICE})
         </div>
@@ -420,7 +424,7 @@ function renderLedMeter(ledRms, ledPeak){{
     const fps = ltc.fps || '—';
     const age = (ltc.last_update_age_s != null) ? (Math.round(ltc.last_update_age_s*10)/10)+'s' : '—';
     els('ltcLine').textContent = `LTC: ${{pres}} | tc=${{tc}} | fps=${{fps}} | last_update_age=${{age}}`;
-    els('ltcTop').textContent = `LTC: ${{pres}} | tc=${{tc}}`;
+    els('ltcTimeBig').textContent = (ltc.enabled && ltc.present && tc !== '—') ? tc : '—';
 
     // rolling summary
     const eR = Number(roll.errors_rolling ?? 0);
@@ -484,15 +488,11 @@ function renderLedMeter(ledRms, ledPeak){{
   function uiTick(){{
     // NTP displayed as system time for smoothness
     const now = new Date();
-    els('ntpTime').textContent = 'NTP: ' + fmtIso(now.toISOString(), 3);
+    els('ntpTimeBig').textContent = fmtIso(now.toISOString(), 3);
 
     if(!lastApi) {{
       els('ptpTime').textContent = '—';
-      els('deltaLine').textContent = 'Δ(NTP-PTP): —';
-      els('deltaLtcLine').textContent = 'Δ(LTC-PTP): —';
-      els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-      els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-      els('ltcTzLine').textContent = 'TZ: —';
+      els('deltaLtcNtpLine').textContent = '—';
       return;
     }}
 
@@ -522,43 +522,23 @@ function renderLedMeter(ledRms, ledPeak){{
       const dec = (meta.display_decimals != null) ? meta.display_decimals : 6;
       els('ptpTime').textContent = fmtIso(d.toISOString(), dec);
 
-      const deltaMs = (now.getTime() - ms);
-      els('deltaLine').textContent = `Δ(NTP-PTP): ${{deltaMs.toFixed(3)}} ms`;
-
-      // LTC delta (derived):
+      // Δ(LTC-NTP): LTC timecode vs. NTP (local system time)
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
         const ltcTod = parseTcToTodMs(ltc.timecode, fps);
-        const ptpTodLocal = todMsFromLocalDate(d);
-        const ptpTodUtc = todMsFromUtcDate(d);
-        const tzMs = ptpTodLocal - ptpTodUtc;
-
+        const ntpTodLocal = todMsFromLocalDate(now);
         if(ltcTod != null) {{
-          const dAdj = wrapDeltaMs(ltcTod - ptpTodLocal);
-          const dRaw = wrapDeltaMs(ltcTod - ptpTodUtc);
-          els('deltaLtcLine').textContent = `LTC tc=${{ltc.timecode}}`;
-          els('deltaLtcAdjLine').textContent = `Δ(LTC-PTP) adj: ${{dAdj.toFixed(3)}} ms`;
-          els('deltaLtcRawLine').textContent = `Δ(LTC-PTP) raw: ${{dRaw.toFixed(3)}} ms`;
-          els('ltcTzLine').textContent = `TZ: ${{(tzMs/1000).toFixed(0)}} s (${{tzMs.toFixed(0)}} ms)`;
+          const dLtcNtp = wrapDeltaMs(ltcTod - ntpTodLocal);
+          els('deltaLtcNtpLine').textContent = `${{dLtcNtp.toFixed(3)}} ms`;
         }} else {{
-          els('deltaLtcLine').textContent = `LTC tc=${{ltc.timecode}}`;
-          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-          els('ltcTzLine').textContent = 'TZ: —';
+          els('deltaLtcNtpLine').textContent = '—';
         }}
       }} else {{
-        els('deltaLtcLine').textContent = 'Δ(LTC-PTP): —';
-        els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-        els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-        els('ltcTzLine').textContent = 'TZ: —';
+        els('deltaLtcNtpLine').textContent = '—';
       }}
     }} else {{
       els('ptpTime').textContent = '—';
-      els('deltaLine').textContent = 'Δ(NTP-PTP): —';
-      els('deltaLtcLine').textContent = 'Δ(LTC-PTP): —';
-      els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-      els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-      els('ltcTzLine').textContent = 'TZ: —';
+      els('deltaLtcNtpLine').textContent = '—';
     }}
   }}
 
