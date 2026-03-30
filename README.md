@@ -36,7 +36,12 @@ sudo ptp4l -i eth0 -S -m -q   # -S = software timestamping
 ```
 Im systemd-Service `time-reference-monitor.service` entsprechend `--source real` mit `-S`-Flag in der ptp4l-Konfiguration verwenden. Für ein reines Monitoring-Tool (kein Grandmaster) ist die resultierende Genauigkeit von ~10–50 µs oft ausreichend.
 
-**RPi 5:** Hardware-Timestamping ist im Kernel vorhanden, aber seit 2024 gibt es wiederholte Regressionen (broken in Kernel 6.12.25, 6.16-rc2; funktioniert in 6.12.10 und 6.15). Das Muster ist: Fix → Regression → Fix → Regression. Für Produktionseinsatz muss die Kernel-Version aktiv gepinnt werden. Als Fallback: Software-Timestamps mit `-S`.
+**RPi 5:** Hardware-Timestamping ist im Kernel vorhanden (MAC-Level via RP1-Chip), aber seit 2024 gibt es wiederholte Regressionen. **Raspberry Pi OS Bookworm (Stand Anfang 2026) ist betroffen** — Kernel 6.12.25–6.12.35 funktioniert nicht. Kernel 6.12.10 und 6.15 sind stabil. Workaround bis ein Fix landet: `sudo rpi-update` für einen neueren Pre-Release-Kernel, oder Software-Timestamps mit `-S`.
+
+Zusätzlich benötigt Hardware-Timestamping auf dem RPi 5 folgenden Eintrag in `/etc/linuxptp/ptp4l.conf`, sonst werden Timestamps stillschweigend verworfen:
+```ini
+hwts_filter    full
+```
 
 **Prüfen ob Hardware-Timestamping verfügbar ist:**
 ```bash
