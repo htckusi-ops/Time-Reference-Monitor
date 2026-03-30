@@ -10,6 +10,14 @@ BACKEND_URL="http://localhost:8088"
 KIOSK_URL="${BACKEND_URL}/"
 WAIT_TIMEOUT=60   # seconds to wait for backend before opening anyway
 
+# ── Runtime configuration ─────────────────────────────────────────────────────
+# Defaults (overridden by /etc/time-reference-monitor.conf)
+HDMI_MODE=sdi-1080i50
+
+KIOSK_CONF="/etc/time-reference-monitor.conf"
+# shellcheck source=/dev/null
+[ -f "$KIOSK_CONF" ] && source "$KIOSK_CONF"
+
 # ── Display tweaks ────────────────────────────────────────────────────────────
 # Disable DPMS (Energy Star) power-saving and screen blanking.
 xset -dpms
@@ -21,13 +29,10 @@ if command -v unclutter &>/dev/null; then
     unclutter -idle 1 -root &
 fi
 
-# ── Output-Auflösung: 1920×1080 @ 50 Hz (1080p50, SMPTE 274M) ────────────────
-# Ziel: HDMI-Ausgabe als 1080p50 für HDMI→SDI-Konverter.
-# Modeline entspricht dem Broadcast-Standard (Pixelclock 148.5 MHz).
-#
+# ── HDMI-Auflösung setzen ─────────────────────────────────────────────────────
+# HDMI_MODE wird aus /etc/time-reference-monitor.conf gelesen (s.o.).
 # Den korrekten Output-Namen ermitteln: xrandr --query
 # Üblich auf RPi: HDMI-1 (RPi 4) oder HDMI-A-1 (RPi 5 / neuere Kernel)
-# Falls der HDMI-Ausgang anders heisst, OUTPUT unten anpassen.
 
 OUTPUT=""
 for name in HDMI-1 HDMI-A-1 HDMI-2 HDMI-A-2; do
@@ -38,15 +43,37 @@ for name in HDMI-1 HDMI-A-1 HDMI-2 HDMI-A-2; do
 done
 
 if [ -n "$OUTPUT" ]; then
-    echo "[kiosk] Setze ${OUTPUT} auf 1920x1080@50Hz (1080p50)…"
-    # Standard CEA-861 / SMPTE 274M Modeline für 1080p50
-    xrandr --newmode "1920x1080_50" 148.50 \
-        1920 2448 2492 2640 \
-        1080 1084 1089 1125 \
-        +hsync +vsync 2>/dev/null || true   # ignorieren falls Modus schon existiert
-    xrandr --addmode "$OUTPUT" "1920x1080_50" 2>/dev/null || true
-    xrandr --output "$OUTPUT" --mode "1920x1080_50"
-    echo "[kiosk] Auflösung gesetzt: 1920x1080 @ 50Hz"
+    case "$HDMI_MODE" in
+      sdi-1080i50)
+        echo "[kiosk] Setze ${OUTPUT} auf 1920×1080i @ 50 Hz (1080i50, CEA-20)…"
+        # Modeline 1080i50: Pixelclock 74.25 MHz, SMPTE 274M interlaced
+        xrandr --newmode "1920x1080i50" 74.25 \
+            1920 2448 2492 2640 \
+            1080 1084 1094 1125 \
+            interlace +hsync +vsync 2>/dev/null || true
+        xrandr --addmode "$OUTPUT" "1920x1080i50" 2>/dev/null || true
+        xrandr --output "$OUTPUT" --mode "1920x1080i50" \
+            || { echo "[kiosk] WARN: 1080i50 nicht gesetzt – Fallback auf auto."; \
+                 xrandr --output "$OUTPUT" --auto; }
+        ;;
+      sdi-1080p50)
+        echo "[kiosk] Setze ${OUTPUT} auf 1920×1080p @ 50 Hz (1080p50, CEA-31)…"
+        # Modeline 1080p50: Pixelclock 148.5 MHz, SMPTE 274M progressive
+        xrandr --newmode "1920x1080p50" 148.50 \
+            1920 2448 2492 2640 \
+            1080 1084 1089 1125 \
+            +hsync +vsync 2>/dev/null || true
+        xrandr --addmode "$OUTPUT" "1920x1080p50" 2>/dev/null || true
+        xrandr --output "$OUTPUT" --mode "1920x1080p50" \
+            || { echo "[kiosk] WARN: 1080p50 nicht gesetzt – Fallback auf auto."; \
+                 xrandr --output "$OUTPUT" --auto; }
+        ;;
+      auto|*)
+        echo "[kiosk] Setze ${OUTPUT} auf Auto-Auflösung (Monitor-Präferenz)…"
+        xrandr --output "$OUTPUT" --auto
+        ;;
+    esac
+    echo "[kiosk] Auflösung aktiv: $(xrandr --query | grep "^${OUTPUT}" | grep -o '[0-9]*x[0-9]*+[0-9]*+[0-9]*' | head -1)"
 else
     echo "[kiosk] WARN: Kein verbundener HDMI-Output gefunden – Auflösung nicht gesetzt."
 fi

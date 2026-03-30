@@ -43,7 +43,7 @@ create_user() {
         info "Creating user ${APP_USER}…"
         # Regular user (not --system) so that X11 / xinit works.
         # No password is set; login is only via sudo or the kiosk session.
-        useradd --create-home --shell /bin/bash --groups audio,video "$APP_USER"
+        useradd --create-home --shell /bin/bash --groups audio,video,input "$APP_USER"
         passwd -l "$APP_USER"   # lock password (no direct login)
         info "User ${APP_USER} created (password locked)."
     fi
@@ -113,8 +113,9 @@ install_alsa() {
     fi
     cp "${REPO_DIR}/rpi/alsa/asound.conf" /etc/asound.conf
     info "ALSA config installed to /etc/asound.conf"
-    warn "Action required: verify the LTC card index in /etc/asound.conf"
-    warn "  Run: arecord -l   and adjust hw:X,0 to match your LTC interface."
+    info "  Default device: hw:US2x2HR,0 (Tascam US-2x2HR, stable card name)"
+    warn "Action required: if your LTC interface differs, edit /etc/asound.conf"
+    warn "  Run: arecord -l   to find the short name, then set pcm \"hw:<Name>,0\""
 
     # Add APP_USER to the audio group
     usermod -aG audio "$APP_USER"
@@ -160,11 +161,27 @@ configure_sudoers() {
     info "Sudoers rule installed: ${rule_file}"
 }
 
-# ── 7. HDMI-Ausgabe: 1080p50 für HDMI→SDI-Konverter ─────────────────────────
-# hdmi_force_hotplug=1  – HDMI aktiv halten, auch wenn der SDI-Konverter
-#                         kein EDID zurückschickt (bei vielen Konvertern so)
-# hdmi_group=1          – CEA (Broadcast-Standard), nicht DMT (PC-Monitor)
-# hdmi_mode=31          – 1080p50 (SMPTE 274M)
+# ── 7. Kiosk-Konfigurationsdatei ─────────────────────────────────────────────
+install_kiosk_conf() {
+    local dest="/etc/time-reference-monitor.conf"
+    if [ -f "$dest" ]; then
+        info "Kiosk-Konfiguration ${dest} bereits vorhanden – nicht überschrieben."
+        info "  Aktuell gesetzter HDMI_MODE: $(grep '^HDMI_MODE' "$dest" || echo '(nicht gesetzt)')"
+    else
+        cp "${REPO_DIR}/rpi/time-reference-monitor.conf" "$dest"
+        info "Kiosk-Konfiguration installiert: ${dest}"
+        info "  Standard: HDMI_MODE=sdi-1080i50"
+        info "  Ändern mit: sudo nano ${dest}  dann: sudo systemctl restart chromium-kiosk"
+    fi
+}
+
+# ── 8. HDMI-Ausgabe für HDMI→SDI-Konverter ───────────────────────────────────
+# Liest HDMI_MODE aus /etc/time-reference-monitor.conf und setzt config.txt.
+#
+# hdmi_force_hotplug=1  – HDMI halten, auch ohne EDID (SDI-Konverter)
+# hdmi_group=1          – CEA (Broadcast), nicht DMT (PC-Monitor)
+# hdmi_mode=20          – 1080i50 (CEA-20, Standard-Broadcast, Standard)
+# hdmi_mode=31          – 1080p50 (CEA-31, Progressive, alternativ)
 configure_hdmi_sdi() {
     local cfg=""
     for f in /boot/firmware/config.txt /boot/config.txt; do
@@ -174,12 +191,33 @@ configure_hdmi_sdi() {
         warn "config.txt nicht gefunden – HDMI-SDI-Konfiguration übersprungen."
         return
     fi
-    info "Konfiguriere HDMI-Ausgabe für 1080p50 / SDI in ${cfg}…"
-    # Idempotent: nur hinzufügen wenn noch nicht vorhanden
+
+    # HDMI_MODE aus Kiosk-Konfiguration lesen (Standard: sdi-1080i50)
+    local kiosk_conf="/etc/time-reference-monitor.conf"
+    local hdmi_mode="sdi-1080i50"
+    [ -f "$kiosk_conf" ] && hdmi_mode=$(grep '^HDMI_MODE=' "$kiosk_conf" | cut -d= -f2 | tr -d '[:space:]' || echo "sdi-1080i50")
+
+    local cea_mode
+    case "$hdmi_mode" in
+      sdi-1080p50) cea_mode=31 ;;
+      sdi-1080i50|*) cea_mode=20 ;;
+    esac
+
+    info "Konfiguriere HDMI-Ausgabe in ${cfg} (HDMI_MODE=${hdmi_mode}, hdmi_mode=${cea_mode})…"
+
+    # hdmi_force_hotplug und hdmi_group: nur hinzufügen wenn nicht vorhanden
     grep -q "hdmi_force_hotplug=1" "$cfg" || echo "hdmi_force_hotplug=1" >> "$cfg"
     grep -q "hdmi_group=1"         "$cfg" || echo "hdmi_group=1"         >> "$cfg"
-    grep -q "hdmi_mode=31"         "$cfg" || echo "hdmi_mode=31"         >> "$cfg"
-    info "HDMI 1080p50 konfiguriert (wirksam nach Reboot)."
+
+    # hdmi_mode: setzen oder aktualisieren
+    if grep -q "^hdmi_mode=" "$cfg"; then
+        sed -i "s/^hdmi_mode=.*/hdmi_mode=${cea_mode}/" "$cfg"
+    else
+        echo "hdmi_mode=${cea_mode}" >> "$cfg"
+    fi
+
+    info "HDMI konfiguriert: CEA hdmi_mode=${cea_mode} (wirksam nach Reboot)."
+    warn "Für PC-Monitor: HDMI_MODE=auto in ${kiosk_conf} setzen und update.sh ausführen."
 }
 
 # ── 8. Console autologin for kiosk ────────────────────────────────────────────
@@ -214,6 +252,7 @@ install_app
 install_alsa
 install_services
 configure_sudoers
+install_kiosk_conf
 configure_hdmi_sdi
 configure_autologin
 

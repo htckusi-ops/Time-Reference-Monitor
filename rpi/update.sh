@@ -71,26 +71,99 @@ fi
 
 # ── 5. systemd service files ──────────────────────────────────────────────────
 info "Updating systemd service files…"
-sed "s/User=pi/User=${APP_USER}/g; s|/opt/time-reference-monitor|${INSTALL_DIR}|g" \
-    "${REPO_DIR}/rpi/systemd/time-reference-monitor.service" \
-    > /etc/systemd/system/time-reference-monitor.service
+KIOSK_SERVICE_CHANGED=false
+TRM_SERVICE_CHANGED=false
 
-sed "s/User=pi/User=${APP_USER}/g; s|/opt/time-reference-monitor|${INSTALL_DIR}|g" \
-    "${REPO_DIR}/rpi/systemd/chromium-kiosk.service" \
-    > /etc/systemd/system/chromium-kiosk.service
+NEW_TRM=$(sed "s/User=pi/User=${APP_USER}/g; s|/opt/time-reference-monitor|${INSTALL_DIR}|g" \
+    "${REPO_DIR}/rpi/systemd/time-reference-monitor.service")
+if ! diff -q <(echo "$NEW_TRM") /etc/systemd/system/time-reference-monitor.service &>/dev/null 2>&1; then
+    echo "$NEW_TRM" > /etc/systemd/system/time-reference-monitor.service
+    TRM_SERVICE_CHANGED=true
+    info "time-reference-monitor.service updated."
+fi
+
+NEW_KIOSK=$(sed "s/User=pi/User=${APP_USER}/g; s|/opt/time-reference-monitor|${INSTALL_DIR}|g" \
+    "${REPO_DIR}/rpi/systemd/chromium-kiosk.service")
+if ! diff -q <(echo "$NEW_KIOSK") /etc/systemd/system/chromium-kiosk.service &>/dev/null 2>&1; then
+    echo "$NEW_KIOSK" > /etc/systemd/system/chromium-kiosk.service
+    KIOSK_SERVICE_CHANGED=true
+    info "chromium-kiosk.service updated."
+fi
 
 systemctl daemon-reload
 
-# ── 6. sudoers (idempotent) ───────────────────────────────────────────────────
+# ── 6. ALSA config ────────────────────────────────────────────────────────────
+info "Checking ALSA config…"
+if ! diff -q "${REPO_DIR}/rpi/alsa/asound.conf" /etc/asound.conf &>/dev/null 2>&1; then
+    cp /etc/asound.conf /etc/asound.conf.bak
+    cp "${REPO_DIR}/rpi/alsa/asound.conf" /etc/asound.conf
+    info "ALSA config updated (old saved to /etc/asound.conf.bak)."
+else
+    info "ALSA config unchanged."
+fi
+
+# ── 7. Kiosk conf file (install only if missing) ──────────────────────────────
+KIOSK_CONF="/etc/time-reference-monitor.conf"
+if [ ! -f "$KIOSK_CONF" ]; then
+    cp "${REPO_DIR}/rpi/time-reference-monitor.conf" "$KIOSK_CONF"
+    info "Kiosk-Konfiguration erstellt: ${KIOSK_CONF}"
+else
+    info "Kiosk-Konfiguration vorhanden: ${KIOSK_CONF} (nicht überschrieben)."
+fi
+
+# ── 8. HDMI config.txt (sync with HDMI_MODE from kiosk conf) ─────────────────
+CFG_TXT=""
+for f in /boot/firmware/config.txt /boot/config.txt; do
+    [ -f "$f" ] && CFG_TXT="$f" && break
+done
+if [ -n "$CFG_TXT" ]; then
+    HDMI_MODE="sdi-1080i50"
+    [ -f "$KIOSK_CONF" ] && HDMI_MODE=$(grep '^HDMI_MODE=' "$KIOSK_CONF" \
+        | cut -d= -f2 | tr -d '[:space:]' || echo "sdi-1080i50")
+    case "$HDMI_MODE" in
+      sdi-1080p50) CEA_MODE=31 ;;
+      auto)
+        info "HDMI_MODE=auto – config.txt nicht angepasst (kein SDI-Modus)."
+        CEA_MODE="" ;;
+      *) CEA_MODE=20 ;;
+    esac
+    if [ -n "$CEA_MODE" ]; then
+        grep -q "hdmi_force_hotplug=1" "$CFG_TXT" || echo "hdmi_force_hotplug=1" >> "$CFG_TXT"
+        grep -q "hdmi_group=1"         "$CFG_TXT" || echo "hdmi_group=1"         >> "$CFG_TXT"
+        if grep -q "^hdmi_mode=" "$CFG_TXT"; then
+            CURRENT_MODE=$(grep '^hdmi_mode=' "$CFG_TXT" | cut -d= -f2)
+            if [ "$CURRENT_MODE" != "$CEA_MODE" ]; then
+                sed -i "s/^hdmi_mode=.*/hdmi_mode=${CEA_MODE}/" "$CFG_TXT"
+                info "config.txt: hdmi_mode aktualisiert auf ${CEA_MODE} (${HDMI_MODE})."
+                warn "Reboot erforderlich für neue HDMI-Auflösung."
+            else
+                info "config.txt: hdmi_mode=${CEA_MODE} bereits korrekt."
+            fi
+        else
+            echo "hdmi_mode=${CEA_MODE}" >> "$CFG_TXT"
+            info "config.txt: hdmi_mode=${CEA_MODE} eingetragen."
+        fi
+    fi
+fi
+
+# ── 9. sudoers (idempotent) ───────────────────────────────────────────────────
 echo "${APP_USER} ALL=(ALL) NOPASSWD: /sbin/reboot, /sbin/poweroff" \
     > /etc/sudoers.d/time-reference-monitor
 chmod 440 /etc/sudoers.d/time-reference-monitor
 
-# ── 7. Restart monitor service ────────────────────────────────────────────────
+# ── 10. Restart services ───────────────────────────────────────────────────────
 info "Restarting time-reference-monitor…"
 systemctl restart time-reference-monitor.service
 
+if [ "$KIOSK_SERVICE_CHANGED" = true ]; then
+    info "Chromium-kiosk.service wurde geändert – Kiosk wird neu gestartet…"
+    systemctl restart chromium-kiosk.service
+else
+    info "Kiosk-Service unverändert (kein Neustart nötig)."
+fi
+
 echo
 info "=== Update complete ==="
-info "Monitor service restarted. Chromium will reload automatically."
-info "Check logs: journalctl -fu time-reference-monitor"
+info "Monitor service restarted. Check logs:"
+info "  journalctl -fu time-reference-monitor"
+info "  journalctl -fu chromium-kiosk"
