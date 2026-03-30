@@ -694,7 +694,7 @@ def spectrum_html() -> str:
           <h2 style=\"margin:0 0 6px 0;\">LTC Spectrum</h2>
           <div class=\"muted\">On-demand capture + spectrogram. Monitoring continues in the background.</div>
         </div>
-        <a class=\"btn\" href=\"/\">Close</a>
+        <button class=\"btn\" id=\"btnClose\">Close</button>
       </div>
 
       <div style=\"height:14px;\"></div>
@@ -728,7 +728,16 @@ def spectrum_html() -> str:
 <script>
   const el = (id)=>document.getElementById(id);
 
-  async function getStatus(){{ 
+  // Close: window.close() if opened as popup/tab; fallback: history.back or home.
+  el('btnClose').addEventListener('click', function() {{
+    window.close();
+    setTimeout(function() {{
+      if (history.length > 1) {{ history.back(); }}
+      else {{ window.location.href = '/'; }}
+    }}, 150);
+  }});
+
+  async function getStatus(){{
     const r = await fetch('/api/spectrum/status', {{cache:'no-store'}});
     const j = await r.json();
     el('status').textContent = JSON.stringify(j, null, 2);
