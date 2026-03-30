@@ -44,34 +44,32 @@ done
 
 if [ -n "$OUTPUT" ]; then
     case "$HDMI_MODE" in
-      sdi-1080i50|sdi-1080p50)
-        # The RPi GPU outputs the correct HDMI timing (interlaced or progressive)
-        # based on hdmi_mode in config.txt – set by setup.sh / update.sh.
-        # The X framebuffer is always PROGRESSIVE 1920x1080; the GPU handles
-        # interlacing at output.  Do NOT use an interlaced xrandr modeline – it
-        # conflicts with the GPU's own output timing and produces no signal.
-        #
-        # Strategy: use 1920x1080 if already available (normal after reboot with
-        # correct config.txt), otherwise add a custom progressive modeline.
-        echo "[kiosk] SDI-Modus (${HDMI_MODE}): Setze ${OUTPUT} auf 1920×1080 progressiv…"
-        if xrandr --query | grep -q "1920x1080"; then
-            xrandr --output "$OUTPUT" --mode "1920x1080" \
-                || xrandr --output "$OUTPUT" --auto
-        else
-            # Fallback: add progressive 1920x1080 modeline (60Hz safe default)
-            # config.txt already sets the actual 50Hz/interlaced HDMI output timing.
-            xrandr --newmode "1920x1080_60" 148.50 \
-                1920 2008 2052 2200 \
-                1080 1084 1089 1125 \
-                +hsync +vsync 2>/dev/null || true
-            xrandr --addmode "$OUTPUT" "1920x1080_60" 2>/dev/null || true
-            xrandr --output "$OUTPUT" --mode "1920x1080_60" \
-                || xrandr --output "$OUTPUT" --auto
-        fi
-        # Important: config.txt must be set correctly (hdmi_mode=20 for 1080i50,
-        # hdmi_mode=31 for 1080p50) and a REBOOT is required for the GPU to output
-        # the correct HDMI signal to the Blackmagic converter.
-        echo "[kiosk] config.txt HDMI-Signal: $(grep 'hdmi_mode=' /boot/firmware/config.txt /boot/config.txt 2>/dev/null | tail -1 || echo 'unbekannt')"
+      sdi-1080i50)
+        # RPi OS Bookworm uses vc4-kms-v3d (full KMS) by default.
+        # With KMS, config.txt hdmi_mode/hdmi_group are IGNORED.
+        # xrandr is the correct mechanism to set the HDMI output mode.
+        # hdmi_force_hotplug=1 in config.txt still helps Blackmagic converters
+        # that provide no EDID (makes the kernel report the port as "connected").
+        echo "[kiosk] SDI 1080i50: Setze ${OUTPUT} auf 1920×1080 interlaced @ 50 Hz…"
+        xrandr --newmode "1920x1080i50" 74.25 \
+            1920 2448 2492 2640 \
+            1080 1084 1094 1125 \
+            interlace +hsync +vsync 2>/dev/null || true
+        xrandr --addmode "$OUTPUT" "1920x1080i50" 2>/dev/null || true
+        xrandr --output "$OUTPUT" --mode "1920x1080i50" \
+            || { echo "[kiosk] WARN: 1080i50 Modeline fehlgeschlagen – Fallback auf auto."; \
+                 xrandr --output "$OUTPUT" --auto; }
+        ;;
+      sdi-1080p50)
+        echo "[kiosk] SDI 1080p50: Setze ${OUTPUT} auf 1920×1080 progressiv @ 50 Hz…"
+        xrandr --newmode "1920x1080p50" 148.50 \
+            1920 2448 2492 2640 \
+            1080 1084 1089 1125 \
+            +hsync +vsync 2>/dev/null || true
+        xrandr --addmode "$OUTPUT" "1920x1080p50" 2>/dev/null || true
+        xrandr --output "$OUTPUT" --mode "1920x1080p50" \
+            || { echo "[kiosk] WARN: 1080p50 Modeline fehlgeschlagen – Fallback auf auto."; \
+                 xrandr --output "$OUTPUT" --auto; }
         ;;
       auto|*)
         echo "[kiosk] Setze ${OUTPUT} auf Auto-Auflösung (Monitor-Präferenz)…"

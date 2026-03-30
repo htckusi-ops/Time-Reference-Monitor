@@ -120,6 +120,15 @@ install_alsa() {
     # Add APP_USER to the audio group
     usermod -aG audio "$APP_USER"
     info "User ${APP_USER} added to the 'audio' group."
+
+    # Remove user-level .asoundrc – it conflicts with /etc/asound.conf when
+    # both define ltc_left_mono (two dsnoop instances fight for the same hw).
+    local asoundrc="/home/${APP_USER}/.asoundrc"
+    if [ -f "$asoundrc" ]; then
+        mv "$asoundrc" "${asoundrc}.disabled"
+        warn "~/.asoundrc gefunden und deaktiviert (→ .asoundrc.disabled)."
+        warn "  /etc/asound.conf ist die einzige gültige ALSA-Konfiguration."
+    fi
 }
 
 # ── 5. systemd services ───────────────────────────────────────────────────────
@@ -134,6 +143,15 @@ install_services() {
     sed "s/User=pi/User=${APP_USER}/g; s|/opt/time-reference-monitor|${INSTALL_DIR}|g" \
         "${REPO_DIR}/rpi/systemd/chromium-kiosk.service" \
         > /etc/systemd/system/chromium-kiosk.service
+
+    # ptp4l UDS socket permissions drop-in:
+    # pmc must connect to ptp4l's Unix Domain Socket as the ptp user.
+    # Default socket mode is 0600 (root only).  This drop-in sets it to 0666
+    # after ptp4l starts so non-root pmc calls succeed.
+    mkdir -p /etc/systemd/system/ptp4l.service.d
+    cp "${REPO_DIR}/rpi/systemd/ptp4l.service.d/uds-permissions.conf" \
+        /etc/systemd/system/ptp4l.service.d/uds-permissions.conf
+    info "ptp4l UDS-Berechtigungs-Drop-in installiert."
 
     # Disable lightdm (RPi OS Desktop) if present – it would take over the
     # display and fight with our xinit-based kiosk on the same VT.
