@@ -305,7 +305,36 @@ hdmi_group=1           # CEA (Broadcast), nicht DMT (PC-Monitor)
 hdmi_mode=20           # 1080i50 (Standard) — oder 31 für 1080p50
 ```
 
-`hdmi_force_hotplug=1` ist besonders wichtig: Viele HDMI→SDI-Konverter schicken kein EDID zurück — ohne diesen Parameter gibt der RPi gar kein Bildsignal aus.
+`hdmi_force_hotplug=1` ist besonders wichtig: Viele HDMI→SDI-Konverter (inkl. Blackmagic) schicken kein EDID zurück — ohne diesen Parameter gibt der RPi gar kein Bildsignal aus.
+
+**Wie RPi + Blackmagic HDMI→SDI zusammenarbeiten:**
+
+```
+config.txt hdmi_mode=20
+    ↓  GPU gibt 1080i50 HDMI-Signal aus (nach Reboot)
+Blackmagic Mini Converter HDMI→SDI
+    ↓  konvertiert HDMI 1080i50 → SDI 1080i50
+SDI-Monitor / Mischer
+```
+
+- Der **X-Framebuffer läuft immer progressiv** (1920×1080p) — die GPU erledigt das Interlacing bei der HDMI-Ausgabe intern
+- `kiosk.sh` setzt daher nur `--mode 1920x1080` (progressiv), **kein** interlaced-xrandr-Modeline
+- **Nach `setup.sh` oder Änderung von `HDMI_MODE` muss einmalig neu gestartet werden**, damit `config.txt` wirksam wird:
+  ```bash
+  sudo reboot
+  ```
+- Ohne Reboot: kein korrektes HDMI-Signal → Blackmagic gibt kein SDI aus
+
+**Diagnose HDMI-Signal:**
+```bash
+# Aktuell gesetzter GPU-Modus (wirksam seit letztem Reboot):
+vcgencmd hdmi_status_show
+vcgencmd get_config hdmi_mode
+vcgencmd get_config hdmi_group
+
+# Aktuelle xrandr-Auflösung im Kiosk (via SSH):
+DISPLAY=:0 xrandr --query
+```
 
 ---
 
@@ -328,6 +357,54 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 9. `time-reference-monitor` neu starten
 
 Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sobald der Backend-Dienst wieder antwortet.
+
+---
+
+### PTP-Synchronisation lokal testen (Software-Grandmaster)
+
+Um PTP-Synchronisation unabhängig von einem externen Grandmaster zu testen, kann `ptp4l` auf dem RPi selbst als Grandmaster betrieben werden (Software-Timestamps, ohne dedizierte PTP-Hardware):
+
+```bash
+# Temporärer Software-Grandmaster (läuft im Vordergrund, Ctrl+C zum Beenden)
+sudo ptp4l -i eth0 -m -S --priority1 1 --masterOnly 1
+
+# Mit explizitem Domain (muss mit time-reference-monitor --domain übereinstimmen):
+sudo ptp4l -i eth0 -m -S --priority1 1 --masterOnly 1 --domainNumber 0
+```
+
+| Flag | Bedeutung |
+|------|-----------|
+| `-i eth0` | Netzwerkinterface (ggf. `eth0` → `enp3s0` o.ä. anpassen) |
+| `-m` | Meldungen auf stdout (für Diagnose) |
+| `-S` | Software-Timestamps (kein Hardware-PTP nötig) |
+| `--priority1 1` | Niedrigster Wert = höchste Priorität → Grandmaster |
+| `--masterOnly 1` | Wird nie Slave, immer Grandmaster |
+
+**Erwartete Ausgabe:**
+```
+ptp4l[…]: port 1: MASTER
+ptp4l[…]: master offset   0 s0 freq +0 path delay 0
+```
+
+Sobald `ptp4l` als Grandmaster läuft, sollte der Time-Monitor unter `PTP` einen Offset-Wert zeigen (nicht `NO_PTP`). Bei Loopback auf demselben Gerät typischerweise < 1 µs.
+
+**Permanenter Test-Grandmaster (systemd-Service):**
+```bash
+cat > /tmp/gm-test.conf << 'EOF'
+[global]
+domainNumber    0
+priority1       1
+priority2       1
+masterOnly      1
+logAnnounceInterval    -3
+logSyncInterval        -4
+logMinDelayReqInterval -4
+EOF
+
+sudo ptp4l -i eth0 -m -S -f /tmp/gm-test.conf
+```
+
+> **Hinweis:** Ein Software-Grandmaster ist für Funktionstests geeignet. Für präzise Broadcast-Synchronisation ist ein Hardware-Grandmaster (GPS-locked PTP-Uhr) erforderlich — Software-Timestamps schwanken je nach CPU-Last um 10–100 µs.
 
 ---
 
@@ -463,9 +540,11 @@ Die Datei `rpi/alsa/asound.conf` definiert zwei ALSA-Geräte:
 | ALSA-Gerät | Typ | Verwendung |
 |-----------|-----|-----------|
 | `dsnoop_ltc` | dsnoop (shared capture) | Multiplexing: mehrere Prozesse lesen gleichzeitig vom Interface |
-| `ltc_left_mono` | plug (mono, Kanal 0 links) | `alsaltc` + `ltc_level.py`: konvertiert S32_LE stereo → S16_LE mono |
+| `ltc_left_mono` | plug (mono, Kanal 0 links) | `alsaltc` + `ltc_level.py`: konvertiert Hardware-Format → S16_LE mono |
 
-**Wichtig:** `alsaltc` muss das Gerät `ltc_left_mono` verwenden, **nicht** `dsnoop_ltc` direkt. `dsnoop_ltc` liefert Stereo (2 Kanäle, S32_LE); der `plug`-Typ von `ltc_left_mono` konvertiert automatisch auf Mono S16_LE.
+**Wichtig:** `alsaltc` muss das Gerät `ltc_left_mono` verwenden, **nicht** `dsnoop_ltc` direkt. Der `plug`-Typ von `ltc_left_mono` übernimmt automatisch Format- und Kanalkonvertierung. Das Hardware-Format (S24_3LE oder S32_LE) wird in `asound.conf` **nicht** fest vorgegeben — ALSA auto-negotiiert es. Damit wird der Fehler `Slave PCM not usable / no configurations available` vermieden.
+
+Das Interface ist auch als **ALSA-Standardgerät** gesetzt (`defaults.pcm.card US2x2HR`), sodass `arecord` ohne `-D` automatisch den US-2x2HR verwendet.
 
 **Hardware-Konfiguration (Tascam US-2x2HR):**
 
@@ -473,9 +552,10 @@ Die Datei `rpi/alsa/asound.conf` definiert zwei ALSA-Geräte:
 ```
 pcm.dsnoop_ltc {
     slave {
-        pcm "hw:US2x2HR,0"   # ← stabiler Name, überlebt USB-Neuenumeration
-        format S32_LE         # US-2x2HR native: 24-bit in 32-bit Wörtern
+        pcm "hw:US2x2HR,0"  # stabiler Name, überlebt USB-Neuenumeration
+        rate 48000
         channels 2
+        # format: nicht gesetzt → ALSA auto-negotiiert (S24_3LE oder S32_LE)
     }
 }
 ```
@@ -484,18 +564,24 @@ pcm.dsnoop_ltc {
 ```bash
 arecord -l
 # → card 3: US2x2HR [US-2x2HR], device 0: …
-sudo nano /etc/asound.conf   # pcm "hw:US2x2HR,0" anpassen
+sudo nano /etc/asound.conf   # pcm "hw:US2x2HR,0" und card US2x2HR anpassen
 ```
 
-**LTC-Kabel:** am linken Eingang (Input 1) anschliessen — der linke Kanal (Kanal 0) wird dekodiert. Für rechten Kanal: `route_policy` in `ltc_left_mono` anpassen oder `--channel 1` in `alsaltc` setzen.
+**LTC-Kabel:** am linken Eingang (Input 1) anschliessen — der linke Kanal (Kanal 0) wird dekodiert. Für rechten Kanal: Kabel auf rechten Eingang oder `route_policy` in `ltc_left_mono` anpassen.
 
-**ALSA-Konfiguration testen:**
+**ALSA-Diagnose bei Problemen:**
 ```bash
-# Aufnahme 2 Sekunden, prüfen ob dsnoop funktioniert:
-arecord -D dsnoop_ltc -r 48000 -f S32_LE -c 2 -d 2 /tmp/test_stereo.wav
+# Welche Formate unterstützt das Interface nativ?
+arecord --dump-hw-params -D hw:US2x2HR,0 /dev/null 2>&1 | grep -E "^FORMAT|^ACCESS|^CHANNELS|^RATE"
 
-# Mono-Plug testen (was alsaltc sieht):
+# dsnoop testen (auto-Format):
+arecord -D dsnoop_ltc -r 48000 -c 2 -d 2 /tmp/test_stereo.wav
+
+# Mono-Plug testen (was alsaltc sieht, S16_LE via plug):
 arecord -D ltc_left_mono -r 48000 -f S16_LE -c 1 -d 2 /tmp/test_mono.wav
+
+# alsaltc direkt testen:
+/usr/local/bin/alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE
 ```
 
 ---
