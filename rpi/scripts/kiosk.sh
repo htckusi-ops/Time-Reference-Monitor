@@ -30,55 +30,99 @@ if command -v unclutter &>/dev/null; then
 fi
 
 # ── HDMI-Auflösung setzen ─────────────────────────────────────────────────────
-# HDMI_MODE wird aus /etc/time-reference-monitor.conf gelesen (s.o.).
-# Den korrekten Output-Namen ermitteln: xrandr --query
-# Üblich auf RPi: HDMI-1 (RPi 4) oder HDMI-A-1 (RPi 5 / neuere Kernel)
+# HDMI_MODE und HDMI_OUTPUT aus /etc/time-reference-monitor.conf.
+#
+# PROBLEM: hdmi_force_hotplug=1 in config.txt erzwingt ALLE RPi-HDMI-Ports
+# als "connected" – auch ohne angeschlossenes Gerät.  X11 erstellt dann
+# automatisch einen kombinierten Framebuffer (z.B. 3840×1080 auf RPi 4
+# mit zwei HDMI-Ports).  Chromium --kiosk füllt diesen vollständig aus;
+# der SDI-Konverter zeigt nur den linken 1920-px-Streifen → "halbes Bild".
+#
+# FIX: Ziel-Output konfigurieren, alle anderen Outputs deaktivieren,
+# Framebuffer-Grösse explizit auf 1920×1080 setzen.
+#
+# HDMI_OUTPUT (aus conf-Datei) erlaubt explizite Port-Wahl:
+#   HDMI_OUTPUT=HDMI-1   # RPi 4, Port näher zur USB-C-Buchse
+#   HDMI_OUTPUT=HDMI-2   # RPi 4, zweiter Port
+#   HDMI_OUTPUT=HDMI-A-1 # RPi 5
+# Leer lassen = Auto-Erkennung (erster "connected" in Prioritätsreihenfolge).
 
+# Alle verbundenen Outputs sammeln
+ALL_CONNECTED=()
+while IFS= read -r line; do
+    ALL_CONNECTED+=("$line")
+done < <(xrandr --query | grep ' connected' | awk '{print $1}')
+
+echo "[kiosk] Verbundene Outputs: ${ALL_CONNECTED[*]:-keine}"
+
+# Ziel-Output bestimmen
 OUTPUT=""
-for name in HDMI-1 HDMI-A-1 HDMI-2 HDMI-A-2; do
-    if xrandr --query | grep -q "^${name} connected"; then
-        OUTPUT="$name"
-        break
+if [ -n "${HDMI_OUTPUT:-}" ]; then
+    if xrandr --query | grep -q "^${HDMI_OUTPUT} "; then
+        OUTPUT="$HDMI_OUTPUT"
+        echo "[kiosk] Verwende konfigurierten Output: ${OUTPUT}"
+    else
+        echo "[kiosk] WARN: HDMI_OUTPUT=${HDMI_OUTPUT} nicht gefunden – Auto-Erkennung."
     fi
-done
+fi
+if [ -z "$OUTPUT" ]; then
+    for name in HDMI-1 HDMI-A-1 HDMI-2 HDMI-A-2; do
+        if xrandr --query | grep -q "^${name} connected"; then
+            OUTPUT="$name"
+            break
+        fi
+    done
+fi
 
 if [ -n "$OUTPUT" ]; then
+    # Modus auf Ziel-Output setzen
     case "$HDMI_MODE" in
       sdi-1080i50)
-        # RPi OS Bookworm uses vc4-kms-v3d (full KMS) by default.
-        # With KMS, config.txt hdmi_mode/hdmi_group are IGNORED.
-        # xrandr is the correct mechanism to set the HDMI output mode.
-        # hdmi_force_hotplug=1 in config.txt still helps Blackmagic converters
-        # that provide no EDID (makes the kernel report the port as "connected").
-        echo "[kiosk] SDI 1080i50: Setze ${OUTPUT} auf 1920×1080 interlaced @ 50 Hz…"
+        # RPi OS Bookworm: vc4-kms-v3d (Full KMS) – config.txt hdmi_mode ignoriert.
+        # xrandr steuert den HDMI-Output.  hdmi_force_hotplug=1 hilft Blackmagic-
+        # Konvertern ohne EDID (Port erscheint trotzdem als "connected").
+        echo "[kiosk] SDI 1080i50: Setze ${OUTPUT} auf 1920×1080i @ 50 Hz…"
         xrandr --newmode "1920x1080i50" 74.25 \
             1920 2448 2492 2640 \
             1080 1084 1094 1125 \
             interlace +hsync +vsync 2>/dev/null || true
         xrandr --addmode "$OUTPUT" "1920x1080i50" 2>/dev/null || true
         xrandr --output "$OUTPUT" --mode "1920x1080i50" \
-            || { echo "[kiosk] WARN: 1080i50 Modeline fehlgeschlagen – Fallback auf auto."; \
+            || { echo "[kiosk] WARN: 1080i50 Modeline fehlgeschlagen – Fallback auto."; \
                  xrandr --output "$OUTPUT" --auto; }
         ;;
       sdi-1080p50)
-        echo "[kiosk] SDI 1080p50: Setze ${OUTPUT} auf 1920×1080 progressiv @ 50 Hz…"
+        echo "[kiosk] SDI 1080p50: Setze ${OUTPUT} auf 1920×1080p @ 50 Hz…"
         xrandr --newmode "1920x1080p50" 148.50 \
             1920 2448 2492 2640 \
             1080 1084 1089 1125 \
             +hsync +vsync 2>/dev/null || true
         xrandr --addmode "$OUTPUT" "1920x1080p50" 2>/dev/null || true
         xrandr --output "$OUTPUT" --mode "1920x1080p50" \
-            || { echo "[kiosk] WARN: 1080p50 Modeline fehlgeschlagen – Fallback auf auto."; \
+            || { echo "[kiosk] WARN: 1080p50 Modeline fehlgeschlagen – Fallback auto."; \
                  xrandr --output "$OUTPUT" --auto; }
         ;;
       auto|*)
-        echo "[kiosk] Setze ${OUTPUT} auf Auto-Auflösung (Monitor-Präferenz)…"
+        echo "[kiosk] Auto-Auflösung auf ${OUTPUT}…"
         xrandr --output "$OUTPUT" --auto
         ;;
     esac
+
+    # Alle anderen Outputs deaktivieren – verhindert kombinierten Framebuffer.
+    for other in "${ALL_CONNECTED[@]}"; do
+        [ "$other" = "$OUTPUT" ] && continue
+        echo "[kiosk] Deaktiviere ${other} (verhindert kombinierten Framebuffer)"
+        xrandr --output "$other" --off 2>/dev/null || true
+    done
+
+    # Framebuffer-Grösse explizit auf 1920×1080 setzen.
+    # Ohne dies kann X einen breiteren virtuellen Screen behalten,
+    # selbst wenn alle anderen Outputs bereits deaktiviert sind.
+    xrandr --fb 1920x1080 2>/dev/null || true
+
     echo "[kiosk] Auflösung aktiv: $(xrandr --query | grep "^${OUTPUT}" | grep -o '[0-9]*x[0-9]*+[0-9]*+[0-9]*' | head -1)"
 else
-    echo "[kiosk] WARN: Kein verbundener HDMI-Output gefunden – Auflösung nicht gesetzt."
+    echo "[kiosk] WARN: Kein HDMI-Output gefunden – Auflösung nicht gesetzt."
 fi
 
 # ── Wait for the backend ──────────────────────────────────────────────────────
