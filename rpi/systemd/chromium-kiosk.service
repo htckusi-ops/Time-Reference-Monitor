@@ -8,11 +8,17 @@ Wants=time-reference-monitor.service
 [Service]
 Type=simple
 User=pi
+# PAMName=login registers the process as a proper PAM/logind session.
+# This grants access to seat input devices (keyboard, mouse via /dev/input/*),
+# creates XDG_RUNTIME_DIR, and ensures clean VT handoff on logout/restart.
+PAMName=login
 # Run on VT7 so the console login on VT1 remains accessible via Ctrl+Alt+F1
 TTYPath=/dev/tty7
 TTYReset=yes
 TTYVHangup=yes
 StandardInput=tty
+# Input group needed so libinput/evdev can open /dev/input/* event nodes.
+SupplementaryGroups=audio video input
 
 # Remove stale X lock files left over from unclean shutdowns/reboots.
 # '+' runs this command as root (needed: lock files are owned by root).

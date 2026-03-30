@@ -30,7 +30,7 @@ ExecStart=/opt/time-reference-monitor/venv/bin/python3 run.py \
     --ltc \
     --ltc-device dsnoop_ltc \
     --ltc-fps 25 \
-    --ltc-cmd "/usr/local/bin/alsaltc -d dsnoop_ltc -r 48000 -c 1 -f 25 --dropout-ms 800 --format S32_LE" \
+    --ltc-cmd "/usr/local/bin/alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE" \
     --ltc-dropout-timeout-ms 800 \
     --ltc-jump-tolerance-frames 2 \
     --db /var/lib/time-reference-monitor/events.sqlite

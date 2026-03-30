@@ -107,7 +107,8 @@ python3 run.py \
 ```bash
 # ALSA-Config installieren (einmalig)
 sudo cp rpi/alsa/asound.conf /etc/asound.conf
-# → hw:X,0 in /etc/asound.conf auf die LTC-Karte anpassen (arecord -l)
+# → Standard: hw:US2x2HR,0 (Tascam US-2x2HR)
+# → Anderes Interface: arecord -l → Kurzname → /etc/asound.conf anpassen
 
 python3 run.py \
   --source real --iface eth0 \
@@ -116,7 +117,7 @@ python3 run.py \
   --ltc \
   --ltc-device dsnoop_ltc \
   --ltc-fps 25 \
-  --ltc-cmd "alsaltc -d dsnoop_ltc -r 48000 -c 1 -f 25 --dropout-ms 800" \
+  --ltc-cmd "alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800" \
   --ltc-dropout-timeout-ms 800 \
   --ltc-jump-tolerance-frames 2
 ```
@@ -160,7 +161,7 @@ Nach dem Setup:
 ```bash
 # LTC-Karte prüfen und ggf. anpassen:
 arecord -l
-sudo nano /etc/asound.conf          # hw:X,0 setzen
+sudo nano /etc/asound.conf          # Kartennamen anpassen (Standard: hw:US2x2HR,0)
 
 # Monitor-Konfiguration anpassen (Interface, Domain, LTC-FPS …):
 sudo nano /etc/systemd/system/time-reference-monitor.service
@@ -197,7 +198,7 @@ sudo systemctl restart time-reference-monitor
 | `--ltc` | aktiviert | LTC deaktivieren: Zeile entfernen |
 | `--ltc-device` | `dsnoop_ltc` | ALSA-Gerät (aus asound.conf) |
 | `--ltc-fps` | `25` | **anpassen** bei 29.97/30 fps LTC |
-| `--ltc-cmd` | `alsaltc -d dsnoop_ltc -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE` | |
+| `--ltc-cmd` | `alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE` | |
 | `--ltc-dropout-timeout-ms` | `800` | |
 | `--ltc-jump-tolerance-frames` | `2` | |
 | `--db` | `/var/lib/time-reference-monitor/events.sqlite` | |
@@ -258,23 +259,34 @@ Der Chromium-Kiosk läuft auf **Virtual Terminal 7** (VT7). Folgende Wege führe
 sudo systemctl stop chromium-kiosk
 ```
 
-### Auflösung 1920×1080 @ 50 Hz (für HDMI→SDI-Konverter)
+### HDMI-Auflösung konfigurieren
 
-`kiosk.sh` setzt die HDMI-Auflösung automatisch auf **1080p50** (SMPTE 274M, Pixelclock 148.5 MHz) — dem Broadcast-Standard, den HDMI→SDI-Konverter erwarten.
-
-Der HDMI-Output wird beim Start automatisch erkannt (versucht `HDMI-1`, `HDMI-A-1`, `HDMI-2`). Falls der Output-Name abweicht:
+Die gewünschte HDMI-Ausgabeauflösung wird in `/etc/time-reference-monitor.conf` festgelegt:
 
 ```bash
-# Verfügbare Outputs anzeigen (im laufenden X-System):
-xrandr --query
-
-# Anpassen in kiosk.sh, Zeile "for name in HDMI-1 HDMI-A-1 …":
-sudo nano /opt/time-reference-monitor/rpi/scripts/kiosk.sh
+sudo nano /etc/time-reference-monitor.conf
 ```
 
-Auflösung im laufenden Kiosk prüfen:
+| `HDMI_MODE` | Auflösung | Verwendung |
+|-------------|-----------|-----------|
+| `sdi-1080i50` | 1920×1080i 50 Hz | **Standard** — Broadcast-Format für HDMI→SDI-Konverter |
+| `sdi-1080p50` | 1920×1080p 50 Hz | Progressiv für Konverter die p-Signal erfordern |
+| `auto` | Monitor-Präferenz | **PC-Monitor** — lässt den Bildschirm seine native Auflösung wählen |
+
+Nach der Änderung:
 ```bash
-# Via SSH, mit dem DISPLAY der X-Session:
+# Kiosk neu starten (wirksam sofort, kein Reboot nötig):
+sudo systemctl restart chromium-kiosk
+
+# config.txt + kiosk gleichzeitig aktualisieren:
+sudo bash rpi/update.sh
+```
+
+> **PC-Monitor vs. SDI-Konverter:**
+> PC-Monitore unterstützen meist 1080p@60Hz, nicht @50Hz. Wenn das Bild an der linken Seite klebt oder nur teilweise angezeigt wird, `HDMI_MODE=auto` setzen. Für den SDI-Konverter `sdi-1080i50` (Standard-Broadcast) oder `sdi-1080p50` verwenden.
+
+Der HDMI-Output wird beim Start automatisch erkannt. Zur Diagnose via SSH:
+```bash
 DISPLAY=:0 xrandr --query
 ```
 
@@ -283,17 +295,17 @@ DISPLAY=:0 xrandr --query
 - RPi 5 / neuere Kernel: `HDMI-A-1` / `HDMI-A-2`
 - Das Script probiert alle Varianten automatisch durch
 
-**RPi Firmware-Konfiguration (wird von `setup.sh` automatisch gesetzt):**
+**RPi Firmware-Konfiguration (`/boot/firmware/config.txt`):**
 
-`setup.sh` trägt folgende Zeilen in `/boot/firmware/config.txt` ein:
+`setup.sh` und `update.sh` setzen diese Zeilen automatisch basierend auf `HDMI_MODE`:
 
 ```ini
 hdmi_force_hotplug=1   # HDMI aktiv halten, auch wenn SDI-Konverter kein EDID sendet
 hdmi_group=1           # CEA (Broadcast), nicht DMT (PC-Monitor)
-hdmi_mode=31           # 1080p50
+hdmi_mode=20           # 1080i50 (Standard) — oder 31 für 1080p50
 ```
 
-`hdmi_force_hotplug=1` ist besonders wichtig: Viele HDMI→SDI-Konverter schicken kein EDID zurück — ohne diesen Parameter gibt der RPi gar kein Bildsignal aus. Die drei Parameter sind idempotent (werden nicht doppelt eingetragen).
+`hdmi_force_hotplug=1` ist besonders wichtig: Viele HDMI→SDI-Konverter schicken kein EDID zurück — ohne diesen Parameter gibt der RPi gar kein Bildsignal aus.
 
 ---
 
@@ -309,8 +321,11 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 2. Rsync der Applikationsdateien nach `/opt/time-reference-monitor/`
 3. Python-Abhängigkeiten aktualisieren (`pip install -r requirements.txt`)
 4. `alsaltc` neu kompilieren — **nur wenn der C-Source neuer als das installierte Binary ist**
-5. Systemd-Service-Dateien aktualisieren + `daemon-reload`
-6. `time-reference-monitor` neu starten
+5. Systemd-Service-Dateien aktualisieren + `daemon-reload` (Kiosk-Restart nur bei Änderung)
+6. ALSA-Konfiguration aktualisieren (Backup nach `/etc/asound.conf.bak`)
+7. Kiosk-Konfigurationsdatei erstellen (nur wenn `/etc/time-reference-monitor.conf` fehlt)
+8. `config.txt` HDMI-Mode synchronisieren basierend auf `HDMI_MODE` in der Konfigurationsdatei
+9. `time-reference-monitor` neu starten
 
 Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sobald der Backend-Dienst wieder antwortet.
 
@@ -443,18 +458,44 @@ Voraussetzung: Die sudoers-Regel aus `setup.sh` muss installiert sein (`/etc/sud
 
 ## ALSA-Konfiguration (LTC)
 
-Die Datei `rpi/alsa/asound.conf` definiert zwei Geräte:
+Die Datei `rpi/alsa/asound.conf` definiert zwei ALSA-Geräte:
 
 | ALSA-Gerät | Typ | Verwendung |
 |-----------|-----|-----------|
-| `dsnoop_ltc` | dsnoop (shared capture) | `alsaltc` + Spektrum: paralleler Zugriff auf dieselbe Hardware |
-| `ltc_left_mono` | plug (mono, Kanal 0) | `ltc_level.py` (Pegel-Meter im UI) |
+| `dsnoop_ltc` | dsnoop (shared capture) | Multiplexing: mehrere Prozesse lesen gleichzeitig vom Interface |
+| `ltc_left_mono` | plug (mono, Kanal 0 links) | `alsaltc` + `ltc_level.py`: konvertiert S32_LE stereo → S16_LE mono |
 
-Karte anpassen in `/etc/asound.conf`:
+**Wichtig:** `alsaltc` muss das Gerät `ltc_left_mono` verwenden, **nicht** `dsnoop_ltc` direkt. `dsnoop_ltc` liefert Stereo (2 Kanäle, S32_LE); der `plug`-Typ von `ltc_left_mono` konvertiert automatisch auf Mono S16_LE.
+
+**Hardware-Konfiguration (Tascam US-2x2HR):**
+
+`/etc/asound.conf` verwendet den stabilen Kartennamen `hw:US2x2HR,0` (statt des fragilen Index `hw:3,0`):
 ```
 pcm.dsnoop_ltc {
-    slave { pcm "hw:1,0"; ... }   # ← hier den richtigen Index eintragen
+    slave {
+        pcm "hw:US2x2HR,0"   # ← stabiler Name, überlebt USB-Neuenumeration
+        format S32_LE         # US-2x2HR native: 24-bit in 32-bit Wörtern
+        channels 2
+    }
 }
+```
+
+**Anderes Interface:** Kurzname aus `arecord -l` ablesen (Spalte `card X: ShortName`) und in `/etc/asound.conf` eintragen:
+```bash
+arecord -l
+# → card 3: US2x2HR [US-2x2HR], device 0: …
+sudo nano /etc/asound.conf   # pcm "hw:US2x2HR,0" anpassen
+```
+
+**LTC-Kabel:** am linken Eingang (Input 1) anschliessen — der linke Kanal (Kanal 0) wird dekodiert. Für rechten Kanal: `route_policy` in `ltc_left_mono` anpassen oder `--channel 1` in `alsaltc` setzen.
+
+**ALSA-Konfiguration testen:**
+```bash
+# Aufnahme 2 Sekunden, prüfen ob dsnoop funktioniert:
+arecord -D dsnoop_ltc -r 48000 -f S32_LE -c 2 -d 2 /tmp/test_stereo.wav
+
+# Mono-Plug testen (was alsaltc sieht):
+arecord -D ltc_left_mono -r 48000 -f S16_LE -c 1 -d 2 /tmp/test_mono.wav
 ```
 
 ---
@@ -464,7 +505,8 @@ pcm.dsnoop_ltc {
 `alsaltc` liest ALSA-Audio und dekodiert LTC über libltc.
 
 ```bash
-alsaltc -d dsnoop_ltc -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE
+# Korrekte Verwendung: ltc_left_mono (plug übernimmt Format-/Kanalkonvertierung)
+alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE
 # Ausgabe: 10:00:12:08
 #          10:00:12:09
 #          NO_LTC          ← bei Signalausfall
