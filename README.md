@@ -267,11 +267,12 @@ Die gewünschte HDMI-Ausgabeauflösung wird in `/etc/time-reference-monitor.conf
 sudo nano /etc/time-reference-monitor.conf
 ```
 
-| `HDMI_MODE` | Auflösung | Verwendung |
-|-------------|-----------|-----------|
-| `sdi-1080i50` | 1920×1080i 50 Hz | **Standard** — Broadcast-Format für HDMI→SDI-Konverter |
-| `sdi-1080p50` | 1920×1080p 50 Hz | Progressiv für Konverter die p-Signal erfordern |
-| `auto` | Monitor-Präferenz | **PC-Monitor** — lässt den Bildschirm seine native Auflösung wählen |
+| `HDMI_MODE` | Auflösung | CEA | Pixelclock | Verwendung |
+|-------------|-----------|-----|-----------|-----------|
+| `sdi-1080i50` | 1920×1080i 50 Hz | 20 | 74.25 MHz | **Standard** — Broadcast-HD für HDMI→SDI-Konverter |
+| `sdi-1080p50` | 1920×1080p 50 Hz | 31 | 148.5 MHz | Progressiv-HD für Konverter die p-Signal erfordern |
+| `sdi-720p50` | 1280×720p 50 Hz | 19 | 74.25 MHz | HD-Light; gleicher Pixelclock wie 1080i50 |
+| `auto` | Monitor-Präferenz | — | — | **PC-Monitor** — native Auflösung des Bildschirms |
 
 Nach der Änderung:
 ```bash
