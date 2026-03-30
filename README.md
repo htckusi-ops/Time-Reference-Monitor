@@ -19,6 +19,32 @@ Alle Werte werden nur **angezeigt und bewertet** — keine Zeitdisziplinierung, 
 
 ## Voraussetzungen
 
+### Hardware-Kompatibilität (Raspberry Pi + PTP)
+
+PTP-Genauigkeit hängt direkt davon ab, ob das Netzwerk-Interface **Hardware-Timestamping** unterstützt. Folgende RPi-Modelle unterscheiden sich grundlegend:
+
+| Modell | PTP Hardware-Timestamping | Empfehlung |
+|--------|--------------------------|------------|
+| **RPi 4 Model B** | Nein (BCM54213PE, kein IEEE 1588) | Funktioniert nur mit Software-Timestamps (`-S`), ~10–100 µs Genauigkeit |
+| **RPi 5** | Ja (MAC-Level via RP1-Chip) — aber **wiederholte Kernel-Regressionen** | Nicht empfohlen für unbeaufsichtigten Produktionsbetrieb |
+| **RPi CM4** | Ja (PHY-Level, BCM54210PE) | Stabil, ~5–15 ns auf direktem Link, ~5–6 µs über Switches |
+| **RPi CM5** | Ja (PHY + MAC) | Beste Option; vollständige Unterstützung ab Kernel 6.12 |
+
+**RPi 4 Model B:** ptp4l muss im Software-Timestamp-Modus betrieben werden:
+```bash
+sudo ptp4l -i eth0 -S -m -q   # -S = software timestamping
+```
+Im systemd-Service `time-reference-monitor.service` entsprechend `--source real` mit `-S`-Flag in der ptp4l-Konfiguration verwenden. Für ein reines Monitoring-Tool (kein Grandmaster) ist die resultierende Genauigkeit von ~10–50 µs oft ausreichend.
+
+**RPi 5:** Hardware-Timestamping ist im Kernel vorhanden, aber seit 2024 gibt es wiederholte Regressionen (broken in Kernel 6.12.25, 6.16-rc2; funktioniert in 6.12.10 und 6.15). Das Muster ist: Fix → Regression → Fix → Regression. Für Produktionseinsatz muss die Kernel-Version aktiv gepinnt werden. Als Fallback: Software-Timestamps mit `-S`.
+
+**Prüfen ob Hardware-Timestamping verfügbar ist:**
+```bash
+ethtool -T eth0
+# Hardware-Timestamping: "PTP Hardware Clock: 0" muss erscheinen
+# Software-only: "PTP Hardware Clock: none"
+```
+
 ### System
 - Raspberry Pi OS Bookworm (64-bit) empfohlen, oder Debian/Ubuntu
 - Python 3.10+
