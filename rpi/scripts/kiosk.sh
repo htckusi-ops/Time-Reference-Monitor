@@ -77,6 +77,19 @@ fi
 if [ -n "$OUTPUT" ]; then
     # Modus auf Ziel-Output setzen
     case "$HDMI_MODE" in
+      sdi-720p50)
+        echo "[kiosk] SDI 720p50: Setze ${OUTPUT} auf 1280×720p @ 50 Hz…"
+        # CEA-19: 74.25 MHz – same pixel clock as 1080i50, different blanking
+        xrandr --newmode "1280x720p50" 74.25 \
+            1280 1720 1760 1980 \
+            720 725 730 750 \
+            +hsync +vsync 2>/dev/null || true
+        xrandr --addmode "$OUTPUT" "1280x720p50" 2>/dev/null || true
+        xrandr --output "$OUTPUT" --mode "1280x720p50" \
+            || { echo "[kiosk] WARN: 720p50 Modeline fehlgeschlagen – Fallback auto."; \
+                 xrandr --output "$OUTPUT" --auto; }
+        FB_SIZE="1280x720"
+        ;;
       sdi-1080i50)
         # RPi OS Bookworm: vc4-kms-v3d (Full KMS) – config.txt hdmi_mode ignoriert.
         # xrandr steuert den HDMI-Output.  hdmi_force_hotplug=1 hilft Blackmagic-
@@ -90,6 +103,7 @@ if [ -n "$OUTPUT" ]; then
         xrandr --output "$OUTPUT" --mode "1920x1080i50" \
             || { echo "[kiosk] WARN: 1080i50 Modeline fehlgeschlagen – Fallback auto."; \
                  xrandr --output "$OUTPUT" --auto; }
+        FB_SIZE="1920x1080"
         ;;
       sdi-1080p50)
         echo "[kiosk] SDI 1080p50: Setze ${OUTPUT} auf 1920×1080p @ 50 Hz…"
@@ -101,10 +115,12 @@ if [ -n "$OUTPUT" ]; then
         xrandr --output "$OUTPUT" --mode "1920x1080p50" \
             || { echo "[kiosk] WARN: 1080p50 Modeline fehlgeschlagen – Fallback auto."; \
                  xrandr --output "$OUTPUT" --auto; }
+        FB_SIZE="1920x1080"
         ;;
       auto|*)
         echo "[kiosk] Auto-Auflösung auf ${OUTPUT}…"
         xrandr --output "$OUTPUT" --auto
+        FB_SIZE=""
         ;;
     esac
 
@@ -115,10 +131,12 @@ if [ -n "$OUTPUT" ]; then
         xrandr --output "$other" --off 2>/dev/null || true
     done
 
-    # Framebuffer-Grösse explizit auf 1920×1080 setzen.
-    # Ohne dies kann X einen breiteren virtuellen Screen behalten,
-    # selbst wenn alle anderen Outputs bereits deaktiviert sind.
-    xrandr --fb 1920x1080 2>/dev/null || true
+    # Framebuffer-Grösse explizit setzen – verhindert, dass X einen
+    # breiteren virtuellen Screen behält, nachdem andere Outputs deaktiviert wurden.
+    if [ -n "${FB_SIZE:-}" ]; then
+        xrandr --fb "$FB_SIZE" 2>/dev/null || true
+        echo "[kiosk] Framebuffer: ${FB_SIZE}"
+    fi
 
     echo "[kiosk] Auflösung aktiv: $(xrandr --query | grep "^${OUTPUT}" | grep -o '[0-9]*x[0-9]*+[0-9]*+[0-9]*' | head -1)"
 else
