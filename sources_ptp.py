@@ -9,8 +9,9 @@ from models import PTPStatus
 import config
 
 
-_PMC_RE = re.compile(r"^\s*([A-Za-z0-9 _\-\(\)\.\/]+)\s+([:\=])\s*(.*)$")
-
+_PMC_RE = re.compile(
+    r"^\s*([A-Za-z][A-Za-z0-9 _\-\(\)\.\/]+?)(?:\s*[:=]\s*|\s{2,})(.+?)\s*$"
+)
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -41,7 +42,7 @@ def _parse_pmc_kv(text: str) -> Dict[str, str]:
         m = _PMC_RE.match(line)
         if not m:
             continue
-        kv[m.group(1).strip().lower()] = m.group(3).strip()
+        kv[m.group(1).strip().lower()] = m.group(2).strip()
     return kv
 
 
