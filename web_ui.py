@@ -28,27 +28,13 @@ def ui_html() -> str:
     @media (max-width: 980px){{ .grid{{grid-template-columns:1fr;}} }}
     .card{{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow: 0 10px 24px rgba(0,0,0,.25);}}
     .card h3{{margin:0 0 10px 0; font-size:13px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
-    .bigtime{{padding:14px 16px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:60px minmax(90px,1fr) auto; align-items:center; row-gap:18px; column-gap:10px;}}
-    .timeLabel{{font-size:15px; font-weight:700;}}
-    .timeZ{{font-size:10px; font-weight:400; color:var(--muted); vertical-align:super;}}
-    .timeStatus{{font-family:var(--mono); font-size:11px; font-weight:600;}}
+    @font-face{{font-family:'Seg7';src:url('/font/Segment7Standard.otf') format('opentype');font-weight:400;font-style:normal;}}
+    .bigtime{{padding:14px 16px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:76px minmax(110px,1fr) auto; align-items:center; row-gap:16px; column-gap:10px;}}
+    .timeLabel{{font-size:30px; font-weight:700;}}
+    .timeStatus{{font-family:var(--mono); font-size:17px; font-weight:600;}}
     .timeStatus.ok{{color:var(--ok);}} .timeStatus.warn{{color:var(--warn);}} .timeStatus.alarm{{color:var(--alarm);}} .timeStatus.muted{{color:var(--muted);}}
-    .seg-wrap{{display:inline-flex; align-items:center; height:56px; gap:4px;}}
-    .seg-digit-outer{{display:inline-block; width:30px; height:56px; position:relative; overflow:visible; flex-shrink:0;}}
-    .seg-digit{{width:90px; height:200px; transform:scale(0.32); transform-origin:top left; position:absolute; top:0; left:0;}}
-    .seg-digit span{{display:block;}}
-    .seg-sep{{font-family:var(--mono); font-size:34px; line-height:1; color:rgba(255,255,255,.5); margin:0 4px; align-self:center; padding-bottom:4px;}}
-    .segmentVer{{height:64px; width:0; border-right:8px solid; border-top:8px solid transparent; border-bottom:8px solid transparent; transition:border-right-color .15s ease-in-out;}}
-    .segmentVer span{{height:64px; width:0; border-left:8px solid; border-top:8px solid transparent; border-bottom:8px solid transparent; transform:translate(8px,-8px); transition:border-left-color .15s ease-in-out;}}
-    .segmentHor{{width:64px; height:0; border-bottom:8px solid; border-left:8px solid transparent; border-right:8px solid transparent; transition:border-bottom-color .15s ease-in-out;}}
-    .segmentHor span{{width:64px; height:0; border-top:8px solid; border-left:8px solid transparent; border-right:8px solid transparent; transform:translate(-8px,8px); transition:border-top-color .15s ease-in-out;}}
-    .segment1{{transform:translateX(6px);}} .segment2{{transform:translate(-3px,1px);}} .segment3{{transform:translate(79px,-79px);}}
-    .segment4{{transform:translate(-3px,-77px);}} .segment5{{transform:translate(79px,-157px);}} .segment6{{transform:translate(6px,-164px);}} .segment7{{transform:translate(6px,-254px);}}
-    .horOn{{border-bottom-color:rgba(255,255,255,1);}} .horOn span{{border-top-color:rgba(255,255,255,.85);}}
-    .verOn{{border-right-color:rgba(255,255,255,1);}} .verOn span{{border-left-color:rgba(255,255,255,.85);}}
-    .horOff{{border-bottom-color:rgba(255,255,255,.09);}} .horOff span{{border-top-color:rgba(255,255,255,.07);}}
-    .verOff{{border-right-color:rgba(255,255,255,.09);}} .verOff span{{border-left-color:rgba(255,255,255,.07);}}
-    .smalltime{{font-family:var(--mono); font-size:16px; color:var(--muted); margin-top:10px;}}
+    .seg-wrap{{font-family:'Seg7',var(--mono); font-size:48px; line-height:1; letter-spacing:0.05em; color:var(--text); white-space:nowrap;}}
+    .smalltime{{font-family:var(--mono); font-size:13px; color:var(--muted); margin-top:8px;}}
     .row{{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}}
     .kv{{display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; font-size:13px;}}
     .kv-k{{color:var(--muted);}}
@@ -127,8 +113,8 @@ def ui_html() -> str:
       <div class="split">
         <h3>Reference Time</h3>
         <div class="row">
-          <div class="btn" id="btnPause">PAUSE</div>
-          <a class="btn" href="/ltc-clock" target="_blank" rel="noopener">LTC Clock…</a>
+          <div class="btn" id="btnReload">RELOAD</div>
+          <a class="btn" href="/ltc-clock" target="_blank" rel="noopener">Screen Clock…</a>
           <a class="btn" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">LTC Spectrum…</a>
           <div class="btn btn-sys" id="btnReboot">REBOOT</div>
           <div class="btn btn-sys" id="btnShutdown">SHUTDOWN</div>
@@ -138,15 +124,15 @@ def ui_html() -> str:
       <div class="bigtime" id="ptpBox">
         <div class="timeLabel">PTP</div>
         <div class="timeStatus alarm" id="ptpStatusBadge">NO PTP SYNC</div>
-        <div class="seg-wrap" id="ptpTimeSegs"></div>
+        <div class="seg-wrap" id="ptpTimeSegs">--:--:--.--</div>
 
-        <div class="timeLabel">NTP <span class="timeZ">Z</span></div>
+        <div class="timeLabel">NTP</div>
         <div class="timeStatus muted" id="ntpStatusBadge">—</div>
-        <div class="seg-wrap" id="ntpTimeSegs"></div>
+        <div class="seg-wrap" id="ntpTimeSegs">--:--:--.--</div>
 
         <div class="timeLabel">LTC</div>
         <div class="timeStatus muted" id="ltcStatusBadge">—</div>
-        <div class="seg-wrap" id="ltcTimeSegs"></div>
+        <div class="seg-wrap" id="ltcTimeSegs">--:--:--.--</div>
       </div>
 
 <div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
@@ -240,8 +226,6 @@ def ui_html() -> str:
 
 <script>
 (() => {{
-  let paused = false;
-
   // rendering bases (freeze if stale/paused/no-data)
   let lastApi = null;
 
@@ -319,79 +303,10 @@ function renderLedMeter(ledRms, ledPeak){{
 }}
 
 
-  // --- 7-segment helpers ---
   function pad2(n) {{ return String(n).padStart(2,'0'); }}
 
-  // segment patterns [top,tl,tr,bl,br,bot,mid] matching CodePen indices 0-6
-  // index 0=top(hor), 1=top-left(ver), 2=top-right(ver), 3=bot-left(ver), 4=bot-right(ver), 5=bottom(hor), 6=middle(hor)
-  const SEG7 = [
-    [1,1,1,1,1,1,0], // 0
-    [0,0,1,0,1,0,0], // 1
-    [1,0,1,1,0,1,1], // 2
-    [1,0,1,0,1,1,1], // 3
-    [0,1,1,0,1,0,1], // 4
-    [1,1,0,0,1,1,1], // 5
-    [1,1,0,1,1,1,1], // 6
-    [1,0,1,0,1,0,0], // 7
-    [1,1,1,1,1,1,1], // 8
-    [1,1,1,0,1,1,1], // 9
-  ];
-  const SEG7_DASH = [0,0,0,0,0,0,1]; // middle segment only
-
-  function makeSegDigit() {{
-    const outer = document.createElement('div');
-    outer.className = 'seg-digit-outer';
-    const inner = document.createElement('div');
-    inner.className = 'seg-digit';
-    for(let i = 0; i < 7; i++) {{
-      const isHor = (i===0 || i===5 || i===6);
-      const d = document.createElement('div');
-      d.className = 'segment'+(i+1)+' '+(isHor ? 'segmentHor horOff' : 'segmentVer verOff');
-      d.appendChild(document.createElement('span'));
-      inner.appendChild(d);
-    }}
-    outer.appendChild(inner);
-    return outer;
-  }}
-
-  function setSegDigit(outerEl, ch) {{
-    const segs = outerEl.firstChild.children;
-    const pat = (ch >= '0' && ch <= '9') ? SEG7[parseInt(ch,10)] : SEG7_DASH;
-    for(let i = 0; i < 7; i++) {{
-      const isHor = (i===0 || i===5 || i===6);
-      segs[i].className = 'segment'+(i+1)+' '+(isHor
-        ? ('segmentHor '+(pat[i] ? 'horOn' : 'horOff'))
-        : ('segmentVer '+(pat[i] ? 'verOn' : 'verOff')));
-    }}
-  }}
-
-  function initSevenSeg(el) {{
-    if(el.dataset.segInit) return;
-    el.dataset.segInit = '1';
-    for(const p of ['d','d',':','d','d',':','d','d','.','d','d']) {{
-      if(p === 'd') {{
-        el.appendChild(makeSegDigit());
-      }} else {{
-        const s = document.createElement('span');
-        s.className = 'seg-sep';
-        s.textContent = p;
-        el.appendChild(s);
-      }}
-    }}
-  }}
-
   function renderSevenSeg(el, timeStr) {{
-    if(!el) return;
-    initSevenSeg(el);
-    // Extract digit chars only (skip ':', '.', ' ')
-    const src = timeStr || '--:--:--.--';
-    const digits = [];
-    for(const c of src) {{ if(c!==':' && c!=='.' && c!==' ') digits.push(c); }}
-    while(digits.length < 8) digits.push('-');
-    let di = 0;
-    for(const ch of el.children) {{
-      if(ch.classList.contains('seg-digit-outer')) setSegDigit(ch, digits[di++] || '-');
-    }}
+    if(el) el.textContent = timeStr || '--:--:--.--';
   }}
 
   function setDot(dotEl, state){{
@@ -593,7 +508,6 @@ function renderLedMeter(ledRms, ledPeak){{
   }}
 
   async function pollApi(){{
-    if(paused) return;
     try{{
       const r = await fetch('/api/status', {{cache:'no-store'}});
       if(!r.ok) throw new Error('http '+r.status);
@@ -689,13 +603,7 @@ function renderLedMeter(ledRms, ledPeak){{
     }}
   }}
 
-  els('btnPause').addEventListener('click', async () => {{
-    paused = !paused;
-    els('btnPause').textContent = paused ? 'RESUME' : 'PAUSE';
-    try {{
-      await fetch(paused ? '/api/pause' : '/api/resume', {{method:'POST'}});
-    }} catch(e) {{}}
-  }});
+  els('btnReload').addEventListener('click', () => {{ window.location.reload(); }});
 
   els('btnReboot').addEventListener('click', async () => {{
     if (!confirm('System jetzt neu starten?')) return;
