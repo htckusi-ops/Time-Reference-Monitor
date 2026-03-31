@@ -7,6 +7,9 @@ Wants=time-reference-monitor.service
 
 [Service]
 Type=simple
+Nice=5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 User=ptp
 # PAMName=login registers the process as a proper PAM/logind session.
 # This grants access to seat input devices (keyboard, mouse via /dev/input/*),
