@@ -26,7 +26,7 @@ python3 run.py --source mock --http --http-host 0.0.0.0 --http-port 8088 --poll 
   --ui-refresh-ms 20 --ui-api-poll-ms 250 \
   --ltc --ltc-device dsnoop_ltc --ltc-fps 25 \
   --ltc-cmd "./alsaltc -d dsnoop_ltc -r 48000 -c 1 -f 25 --dropout-ms 800" \
-  --ltc-dropout-timeout-ms 800 --ltc-jump-tolerance-frames 2
+  --ltc-dropout-timeout-ms 800 --ltc-jump-tolerance-frames 5
 
 3) Spectrum UI
 --------------

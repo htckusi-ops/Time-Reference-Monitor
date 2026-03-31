@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ltc-cmd", default=None, help="Override LTC decode command (must output HH:MM:SS:FF)")
     ap.add_argument("--ltc-refresh-s", type=float, default=config.DEFAULT_LTC_REFRESH_S, help="LTC snapshot refresh interval (seconds)")
     ap.add_argument("--ltc-dropout-timeout-ms", type=int, default=0, help="Mark LTC absent if no frame received for this long (ms). 0 disables.")
-    ap.add_argument("--ltc-jump-tolerance-frames", type=int, default=0, help="Warn on LTC time jumps larger than this many frames. 0 disables.")
+    ap.add_argument("--ltc-jump-tolerance-frames", type=int, default=5, help="Warn on LTC time jumps larger than this many frames. 0 disables. Default 5 suppresses jitter.")
 
     # Mock simulation knobs
     ap.add_argument("--mock-jitter-ns", type=int, default=0)
