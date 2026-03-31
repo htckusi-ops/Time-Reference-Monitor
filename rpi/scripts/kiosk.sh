@@ -186,6 +186,9 @@ CHROMIUM_ARGS=(
     --disable-pinch
     --overscroll-history-navigation=0
     --disable-restore-session-state
+    --disable-gpu
+    --disable-gpu-rasterization
+    --renderer-process-limit=1 
     --temp-profile
 )
 
