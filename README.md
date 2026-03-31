@@ -119,7 +119,7 @@ python3 run.py \
   --ltc-fps 25 \
   --ltc-cmd "alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800" \
   --ltc-dropout-timeout-ms 800 \
-  --ltc-jump-tolerance-frames 2
+  --ltc-jump-tolerance-frames 5
 ```
 
 ---

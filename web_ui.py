@@ -28,11 +28,26 @@ def ui_html() -> str:
     @media (max-width: 980px){{ .grid{{grid-template-columns:1fr;}} }}
     .card{{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow: 0 10px 24px rgba(0,0,0,.25);}}
     .card h3{{margin:0 0 10px 0; font-size:13px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
-    .bigtime{{font-family:var(--mono); font-size:34px; line-height:1.05; letter-spacing:.5px; padding:10px 12px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); min-height: 86px; display:flex; flex-direction:column; justify-content:center;}}
-    .ptpLine{{display:flex; justify-content:space-between; gap:10px; align-items:baseline;}}
-    .ptpLabel{{color:var(--muted); font-size:14px;}}
-    .ptpValue{{}}
-    .ptpNo{{color:var(--alarm); font-weight:800; letter-spacing:.4px;}}
+    .bigtime{{padding:10px 12px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:54px minmax(80px,1fr) auto; align-items:center; row-gap:6px; column-gap:8px;}}
+    .timeLabel{{font-size:15px; font-weight:700;}}
+    .timeZ{{font-size:10px; font-weight:400; color:var(--muted); vertical-align:super;}}
+    .timeStatus{{font-family:var(--mono); font-size:11px; font-weight:600;}}
+    .timeStatus.ok{{color:var(--ok);}} .timeStatus.warn{{color:var(--warn);}} .timeStatus.alarm{{color:var(--alarm);}} .timeStatus.muted{{color:var(--muted);}}
+    .seg-wrap{{display:inline-flex; align-items:center; height:42px; gap:0;}}
+    .seg-digit-outer{{display:inline-block; width:22px; height:42px; position:relative; overflow:visible; flex-shrink:0;}}
+    .seg-digit{{width:90px; height:200px; transform:scale(0.244); transform-origin:top left; position:absolute; top:0; left:0;}}
+    .seg-digit span{{display:block;}}
+    .seg-sep{{font-family:var(--mono); font-size:26px; line-height:1; color:rgba(255,255,255,.5); margin:0 1px; align-self:center;}}
+    .segmentVer{{height:64px; width:0; border-right:8px solid; border-top:8px solid transparent; border-bottom:8px solid transparent; transition:border-right-color .15s ease-in-out;}}
+    .segmentVer span{{height:64px; width:0; border-left:8px solid; border-top:8px solid transparent; border-bottom:8px solid transparent; transform:translate(8px,-8px); transition:border-left-color .15s ease-in-out;}}
+    .segmentHor{{width:64px; height:0; border-bottom:8px solid; border-left:8px solid transparent; border-right:8px solid transparent; transition:border-bottom-color .15s ease-in-out;}}
+    .segmentHor span{{width:64px; height:0; border-top:8px solid; border-left:8px solid transparent; border-right:8px solid transparent; transform:translate(-8px,8px); transition:border-top-color .15s ease-in-out;}}
+    .segment1{{transform:translateX(6px);}} .segment2{{transform:translate(-3px,1px);}} .segment3{{transform:translate(79px,-79px);}}
+    .segment4{{transform:translate(-3px,-77px);}} .segment5{{transform:translate(79px,-157px);}} .segment6{{transform:translate(6px,-164px);}} .segment7{{transform:translate(6px,-254px);}}
+    .horOn{{border-bottom-color:rgba(255,255,255,1);}} .horOn span{{border-top-color:rgba(255,255,255,.85);}}
+    .verOn{{border-right-color:rgba(255,255,255,1);}} .verOn span{{border-left-color:rgba(255,255,255,.85);}}
+    .horOff{{border-bottom-color:rgba(255,255,255,.09);}} .horOff span{{border-top-color:rgba(255,255,255,.07);}}
+    .verOff{{border-right-color:rgba(255,255,255,.09);}} .verOff span{{border-left-color:rgba(255,255,255,.07);}}
     .smalltime{{font-family:var(--mono); font-size:16px; color:var(--muted); margin-top:10px;}}
     .row{{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}}
     .kv{{display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; font-size:13px;}}
@@ -121,31 +136,28 @@ def ui_html() -> str:
       </div>
 
       <div class="bigtime" id="ptpBox">
-        <div class="ptpLine">
-          <div class="ptpLabel">PTP</div>
-          <div class="ptpValue mono" id="ptpTime">—</div>
-        </div>
-        <div class="ptpLine">
-          <div class="ptpLabel">NTP</div>
-          <div class="ptpValue mono" id="ntpTimeBig">—</div>
-        </div>
-        <div class="ptpLine">
-          <div class="ptpLabel">LTC</div>
-          <div class="ptpValue mono" id="ltcTimeBig">—</div>
-        </div>
-        <div class="ptpLine">
-          <div class="ptpLabel">Status</div>
-          <div class="ptpValue mono" id="ptpStatusLine"><span class="ptpNo">NO PTP SYNC</span></div>
-        </div>
+        <div class="timeLabel">PTP</div>
+        <div class="timeStatus alarm" id="ptpStatusBadge">NO PTP SYNC</div>
+        <div class="seg-wrap" id="ptpTimeSegs"></div>
+
+        <div class="timeLabel">NTP <span class="timeZ">Z</span></div>
+        <div class="timeStatus muted" id="ntpStatusBadge">—</div>
+        <div class="seg-wrap" id="ntpTimeSegs"></div>
+
+        <div class="timeLabel">LTC</div>
+        <div class="timeStatus muted" id="ltcStatusBadge">—</div>
+        <div class="seg-wrap" id="ltcTimeSegs"></div>
       </div>
 
 <div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
-      <div class="smalltime" id="ntpDateLine">—</div>
+      <div class="smalltime" id="ntpDateLine">NTP Date: —</div>
+      <div class="smalltime" id="ptpDateLine">PTP Date: —</div>
+      <div class="smalltime" id="ntpTzLine">NTP TZ: —</div>
       <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
       <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
       <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
       <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
-      <div class="smalltime" id="ltcTzLine">TZ: —</div>
+      <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
       <div class="smalltime">
       LTC Audio Level ({config.LTC_ALSA_DEVICE})
         </div>
@@ -307,6 +319,81 @@ function renderLedMeter(ledRms, ledPeak){{
 }}
 
 
+  // --- 7-segment helpers ---
+  function pad2(n) {{ return String(n).padStart(2,'0'); }}
+
+  // segment patterns [top,tl,tr,bl,br,bot,mid] matching CodePen indices 0-6
+  // index 0=top(hor), 1=top-left(ver), 2=top-right(ver), 3=bot-left(ver), 4=bot-right(ver), 5=bottom(hor), 6=middle(hor)
+  const SEG7 = [
+    [1,1,1,1,1,1,0], // 0
+    [0,0,1,0,1,0,0], // 1
+    [1,0,1,1,0,1,1], // 2
+    [1,0,1,0,1,1,1], // 3
+    [0,1,1,0,1,0,1], // 4
+    [1,1,0,0,1,1,1], // 5
+    [1,1,0,1,1,1,1], // 6
+    [1,0,1,0,1,0,0], // 7
+    [1,1,1,1,1,1,1], // 8
+    [1,1,1,0,1,1,1], // 9
+  ];
+  const SEG7_DASH = [0,0,0,0,0,0,1]; // middle segment only
+
+  function makeSegDigit() {{
+    const outer = document.createElement('div');
+    outer.className = 'seg-digit-outer';
+    const inner = document.createElement('div');
+    inner.className = 'seg-digit';
+    for(let i = 0; i < 7; i++) {{
+      const isHor = (i===0 || i===5 || i===6);
+      const d = document.createElement('div');
+      d.className = 'segment'+(i+1)+' '+(isHor ? 'segmentHor horOff' : 'segmentVer verOff');
+      d.appendChild(document.createElement('span'));
+      inner.appendChild(d);
+    }}
+    outer.appendChild(inner);
+    return outer;
+  }}
+
+  function setSegDigit(outerEl, ch) {{
+    const segs = outerEl.firstChild.children;
+    const pat = (ch >= '0' && ch <= '9') ? SEG7[parseInt(ch,10)] : SEG7_DASH;
+    for(let i = 0; i < 7; i++) {{
+      const isHor = (i===0 || i===5 || i===6);
+      segs[i].className = 'segment'+(i+1)+' '+(isHor
+        ? ('segmentHor '+(pat[i] ? 'horOn' : 'horOff'))
+        : ('segmentVer '+(pat[i] ? 'verOn' : 'verOff')));
+    }}
+  }}
+
+  function initSevenSeg(el) {{
+    if(el.dataset.segInit) return;
+    el.dataset.segInit = '1';
+    for(const p of ['d','d',':','d','d',':','d','d','.','d','d']) {{
+      if(p === 'd') {{
+        el.appendChild(makeSegDigit());
+      }} else {{
+        const s = document.createElement('span');
+        s.className = 'seg-sep';
+        s.textContent = p;
+        el.appendChild(s);
+      }}
+    }}
+  }}
+
+  function renderSevenSeg(el, timeStr) {{
+    if(!el) return;
+    initSevenSeg(el);
+    // Extract digit chars only (skip ':', '.', ' ')
+    const src = timeStr || '--:--:--.--';
+    const digits = [];
+    for(const c of src) {{ if(c!==':' && c!=='.' && c!==' ') digits.push(c); }}
+    while(digits.length < 8) digits.push('-');
+    let di = 0;
+    for(const ch of el.children) {{
+      if(ch.classList.contains('seg-digit-outer')) setSegDigit(ch, digits[di++] || '-');
+    }}
+  }}
+
   function setDot(dotEl, state){{
     dotEl.classList.remove('ok','warn','alarm');
     if(state==='OK') dotEl.classList.add('ok');
@@ -421,12 +508,34 @@ function renderLedMeter(ledRms, ledPeak){{
     const ntpLine = `NTP: ${{ntp.status || 'unknown'}} | stratum=${{(ntp.stratum ?? '—')}} | ref=${{(ntp.ref ?? '—')}} | last_update_age=${{(ntp.last_update_age_s ?? '—')}}`;
     els('ntpLine').textContent = ntpLine;
 
+    // NTP status badge
+    const ntpStat = els('ntpStatusBadge');
+    const ns = ntp.status || 'unknown';
+    if(ns === 'synced') {{ ntpStat.className = 'timeStatus ok'; ntpStat.textContent = 'synced'; }}
+    else if(ns === 'unknown') {{ ntpStat.className = 'timeStatus muted'; ntpStat.textContent = 'no data'; }}
+    else {{ ntpStat.className = 'timeStatus warn'; ntpStat.textContent = ns; }}
+
     const pres = (ltc.enabled && ltc.present) ? 'present' : (ltc.enabled ? 'absent' : 'disabled');
     const tc = ltc.timecode || '—';
     const fps = ltc.fps || '—';
     const age = (ltc.last_update_age_s != null) ? (Math.round(ltc.last_update_age_s*10)/10)+'s' : '—';
     els('ltcLine').textContent = `LTC: ${{pres}} | tc=${{tc}} | fps=${{fps}} | last_update_age=${{age}}`;
-    els('ltcTimeBig').textContent = (ltc.enabled && ltc.present && tc !== '—') ? tc : '—';
+
+    // LTC status badge
+    const ltcStat = els('ltcStatusBadge');
+    if(!ltc.enabled) {{ ltcStat.className = 'timeStatus muted'; ltcStat.textContent = 'disabled'; }}
+    else if(ltc.present) {{ ltcStat.className = 'timeStatus ok'; ltcStat.textContent = 'present' + (ltc.fps ? ' '+ltc.fps+'fps' : ''); }}
+    else {{ ltcStat.className = 'timeStatus warn'; ltcStat.textContent = 'absent'; }}
+
+    // LTC 7-segment time (convert HH:MM:SS:FF → HH:MM:SS.CC)
+    if(ltc.enabled && ltc.present && tc && tc !== '—') {{
+      const tcm = tc.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}}):(\d{{2}})$/);
+      if(tcm) {{
+        const fpsN = Number(ltc.fps) || 25;
+        const cs = Math.min(99, Math.round(Number(tcm[4]) / fpsN * 100));
+        renderSevenSeg(els('ltcTimeSegs'), tcm[1]+':'+tcm[2]+':'+tcm[3]+'.'+pad2(cs));
+      }} else {{ renderSevenSeg(els('ltcTimeSegs'), null); }}
+    }} else {{ renderSevenSeg(els('ltcTimeSegs'), null); }}
 
     // rolling summary
     const eR = Number(roll.errors_rolling ?? 0);
@@ -453,6 +562,18 @@ function renderLedMeter(ledRms, ledPeak){{
     const ageMs = st.poll_age_ms ?? 999999;
     const canTick = (!!st.ptp_valid) && (ageMs <= staleTh) && (!meta.paused);
 
+    // PTP status badge
+    const ptpStat = els('ptpStatusBadge');
+    if(meta.paused) {{ ptpStat.className = 'timeStatus warn'; ptpStat.textContent = 'PAUSED'; }}
+    else if(!st.ptp_valid) {{ ptpStat.className = 'timeStatus alarm'; ptpStat.textContent = 'NO PTP SYNC'; }}
+    else if(ageMs > staleTh) {{ ptpStat.className = 'timeStatus alarm'; ptpStat.textContent = 'STALE DATA'; }}
+    else {{ ptpStat.className = 'timeStatus ok'; ptpStat.textContent = 'SYNC OK'; }}
+
+    // PTP date
+    els('ptpDateLine').textContent = (st.ptp_valid && st.ptp_time_utc_iso)
+      ? 'PTP Date: ' + st.ptp_time_utc_iso.slice(0,10)
+      : 'PTP Date: —';
+
     if(canTick && st.ptp_time_utc_iso){{
       const d = new Date(st.ptp_time_utc_iso);
       ptpBaseMs = d.getTime();
@@ -462,16 +583,10 @@ function renderLedMeter(ledRms, ledPeak){{
       const nowMs = ptpBaseMs + (performance.now() - ptpBaseMono);
       const err = d.getTime() - nowMs;
       ptpTargetCorrMs = 0.90 * ptpTargetCorrMs + 0.10 * err;
-
-      els('ptpStatusLine').innerHTML = `<span class="mono">SYNC OK</span>`;
     }} else {{
       // freeze
       ptpBaseMs = null; ptpBaseMono = null; ptpCorrMs = 0; ptpTargetCorrMs = 0;
       ptpLastShownMs = null;
-
-      if(meta.paused) els('ptpStatusLine').innerHTML = `<span class="ptpNo">PAUSED</span>`;
-      else if(ageMs > staleTh) els('ptpStatusLine').innerHTML = `<span class="ptpNo">STALE DATA</span>`;
-      else els('ptpStatusLine').innerHTML = `<span class="ptpNo">NO PTP SYNC</span>`;
     }}
 
     updateEvents(data.events || []);
@@ -488,68 +603,63 @@ function renderLedMeter(ledRms, ledPeak){{
   }}
 
   function uiTick(){{
-    // NTP displayed as system time for smoothness
     const now = new Date();
-    const isoNow = now.toISOString();
-    els('ntpTimeBig').textContent = fmtIso(isoNow, 3);
-    els('ntpDateLine').textContent = isoNow.slice(0, 10);  // YYYY-MM-DD (UTC date)
+
+    // NTP 7-segment (UTC time, HH:MM:SS.CC)
+    const nh = now.getUTCHours(), nm = now.getUTCMinutes(), ns2 = now.getUTCSeconds();
+    const ncs = Math.floor(now.getUTCMilliseconds() / 10);
+    renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
+
+    // NTP date (UTC)
+    els('ntpDateLine').textContent = 'NTP Date: ' + now.toISOString().slice(0,10);
+
+    // NTP TZ (always available from browser locale)
+    const tzOffMin = -now.getTimezoneOffset();
+    const tzH = Math.floor(Math.abs(tzOffMin) / 60), tzM = Math.abs(tzOffMin) % 60;
+    els('ntpTzLine').textContent = 'NTP TZ: UTC' + (tzOffMin >= 0 ? '+' : '-') + pad2(tzH) + ':' + pad2(tzM);
 
     const ltc = lastApi ? (lastApi.ltc || {{}}) : {{}};
 
-    // Δ(LTC-NTP): independent of PTP — computed whenever LTC is present
+    // Δ(LTC-NTP): independent of PTP
     if(lastApi && ltc.enabled && ltc.present && ltc.timecode) {{
-      const fpsMeta = lastApi.meta ? lastApi.meta.ltc_fps : null;
-      const fps = ltc.fps || fpsMeta || 25;
+      const fps = ltc.fps || (lastApi.meta && lastApi.meta.ltc_fps) || 25;
       const ltcTod = parseTcToTodMs(ltc.timecode, fps);
-      const ntpTodLocal = todMsFromLocalDate(now);
       if(ltcTod != null) {{
-        const dLtcNtp = wrapDeltaMs(ltcTod - ntpTodLocal);
-        els('deltaLtcNtpLine').textContent = `Δ(LTC-NTP): ${{dLtcNtp.toFixed(3)}} ms`;
-      }} else {{
-        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
-      }}
-    }} else {{
-      els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
-    }}
+        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): ' + wrapDeltaMs(ltcTod - todMsFromLocalDate(now)).toFixed(3) + ' ms';
+      }} else {{ els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —'; }}
+    }} else {{ els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —'; }}
 
     if(!lastApi) {{
-      els('ptpTime').textContent = '—';
+      renderSevenSeg(els('ptpTimeSegs'), null);
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-      els('ltcTzLine').textContent = 'TZ: —';
+      els('ltcTzLine').textContent = 'System TZ (PTP): —';
       return;
     }}
 
     const meta = lastApi.meta || {{}};
     const st = lastApi.status || {{}};
-
     const staleTh = meta.stale_threshold_ms ?? 2000;
     const ageMs = st.poll_age_ms ?? 999999;
     const canTick = (!!st.ptp_valid) && (ageMs <= staleTh) && (!meta.paused);
 
     if(canTick && ptpBaseMs != null && ptpBaseMono != null) {{
-      // slew correction: never go backwards
-      const maxStep = 0.15; // ms per tick
-      const diff = ptpTargetCorrMs - ptpCorrMs;
-      const step = Math.max(-maxStep, Math.min(maxStep, diff));
-      ptpCorrMs += step;
+      const maxStep = 0.15;
+      ptpCorrMs += Math.max(-maxStep, Math.min(maxStep, ptpTargetCorrMs - ptpCorrMs));
 
       let ms = ptpBaseMs + (performance.now() - ptpBaseMono) + ptpCorrMs;
-
-      if(ptpLastShownMs != null && ms < ptpLastShownMs) {{
-        ms = ptpLastShownMs; // clamp: monotonic visual time
-      }}
+      if(ptpLastShownMs != null && ms < ptpLastShownMs) ms = ptpLastShownMs;
       ptpLastShownMs = ms;
 
       const d = new Date(ms);
-      const dec = (meta.display_decimals != null) ? meta.display_decimals : 6;
-      els('ptpTime').textContent = fmtIso(d.toISOString(), dec);
+      // PTP 7-segment (HH:MM:SS.CC)
+      const ph = d.getUTCHours(), pm = d.getUTCMinutes(), ps = d.getUTCSeconds();
+      const pcs = Math.floor(d.getUTCMilliseconds() / 10);
+      renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
 
-      // Δ(NTP-PTP)
-      els('deltaLine').textContent = `Δ(NTP-PTP): ${{(now.getTime() - ms).toFixed(3)}} ms`;
+      els('deltaLine').textContent = 'Δ(NTP-PTP): ' + (now.getTime() - ms).toFixed(3) + ' ms';
 
-      // Δ(LTC-PTP)
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
         const ltcTod = parseTcToTodMs(ltc.timecode, fps);
@@ -557,25 +667,25 @@ function renderLedMeter(ledRms, ledPeak){{
         const ptpTodUtc = todMsFromUtcDate(d);
         const tzMs = ptpTodLocal - ptpTodUtc;
         if(ltcTod != null) {{
-          els('deltaLtcAdjLine').textContent = `Δ(LTC-PTP) adj: ${{wrapDeltaMs(ltcTod - ptpTodLocal).toFixed(3)}} ms`;
-          els('deltaLtcRawLine').textContent = `Δ(LTC-PTP) raw: ${{wrapDeltaMs(ltcTod - ptpTodUtc).toFixed(3)}} ms`;
-          els('ltcTzLine').textContent = `TZ: ${{(tzMs/1000).toFixed(0)}} s (${{tzMs.toFixed(0)}} ms)`;
+          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + wrapDeltaMs(ltcTod - ptpTodLocal).toFixed(3) + ' ms';
+          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + wrapDeltaMs(ltcTod - ptpTodUtc).toFixed(3) + ' ms';
+          els('ltcTzLine').textContent = 'System TZ (PTP): ' + (tzMs/1000).toFixed(0) + ' s (' + tzMs.toFixed(0) + ' ms)';
         }} else {{
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-          els('ltcTzLine').textContent = 'TZ: —';
+          els('ltcTzLine').textContent = 'System TZ (PTP): —';
         }}
       }} else {{
         els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
         els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-        els('ltcTzLine').textContent = 'TZ: —';
+        els('ltcTzLine').textContent = 'System TZ (PTP): —';
       }}
     }} else {{
-      els('ptpTime').textContent = '—';
+      renderSevenSeg(els('ptpTimeSegs'), null);
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-      els('ltcTzLine').textContent = 'TZ: —';
+      els('ltcTzLine').textContent = 'System TZ (PTP): —';
     }}
   }}
 
