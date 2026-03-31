@@ -10,6 +10,9 @@ Wants=network-online.target
 Type=simple
 User=pi
 Group=audio
+Nice=-5
+IOSchedulingClass=best-effort
+IOSchedulingPriority=4
 WorkingDirectory=/opt/time-reference-monitor
 
 # --- Core: PTP polling via pmc, NTP via chronyc ---
