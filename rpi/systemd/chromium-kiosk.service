@@ -7,7 +7,7 @@ Wants=time-reference-monitor.service
 
 [Service]
 Type=simple
-User=pi
+User=ptp
 # PAMName=login registers the process as a proper PAM/logind session.
 # This grants access to seat input devices (keyboard, mouse via /dev/input/*),
 # creates XDG_RUNTIME_DIR, and ensures clean VT handoff on logout/restart.
