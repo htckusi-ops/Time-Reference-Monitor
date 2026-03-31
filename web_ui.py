@@ -28,16 +28,16 @@ def ui_html() -> str:
     @media (max-width: 980px){{ .grid{{grid-template-columns:1fr;}} }}
     .card{{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow: 0 10px 24px rgba(0,0,0,.25);}}
     .card h3{{margin:0 0 10px 0; font-size:13px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
-    .bigtime{{padding:10px 12px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:54px minmax(80px,1fr) auto; align-items:center; row-gap:6px; column-gap:8px;}}
+    .bigtime{{padding:14px 16px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:60px minmax(90px,1fr) auto; align-items:center; row-gap:18px; column-gap:10px;}}
     .timeLabel{{font-size:15px; font-weight:700;}}
     .timeZ{{font-size:10px; font-weight:400; color:var(--muted); vertical-align:super;}}
     .timeStatus{{font-family:var(--mono); font-size:11px; font-weight:600;}}
     .timeStatus.ok{{color:var(--ok);}} .timeStatus.warn{{color:var(--warn);}} .timeStatus.alarm{{color:var(--alarm);}} .timeStatus.muted{{color:var(--muted);}}
-    .seg-wrap{{display:inline-flex; align-items:center; height:42px; gap:0;}}
-    .seg-digit-outer{{display:inline-block; width:22px; height:42px; position:relative; overflow:visible; flex-shrink:0;}}
-    .seg-digit{{width:90px; height:200px; transform:scale(0.244); transform-origin:top left; position:absolute; top:0; left:0;}}
+    .seg-wrap{{display:inline-flex; align-items:center; height:56px; gap:4px;}}
+    .seg-digit-outer{{display:inline-block; width:30px; height:56px; position:relative; overflow:visible; flex-shrink:0;}}
+    .seg-digit{{width:90px; height:200px; transform:scale(0.32); transform-origin:top left; position:absolute; top:0; left:0;}}
     .seg-digit span{{display:block;}}
-    .seg-sep{{font-family:var(--mono); font-size:26px; line-height:1; color:rgba(255,255,255,.5); margin:0 1px; align-self:center;}}
+    .seg-sep{{font-family:var(--mono); font-size:34px; line-height:1; color:rgba(255,255,255,.5); margin:0 4px; align-self:center; padding-bottom:4px;}}
     .segmentVer{{height:64px; width:0; border-right:8px solid; border-top:8px solid transparent; border-bottom:8px solid transparent; transition:border-right-color .15s ease-in-out;}}
     .segmentVer span{{height:64px; width:0; border-left:8px solid; border-top:8px solid transparent; border-bottom:8px solid transparent; transform:translate(8px,-8px); transition:border-left-color .15s ease-in-out;}}
     .segmentHor{{width:64px; height:0; border-bottom:8px solid; border-left:8px solid transparent; border-right:8px solid transparent; transition:border-bottom-color .15s ease-in-out;}}
