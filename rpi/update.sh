@@ -124,6 +124,16 @@ if ! diff -q "${REPO_DIR}/rpi/systemd/ptp4l.service.d/uds-permissions.conf" \
     fi
 fi
 
+# ── Xwrapper.config ──────────────────────────────────────────────────────────
+# Rootless Xorg on Bookworm cannot open arbitrary VTs without this.
+# Idempotent: only writes if content differs.
+XWRAP_WANT=$'allowed_users=anybody\nneeds_root_rights=yes'
+if [ "$(cat /etc/X11/Xwrapper.config 2>/dev/null)" != "$XWRAP_WANT" ]; then
+    mkdir -p /etc/X11
+    printf '%s\n' "allowed_users=anybody" "needs_root_rights=yes" > /etc/X11/Xwrapper.config
+    info "Xwrapper.config aktualisiert (VT-Zugriff für Xorg)."
+fi
+
 # ── 7. Kiosk conf file (install only if missing) ──────────────────────────────
 KIOSK_CONF="/etc/time-reference-monitor.conf"
 if [ ! -f "$KIOSK_CONF" ]; then

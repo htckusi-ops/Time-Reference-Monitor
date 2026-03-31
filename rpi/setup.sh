@@ -153,6 +153,17 @@ install_services() {
         /etc/systemd/system/ptp4l.service.d/uds-permissions.conf
     info "ptp4l UDS-Berechtigungs-Drop-in installiert."
 
+    # Xwrapper.config: allow non-root user to start X on a specific VT.
+    # Without this, rootless Xorg on Bookworm fails with:
+    #   (EE) xf86OpenConsole: Cannot open virtual console 7 (Permission denied)
+    # needs_root_rights=yes grants the Xorg wrapper root access for VT/DRI devices.
+    mkdir -p /etc/X11
+    cat > /etc/X11/Xwrapper.config <<'XWRAP'
+allowed_users=anybody
+needs_root_rights=yes
+XWRAP
+    info "Xwrapper.config: allowed_users=anybody, needs_root_rights=yes"
+
     # Disable lightdm (RPi OS Desktop) if present – it would take over the
     # display and fight with our xinit-based kiosk on the same VT.
     if systemctl list-unit-files lightdm.service &>/dev/null 2>&1; then
