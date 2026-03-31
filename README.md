@@ -154,7 +154,8 @@ Das Skript:
 3. Kompiliert `alsaltc` aus den Quellen für ARM
 4. Legt `/opt/time-reference-monitor/` mit Python-venv an
 5. Installiert `/etc/asound.conf` (dsnoop-Config)
-6. Aktiviert systemd-Dienste
+6. Schreibt `/etc/X11/Xwrapper.config` (VT-Zugriff für rootless Xorg → chromium-kiosk)
+7. Aktiviert systemd-Dienste
 
 Nach dem Setup:
 
@@ -200,7 +201,7 @@ sudo systemctl restart time-reference-monitor
 | `--ltc-fps` | `25` | **anpassen** bei 29.97/30 fps LTC |
 | `--ltc-cmd` | `alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE` | |
 | `--ltc-dropout-timeout-ms` | `800` | |
-| `--ltc-jump-tolerance-frames` | `2` | |
+| `--ltc-jump-tolerance-frames` | `5` | Bei 25 fps: 1 Frame = 40 ms → 5 Frames = 200 ms Toleranz. Einzelne Ausreisser bis 200 ms lösen keine `LTC_JUMP`-Warnung aus; nur echte Sprünge > 5 Frames werden gemeldet. |
 | `--db` | `/var/lib/time-reference-monitor/events.sqlite` | |
 
 ### Dienste
@@ -258,6 +259,31 @@ Der Chromium-Kiosk läuft auf **Virtual Terminal 7** (VT7). Folgende Wege führe
 ```bash
 sudo systemctl stop chromium-kiosk
 ```
+
+### Fehlerdiagnose: chromium-kiosk startet nicht (VT-Permission)
+
+**Symptom:** `chromium-kiosk.service` startet, beendet sich sofort mit `code=exited, status=1/FAILURE`, Neustart-Zähler steigt an.
+
+**Ursache:** Auf Raspberry Pi OS Bookworm läuft Xorg standardmässig **rootless** (ohne SUID). Damit Xorg ein bestimmtes Virtual Terminal (VT7) öffnen darf, muss `/etc/X11/Xwrapper.config` mit den richtigen Berechtigungen existieren.
+
+**Fehlermeldung im Xorg-Log:**
+```
+(EE) xf86OpenConsole: Cannot open virtual console 7 (Permission denied)
+```
+
+**Log-Pfad auf Bookworm** (nicht `/tmp/Xorg.0.log`!):
+```bash
+cat /home/ptp/.local/share/xorg/Xorg.0.log | grep EE
+```
+
+**Sofort-Fix:**
+```bash
+sudo mkdir -p /etc/X11
+printf 'allowed_users=anybody\nneeds_root_rights=yes\n' | sudo tee /etc/X11/Xwrapper.config
+sudo systemctl restart chromium-kiosk
+```
+
+`setup.sh` und `update.sh` legen diese Datei automatisch an; auf bestehenden Installationen einmalig manuell ausführen.
 
 ### HDMI-Auflösung konfigurieren
 
@@ -353,9 +379,11 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 4. `alsaltc` neu kompilieren — **nur wenn der C-Source neuer als das installierte Binary ist**
 5. Systemd-Service-Dateien aktualisieren + `daemon-reload` (Kiosk-Restart nur bei Änderung)
 6. ALSA-Konfiguration aktualisieren (Backup nach `/etc/asound.conf.bak`)
-7. Kiosk-Konfigurationsdatei erstellen (nur wenn `/etc/time-reference-monitor.conf` fehlt)
-8. `config.txt` HDMI-Mode synchronisieren basierend auf `HDMI_MODE` in der Konfigurationsdatei
-9. `time-reference-monitor` neu starten
+7. `/etc/X11/Xwrapper.config` aktualisieren (idempotent — nur bei Abweichung)
+8. Kiosk-Konfigurationsdatei erstellen (nur wenn `/etc/time-reference-monitor.conf` fehlt)
+9. `config.txt` HDMI-Mode synchronisieren basierend auf `HDMI_MODE` in der Konfigurationsdatei
+10. sudoers-Regel aktualisieren (`ptp` darf `reboot` / `poweroff` ohne Passwort)
+11. `time-reference-monitor` neu starten
 
 Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sobald der Backend-Dienst wieder antwortet.
 
@@ -496,13 +524,27 @@ Das Script `display/display_driver.py` läuft vollständig unabhängig vom Monit
 | URL | Inhalt |
 |-----|--------|
 | `http://<host>:8088/` | Haupt-Dashboard (PTP/NTP/LTC, Events) |
-| `http://<host>:8088/ltc-clock` | Vollbild-LTC-Uhr (Studiomonitor) |
+| `http://<host>:8088/ltc-clock` | **Screen Clock** — Vollbild-Uhr (LTC / PTP / Local, wählbar) |
 | `http://<host>:8088/spectrum` | Spektrum-Analyse (on-demand) |
 | `http://<host>:8088/api/status` | JSON-Snapshot aller Status-Werte |
 | `http://<host>:8088/api/ltc/level` | Audio-Pegel (RMS/Peak in dBFS) |
 | `http://<host>:8088/api/events` | Event-Liste |
 | `POST /api/system/reboot` | System neu starten (Kiosk-Funktion) |
 | `POST /api/system/shutdown` | System herunterfahren (Kiosk-Funktion) |
+
+### Screen Clock (`/ltc-clock`)
+
+Die Screen Clock zeigt die Zeit in grosser 7-Segment-Schrift (Font: `Segment7Standard.otf`). Quelle per Dropdown wählbar:
+
+| Quelle | Anzeige |
+|--------|---------|
+| LTC | `HH:MM:SS` aus dem aktuellen LTC-Timecode; `NO LTC` wenn kein Signal |
+| PTP (fallback) | UTC-Zeit aus dem PTP-Status (API) |
+| Local | Browser-Systemzeit |
+
+Die Zeitanzeige verwendet die gleiche Schriftart wie das Haupt-Dashboard — ein einzelnes `textContent`-Update pro Tick, ohne DOM-Klassen-Manipulation. Dadurch läuft der Kiosk flüssig, auch auf dem Raspberry Pi.
+
+Über die Menüleiste (ausgeblendet im Kiosk, sichtbar bei Hover) sind Farbe, Schrift, Breite und Skalierung einstellbar. Der **RELOAD**-Button lädt die Seite neu (z.B. nach Netzwerkausfall). Mit **Menus** wird die Menüleiste dauerhaft aus-/eingeblendet.
 
 ### Reboot / Shutdown im Kiosk
 
