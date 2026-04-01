@@ -110,18 +110,47 @@ if [ -f "$ASOUNDRC" ]; then
     warn "~/.asoundrc deaktiviert (→ .asoundrc.disabled) – /etc/asound.conf gilt."
 fi
 
-# ── ptp4l UDS socket drop-in ──────────────────────────────────────────────────
+# ── ptp4l service drop-ins ────────────────────────────────────────────────────
 mkdir -p /etc/systemd/system/ptp4l.service.d
-if ! diff -q "${REPO_DIR}/rpi/systemd/ptp4l.service.d/uds-permissions.conf" \
-    /etc/systemd/system/ptp4l.service.d/uds-permissions.conf &>/dev/null 2>&1; then
-    cp "${REPO_DIR}/rpi/systemd/ptp4l.service.d/uds-permissions.conf" \
-        /etc/systemd/system/ptp4l.service.d/uds-permissions.conf
+PTP4L_RESTART=false
+
+for dropin in uds-permissions.conf time-reference-monitor.conf; do
+    src="${REPO_DIR}/rpi/systemd/ptp4l.service.d/${dropin}"
+    dst="/etc/systemd/system/ptp4l.service.d/${dropin}"
+    if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
+        cp "$src" "$dst"
+        PTP4L_RESTART=true
+        info "ptp4l drop-in aktualisiert: ${dropin}"
+    fi
+done
+
+# ── ptp4l.conf (free_running monitor-only config) ───────────────────────────
+mkdir -p /etc/linuxptp
+if ! diff -q "${REPO_DIR}/rpi/ptp4l/ptp4l.conf" /etc/linuxptp/ptp4l.conf &>/dev/null 2>&1; then
+    [ -f /etc/linuxptp/ptp4l.conf ] && cp /etc/linuxptp/ptp4l.conf /etc/linuxptp/ptp4l.conf.bak
+    cp "${REPO_DIR}/rpi/ptp4l/ptp4l.conf" /etc/linuxptp/ptp4l.conf
+    PTP4L_RESTART=true
+    info "ptp4l.conf aktualisiert (free_running=1, slaveOnly=1)."
+fi
+
+if [ "$PTP4L_RESTART" = true ]; then
     systemctl daemon-reload
-    info "ptp4l UDS drop-in aktualisiert."
     if systemctl is-active --quiet ptp4l.service 2>/dev/null; then
         systemctl restart ptp4l.service
-        info "ptp4l neu gestartet (Socket-Berechtigungen wirksam)."
+        info "ptp4l neu gestartet."
     fi
+fi
+
+# ── chrony.conf (NTP-only) ────────────────────────────────────────────────────
+CHRONY_CONF=""
+[ -d /etc/chrony ] && CHRONY_CONF="/etc/chrony/chrony.conf" || CHRONY_CONF="/etc/chrony.conf"
+if ! diff -q "${REPO_DIR}/rpi/chrony/chrony.conf" "$CHRONY_CONF" &>/dev/null 2>&1; then
+    [ -f "$CHRONY_CONF" ] && cp "$CHRONY_CONF" "${CHRONY_CONF}.bak"
+    cp "${REPO_DIR}/rpi/chrony/chrony.conf" "$CHRONY_CONF"
+    systemctl restart chrony 2>/dev/null || true
+    info "chrony.conf aktualisiert (NTP-only). Neustart von chrony ausgeführt."
+else
+    info "chrony.conf unverändert."
 fi
 
 # ── Xwrapper.config ──────────────────────────────────────────────────────────
