@@ -51,7 +51,19 @@ def read_chrony_tracking(timeout_s: float = 1.0) -> Tuple[NTPStatus, str]:
         else:
             status = "synced" if stratum <= 15 else "unsynced"
 
-        st = NTPStatus(status=status, stratum=stratum, ref=ref, last_update_utc=utc_iso_ms())
+        # "System time: 0.000001234 seconds slow of NTP time"  → offset = +X (system behind NTP)
+        # "System time: 0.000001234 seconds fast of NTP time"  → offset = -X (system ahead of NTP)
+        # Stored as: NTP_time = system_clock + system_offset_s
+        system_offset_s = None
+        sys_time_raw = fields.get("system time") or fields.get("system_time")
+        if sys_time_raw:
+            m = re.match(r"([\d.eE+\-]+)\s+seconds?\s+(slow|fast)", sys_time_raw)
+            if m:
+                val = float(m.group(1))
+                system_offset_s = val if m.group(2) == "slow" else -val
+
+        st = NTPStatus(status=status, stratum=stratum, ref=ref, last_update_utc=utc_iso_ms(),
+                       system_offset_s=system_offset_s)
         return st, raw
     except FileNotFoundError:
         st = NTPStatus(status="unknown", last_update_utc=utc_iso_ms())

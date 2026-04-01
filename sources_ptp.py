@@ -110,7 +110,8 @@ def poll_ptp_real(domain: int, trace: bool = False) -> Tuple[PTPStatus, str]:
     )
 
     if st.ptp_valid and st.offset_ns is not None:
-        dt = utc_now() + timedelta(microseconds=st.offset_ns / 1000.0)
+        # ptp4l offsetFromMaster = slave - master  →  master = slave - offset
+        dt = utc_now() - timedelta(microseconds=st.offset_ns / 1000.0)
         st.ptp_time_utc_iso = utc_iso_ms(dt)
         st.last_ok_utc = utc_iso_ms()
         st.no_ptp_since_utc = None

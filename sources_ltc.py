@@ -22,19 +22,42 @@ def utc_iso_ms() -> str:
 
 def _probe_alsa_delay_ms(device: str, rate: int = 48000) -> Optional[float]:
     """
-    Probe ALSA capture buffer size for *device* and return estimated latency in ms.
-    Runs a 0.1 s arecord with --verbose and parses the reported buffer_size.
+    Probe ALSA capture period size for *device* and return capture latency in ms.
+    Uses arecord --verbose with a 1 s duration; parses period_size (= one interrupt
+    period = the actual capture-to-read latency). Falls back to buffer_size if absent.
     Returns None on failure.
     """
     alsa_dev = device if device.startswith(("plug:", "hw:", "plughw:", "dsnoop")) else f"plug:{device}"
+    # -d 1: 1 second is the shortest reliable integer duration for arecord;
+    # "-d 0.1" is silently treated as 0 (= infinite) on most platforms.
     cmd = ["arecord", "-D", alsa_dev, "-f", "S16_LE", "-c", "1", "-r", str(rate),
-           "-d", "0.1", "--verbose", "/dev/null"]
+           "-d", "1", "--verbose", "/dev/null"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-        text = r.stdout + r.stderr
-        m = re.search(r"buffer_size\s*:\s*(\d+)", text)
+        # Use Popen so we can kill once we have the setup block (before recording ends)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True)
+        lines: list = []
+        try:
+            deadline = time.monotonic() + 3.0
+            for line in proc.stdout:
+                lines.append(line)
+                # period_size appears in the ALSA setup block right before recording starts
+                if "period_size" in line:
+                    break
+                if time.monotonic() > deadline:
+                    break
+        finally:
+            proc.kill()
+            proc.wait()
+        text = "".join(lines)
+        # period_size = one interrupt period → actual capture latency
+        m = re.search(r"period_size\s*:\s*(\d+)", text)
         if m:
             return int(m.group(1)) / rate * 1000.0
+        # fallback: buffer_size (over-estimates; divide by 4 as a heuristic)
+        m = re.search(r"buffer_size\s*:\s*(\d+)", text)
+        if m:
+            return int(m.group(1)) / 4.0 / rate * 1000.0
     except Exception:
         pass
     return None
@@ -79,11 +102,14 @@ class LTCMonitor:
         self._last_tc_frames: Optional[int] = None
         self._last_tc_mono: Optional[float] = None
         self._jump_roll = RollingCounter(rolling_window_s)
+        self._alsa_probed = False   # retry flag: probe again on first LTC frame if initial probe fails
 
-        # Probe ALSA capture delay once at construction time
+        # Probe ALSA capture delay once at construction time.
+        # May return None if the device is not yet ready; will retry on first LTC frame.
         alsa_delay: Optional[float] = None
         if self.enabled:
             alsa_delay = _probe_alsa_delay_ms(self.device)
+            self._alsa_probed = alsa_delay is not None
 
         self._lock = threading.Lock()
         self._status = LTCStatus(
@@ -125,6 +151,13 @@ class LTCMonitor:
                 self._status.no_ltc_since_utc = utc_iso_ms()
 
     def _mark_present(self, tc: str, raw: str) -> None:
+        # Retry ALSA delay probe if the initial probe failed (device not ready at startup)
+        if not self._alsa_probed:
+            delay = _probe_alsa_delay_ms(self.device)
+            if delay is not None:
+                self._alsa_probed = True
+                with self._lock:
+                    self._status.alsa_delay_ms = delay
         with self._lock:
             self._status.present = True
             self._status.timecode = tc
