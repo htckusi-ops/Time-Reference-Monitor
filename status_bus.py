@@ -117,8 +117,12 @@ class StatusBus:
                 self._sum.ptp_loss_total += 1
                 self._roll_ptp_loss.add()
                 self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="ALARM", type="PTP_LOST",
-                                              message="PTP became invalid (monitor hides PTP time).",
+                                              message="PTP sync lost.",
                                               suppressed=self._should_suppress_for_state("ALARM")))
+            elif self._last_ptp_valid is not None and (not self._last_ptp_valid) and ptp.ptp_valid:
+                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="INFO", type="PTP_RECOVERED",
+                                              message=f"PTP sync recovered. GM={ptp.gm_identity or '—'} state={ptp.port_state or '—'}",
+                                              suppressed=False))
             self._last_ptp_valid = ptp.ptp_valid
             self._ptp = ptp
 
@@ -135,13 +139,17 @@ class StatusBus:
 
     def update_ltc(self, ltc: LTCStatus) -> None:
         with self._lock:
-            # loss
+            # loss / recovery
             if self._last_ltc_present is not None and self._last_ltc_present and (not ltc.present):
                 self._sum.ltc_loss_total += 1
                 self._roll_ltc_loss.add()
                 self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="WARN", type="LTC_LOST",
-                                              message="LTC became absent.",
+                                              message="LTC signal lost.",
                                               suppressed=self._should_suppress_for_state("WARN")))
+            elif self._last_ltc_present is not None and (not self._last_ltc_present) and ltc.present:
+                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="INFO", type="LTC_RECOVERED",
+                                              message=f"LTC signal recovered. tc={ltc.timecode or '—'} fps={ltc.fps or '—'}",
+                                              suppressed=False))
             self._last_ltc_present = ltc.present
 
             # decode errors (count as WARN in summary)

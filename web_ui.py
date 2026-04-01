@@ -116,6 +116,7 @@ def ui_html() -> str:
           <div class="btn" id="btnReload">RELOAD</div>
           <a class="btn" href="/ltc-clock" target="_blank" rel="noopener">Screen Clock…</a>
           <a class="btn" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">LTC Spectrum…</a>
+          <a class="btn" href="/settings">⚙ Settings</a>
           <div class="btn btn-sys" id="btnReboot">REBOOT</div>
           <div class="btn btn-sys" id="btnShutdown">SHUTDOWN</div>
         </div>
@@ -229,12 +230,9 @@ def ui_html() -> str:
   // rendering bases (freeze if stale/paused/no-data)
   let lastApi = null;
 
-  // PTP smooth/monotonic: keep a base time and a rate-corrector, never go backwards.
-  let ptpBaseMs = null;
-  let ptpBaseMono = null;
-  let ptpCorrMs = 0.0;
-  let ptpTargetCorrMs = 0.0;
-  let ptpLastShownMs = null;
+  // PTP display uses new Date() directly — system clock is chrony-disciplined to PTP.
+  // No interpolation needed; delta Δ(NTP-PTP) comes from ptp4l offset_ns.
+  let ptpCanTick = false;
 
   const els = (id) => document.getElementById(id);
 
@@ -282,23 +280,13 @@ function dbToLedCountCeil(db){{
     }}
   }}
 
-function renderLedMeter(ledRms, ledPeak){{
+function renderLedMeter(ledPeak){{
   const m = els('ltcLedMeter');
   if(!m) return;
-
-  // nur die echten Segmente (keine extra marker)
   const segs = Array.from(m.querySelectorAll('.led'));
-
   segs.forEach((el, i) => {{
-    const idx = i + 1;
-
     el.classList.remove('rms', 'peak');
-
-    if(idx <= ledRms){{
-      el.classList.add('rms');      // ganz hell
-    }} else if(idx <= ledPeak){{
-      el.classList.add('peak');     // heller
-    }}
+    if(i + 1 <= ledPeak) el.classList.add('peak');
   }});
 }}
 
@@ -489,20 +477,7 @@ function renderLedMeter(ledRms, ledPeak){{
       ? 'PTP Date: ' + st.ptp_time_utc_iso.slice(0,10)
       : 'PTP Date: —';
 
-    if(canTick && st.ptp_time_utc_iso){{
-      const d = new Date(st.ptp_time_utc_iso);
-      ptpBaseMs = d.getTime();
-      ptpBaseMono = performance.now();
-
-      // target correction: bring rendered time towards last sample without backwards jumps
-      const nowMs = ptpBaseMs + (performance.now() - ptpBaseMono);
-      const err = d.getTime() - nowMs;
-      ptpTargetCorrMs = 0.90 * ptpTargetCorrMs + 0.10 * err;
-    }} else {{
-      // freeze
-      ptpBaseMs = null; ptpBaseMono = null; ptpCorrMs = 0; ptpTargetCorrMs = 0;
-      ptpLastShownMs = null;
-    }}
+    ptpCanTick = canTick;
 
     updateEvents(data.events || []);
   }}
@@ -558,21 +533,18 @@ function renderLedMeter(ledRms, ledPeak){{
     const ageMs = st.poll_age_ms ?? 999999;
     const canTick = (!!st.ptp_valid) && (ageMs <= staleTh) && (!meta.paused);
 
-    if(canTick && ptpBaseMs != null && ptpBaseMono != null) {{
-      const maxStep = 0.15;
-      ptpCorrMs += Math.max(-maxStep, Math.min(maxStep, ptpTargetCorrMs - ptpCorrMs));
-
-      let ms = ptpBaseMs + (performance.now() - ptpBaseMono) + ptpCorrMs;
-      if(ptpLastShownMs != null && ms < ptpLastShownMs) ms = ptpLastShownMs;
-      ptpLastShownMs = ms;
-
-      const d = new Date(ms);
-      // PTP 7-segment (HH:MM:SS.CC)
+    if(ptpCanTick) {{
+      // System clock is chrony-disciplined to PTP — use new Date() directly for smooth display.
+      const d = now; // UTC = PTP time
       const ph = d.getUTCHours(), pm = d.getUTCMinutes(), ps = d.getUTCSeconds();
       const pcs = Math.floor(d.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
 
-      els('deltaLine').textContent = 'Δ(NTP-PTP): ' + (now.getTime() - ms).toFixed(3) + ' ms';
+      // Δ(NTP-PTP): directly from ptp4l offset_ns (local clock vs grandmaster).
+      const offNs = lastApi && lastApi.status ? lastApi.status.offset_ns : null;
+      els('deltaLine').textContent = (offNs != null)
+        ? 'Δ(NTP-PTP): ' + (offNs / 1e6).toFixed(3) + ' ms'
+        : 'Δ(NTP-PTP): —';
 
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
@@ -636,22 +608,8 @@ function renderLedMeter(ledRms, ledPeak){{
       if (!txt) return;
 
       const dbPeak = (typeof j.dbfs_peak === 'number') ? j.dbfs_peak : -120;
-      const dbRms  = (typeof j.dbfs_rms === 'number')  ? j.dbfs_rms  : -120;
-
-        const ledRms  = dbToLedCountFloor(dbRms);
-        const ledPeak = dbToLedCountCeil(dbPeak);
-        
-        // Safety: falls trotzdem mal invertiert (z.B. NaNs)
-        const a = Math.min(ledRms, ledPeak);
-        const b = Math.max(ledRms, ledPeak);
-        
-        renderLedMeter(a, b);
-
-      if (typeof j.dbfs_peak === 'number' && typeof j.dbfs_rms === 'number') {{
-        txt.textContent = 'peak ' + dbPeak.toFixed(1) + ' dBFS | rms ' + dbRms.toFixed(1) + ' dBFS';
-      }} else {{
-        txt.textContent = '—';
-      }}
+      renderLedMeter(dbToLedCountCeil(dbPeak));
+      txt.textContent = (typeof j.dbfs_peak === 'number') ? dbPeak.toFixed(1) + ' dBFS' : '—';
     }} catch (e) {{
       // ignore
     }}
