@@ -8,7 +8,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
+User=ptp
 Group=audio
 Nice=-5
 IOSchedulingClass=best-effort
@@ -28,14 +28,16 @@ ExecStart=/opt/time-reference-monitor/venv/bin/python3 run.py \
     --http \
     --http-host 0.0.0.0 \
     --http-port 8088 \
-    --ui-refresh-ms 100 \
-    --ui-api-poll-ms 250 \
+    --ui-refresh-ms 20 \
+    --ui-api-poll-ms 150 \
     --ltc \
     --ltc-device dsnoop_ltc \
     --ltc-fps 25 \
     --ltc-cmd "/usr/local/bin/alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE" \
     --ltc-dropout-timeout-ms 800 \
-    --ltc-jump-tolerance-frames 5 \
+    --ltc-jump-tolerance-frames 8 \
+    --ltc-refresh-s 0.1 \
+    --ntp-refresh-s 0.5 \
     --db /var/lib/time-reference-monitor/events.sqlite
 
 Restart=on-failure
