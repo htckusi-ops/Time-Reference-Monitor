@@ -35,6 +35,7 @@ def ui_html() -> str:
     .timeStatus.ok{{color:var(--ok);}} .timeStatus.warn{{color:var(--warn);}} .timeStatus.alarm{{color:var(--alarm);}} .timeStatus.muted{{color:var(--muted);}}
     .seg-wrap{{font-family:'Seg7',var(--mono); font-size:48px; line-height:1; letter-spacing:0.05em; color:var(--text); white-space:nowrap;}}
     .smalltime{{font-family:var(--mono); font-size:13px; color:var(--muted); margin-top:8px;}}
+    .delta-grid{{display:grid; grid-template-columns:1fr 1fr; gap:4px 20px; margin-top:8px;}}
     .row{{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}}
     .kv{{display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; font-size:13px;}}
     .kv-k{{color:var(--muted);}}
@@ -117,6 +118,7 @@ def ui_html() -> str:
           <a class="btn" href="/ltc-clock" target="_blank" rel="noopener">Screen Clock…</a>
           <a class="btn" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">LTC Spectrum…</a>
           <a class="btn" href="/settings">⚙ Settings</a>
+          <a class="btn" href="/tcpdump" target="_blank" rel="noopener">PTP Capture…</a>
           <div class="btn btn-sys" id="btnReboot">REBOOT</div>
           <div class="btn btn-sys" id="btnShutdown">SHUTDOWN</div>
         </div>
@@ -137,14 +139,22 @@ def ui_html() -> str:
       </div>
 
 <div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
-      <div class="smalltime" id="ntpDateLine">NTP Date: —</div>
-      <div class="smalltime" id="ptpDateLine">PTP Date: —</div>
-      <div class="smalltime" id="ntpTzLine">NTP TZ: —</div>
-      <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
-      <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
-      <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
-      <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
-      <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
+      <div class="delta-grid">
+        <div class="smalltime" id="ntpDateLine">NTP Date: —</div>
+        <div class="smalltime" id="ptpDateLine">PTP Date: —</div>
+
+        <div class="smalltime" id="ntpTzLine">NTP TZ: —</div>
+        <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
+
+        <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
+        <div class="smalltime" id="alsaDelayLine">ALSA cap. delay: —</div>
+
+        <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
+        <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
+
+        <div class="smalltime muted"></div>
+        <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
+      </div>
       <div class="smalltime">
       LTC Audio Level ({config.LTC_ALSA_DEVICE})
         </div>
@@ -230,8 +240,11 @@ def ui_html() -> str:
   // rendering bases (freeze if stale/paused/no-data)
   let lastApi = null;
 
-  // PTP display uses new Date() directly — system clock is chrony-disciplined to PTP.
-  // No interpolation needed; delta Δ(NTP-PTP) comes from ptp4l offset_ns.
+  // PTP and NTP time display: interpolated from the RPi server timestamp (meta.ts_utc).
+  // This ensures both displays freeze when the RPi goes offline, and reflect RPi time
+  // (not the browser's local clock) when accessed from a remote computer.
+  let srvBaseMs  = null;   // RPi UTC ms at last API receipt
+  let srvLocalMs = null;   // browser Date.now() when API was received
   let ptpCanTick = false;
 
   const els = (id) => document.getElementById(id);
@@ -479,6 +492,12 @@ function renderLedMeter(ledPeak){{
 
     ptpCanTick = canTick;
 
+    // Store server timestamp for NTP/PTP time interpolation
+    if (meta.ts_utc) {{
+      srvBaseMs  = new Date(meta.ts_utc).getTime();
+      srvLocalMs = Date.now();
+    }}
+
     updateEvents(data.events || []);
   }}
 
@@ -492,34 +511,54 @@ function renderLedMeter(ledPeak){{
   }}
 
   function uiTick(){{
-    const now = new Date();
+    // RPi server time interpolated from last API response.
+    // Both NTP and PTP use this so the display freezes when the RPi goes offline.
+    const srvNow = (srvBaseMs != null && srvLocalMs != null)
+      ? new Date(srvBaseMs + (Date.now() - srvLocalMs))
+      : null;
 
-    // NTP 7-segment (UTC time, HH:MM:SS.CC)
-    const nh = now.getUTCHours(), nm = now.getUTCMinutes(), ns2 = now.getUTCSeconds();
-    const ncs = Math.floor(now.getUTCMilliseconds() / 10);
-    renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
-
-    // NTP date (UTC)
-    els('ntpDateLine').textContent = 'NTP Date: ' + now.toISOString().slice(0,10);
-
-    // NTP TZ (always available from browser locale)
-    const tzOffMin = -now.getTimezoneOffset();
-    const tzH = Math.floor(Math.abs(tzOffMin) / 60), tzM = Math.abs(tzOffMin) % 60;
-    els('ntpTzLine').textContent = 'NTP TZ: UTC' + (tzOffMin >= 0 ? '+' : '-') + pad2(tzH) + ':' + pad2(tzM);
+    if(srvNow) {{
+      // NTP 7-segment (UTC time from RPi, HH:MM:SS.CC)
+      const nh = srvNow.getUTCHours(), nm = srvNow.getUTCMinutes(), ns2 = srvNow.getUTCSeconds();
+      const ncs = Math.floor(srvNow.getUTCMilliseconds() / 10);
+      renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
+      els('ntpDateLine').textContent = 'NTP Date: ' + srvNow.toISOString().slice(0,10);
+      // TZ offset from the RPi browser locale (reflects the RPi's configured timezone)
+      const tzOffMin = -srvNow.getTimezoneOffset();
+      const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
+      els('ntpTzLine').textContent = 'NTP TZ: UTC' + (tzOffMin>=0?'+':'-') + pad2(tzH)+':'+pad2(tzM);
+    }} else {{
+      renderSevenSeg(els('ntpTimeSegs'), null);
+      els('ntpDateLine').textContent = 'NTP Date: —';
+      els('ntpTzLine').textContent = 'NTP TZ: —';
+    }}
 
     const ltc = lastApi ? (lastApi.ltc || {{}}) : {{}};
+    const alsaDelayMs = (ltc.alsa_delay_ms != null) ? Number(ltc.alsa_delay_ms) : 0;
 
-    // Δ(LTC-NTP): independent of PTP
-    if(lastApi && ltc.enabled && ltc.present && ltc.timecode) {{
-      const fps = ltc.fps || (lastApi.meta && lastApi.meta.ltc_fps) || 25;
+    // ALSA delay display
+    els('alsaDelayLine').textContent = (ltc.alsa_delay_ms != null)
+      ? 'ALSA cap. delay: ' + alsaDelayMs.toFixed(1) + ' ms'
+      : 'ALSA cap. delay: —';
+
+    // Δ(LTC-NTP): LTC corrected for ALSA delay vs RPi system time
+    if(srvNow && ltc.enabled && ltc.present && ltc.timecode) {{
+      const fps = ltc.fps || (lastApi?.meta?.ltc_fps) || 25;
       const ltcTod = parseTcToTodMs(ltc.timecode, fps);
       if(ltcTod != null) {{
-        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): ' + wrapDeltaMs(ltcTod - todMsFromLocalDate(now)).toFixed(3) + ' ms';
-      }} else {{ els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —'; }}
-    }} else {{ els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —'; }}
+        const ltcCorr = ltcTod - alsaDelayMs;
+        const ntpTod = todMsFromUtcDate(srvNow);
+        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): ' + wrapDeltaMs(ltcCorr - ntpTod).toFixed(3) + ' ms';
+      }} else {{
+        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
+      }}
+    }} else {{
+      els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
+    }}
 
     if(!lastApi) {{
       renderSevenSeg(els('ptpTimeSegs'), null);
+      els('ptpDateLine').textContent = 'PTP Date: —';
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
@@ -529,19 +568,20 @@ function renderLedMeter(ledPeak){{
 
     const meta = lastApi.meta || {{}};
     const st = lastApi.status || {{}};
-    const staleTh = meta.stale_threshold_ms ?? 2000;
-    const ageMs = st.poll_age_ms ?? 999999;
-    const canTick = (!!st.ptp_valid) && (ageMs <= staleTh) && (!meta.paused);
 
-    if(ptpCanTick) {{
-      // System clock is chrony-disciplined to PTP — use new Date() directly for smooth display.
-      const d = now; // UTC = PTP time
-      const ph = d.getUTCHours(), pm = d.getUTCMinutes(), ps = d.getUTCSeconds();
-      const pcs = Math.floor(d.getUTCMilliseconds() / 10);
+    // PTP date (from API snapshot)
+    els('ptpDateLine').textContent = (st.ptp_valid && st.ptp_time_utc_iso)
+      ? 'PTP Date: ' + st.ptp_time_utc_iso.slice(0,10)
+      : 'PTP Date: —';
+
+    if(ptpCanTick && srvNow) {{
+      // PTP time: interpolated from RPi server timestamp (chrony tracks PTP grandmaster)
+      const ph = srvNow.getUTCHours(), pm = srvNow.getUTCMinutes(), ps = srvNow.getUTCSeconds();
+      const pcs = Math.floor(srvNow.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
 
-      // Δ(NTP-PTP): directly from ptp4l offset_ns (local clock vs grandmaster).
-      const offNs = lastApi && lastApi.status ? lastApi.status.offset_ns : null;
+      // Δ(NTP-PTP): direct from ptp4l offset_ns — the authoritative measurement
+      const offNs = st.offset_ns;
       els('deltaLine').textContent = (offNs != null)
         ? 'Δ(NTP-PTP): ' + (offNs / 1e6).toFixed(3) + ' ms'
         : 'Δ(NTP-PTP): —';
@@ -549,12 +589,13 @@ function renderLedMeter(ledPeak){{
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
         const ltcTod = parseTcToTodMs(ltc.timecode, fps);
-        const ptpTodLocal = todMsFromLocalDate(d);
-        const ptpTodUtc = todMsFromUtcDate(d);
+        const ptpTodLocal = todMsFromLocalDate(srvNow);
+        const ptpTodUtc  = todMsFromUtcDate(srvNow);
         const tzMs = ptpTodLocal - ptpTodUtc;
         if(ltcTod != null) {{
-          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + wrapDeltaMs(ltcTod - ptpTodLocal).toFixed(3) + ' ms';
-          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + wrapDeltaMs(ltcTod - ptpTodUtc).toFixed(3) + ' ms';
+          const ltcCorr = ltcTod - alsaDelayMs;
+          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + wrapDeltaMs(ltcCorr - ptpTodLocal).toFixed(3) + ' ms';
+          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + wrapDeltaMs(ltcCorr - ptpTodUtc).toFixed(3) + ' ms';
           els('ltcTzLine').textContent = 'System TZ (PTP): ' + (tzMs/1000).toFixed(0) + ' s (' + tzMs.toFixed(0) + ' ms)';
         }} else {{
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
