@@ -523,8 +523,10 @@ function renderLedMeter(ledPeak){{
       const ncs = Math.floor(srvNow.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
       els('ntpDateLine').textContent = 'NTP Date: ' + srvNow.toISOString().slice(0,10);
-      // TZ offset from the RPi browser locale (reflects the RPi's configured timezone)
-      const tzOffMin = -srvNow.getTimezoneOffset();
+      // TZ offset from RPi server (meta.tz_offset_s); falls back to browser TZ if unavailable
+      const srvTzOffS = (lastApi && lastApi.meta && lastApi.meta.tz_offset_s != null)
+        ? lastApi.meta.tz_offset_s : null;
+      const tzOffMin = srvTzOffS != null ? Math.round(srvTzOffS / 60) : -srvNow.getTimezoneOffset();
       const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
       els('ntpTzLine').textContent = 'NTP TZ: UTC' + (tzOffMin>=0?'+':'-') + pad2(tzH)+':'+pad2(tzM);
     }} else {{
@@ -589,9 +591,12 @@ function renderLedMeter(ledPeak){{
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
         const ltcTod = parseTcToTodMs(ltc.timecode, fps);
-        const ptpTodLocal = todMsFromLocalDate(srvNow);
         const ptpTodUtc  = todMsFromUtcDate(srvNow);
-        const tzMs = ptpTodLocal - ptpTodUtc;
+        // Use RPi server timezone offset (meta.tz_offset_s) so Δ(LTC-PTP) adj is correct
+        // even when the WebUI is accessed from a remote browser in a different timezone.
+        const srvTzMs = (meta.tz_offset_s != null) ? meta.tz_offset_s * 1000 : (todMsFromLocalDate(srvNow) - ptpTodUtc);
+        const ptpTodLocal = ptpTodUtc + srvTzMs;
+        const tzMs = srvTzMs;
         if(ltcTod != null) {{
           const ltcCorr = ltcTod - alsaDelayMs;
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + wrapDeltaMs(ltcCorr - ptpTodLocal).toFixed(3) + ' ms';

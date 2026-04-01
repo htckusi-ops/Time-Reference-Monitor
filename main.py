@@ -117,7 +117,7 @@ def main() -> None:
         mock = MockPTP(mp)
 
     def meta_provider():
-        return meta
+        return {**meta, "tz_offset_s": time.localtime().tm_gmtoff}
 
     def ptp_loop():
         last_poll = time.monotonic()
