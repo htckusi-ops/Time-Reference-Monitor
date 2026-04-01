@@ -20,6 +20,26 @@ def utc_iso_ms() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
+def _probe_alsa_delay_ms(device: str, rate: int = 48000) -> Optional[float]:
+    """
+    Probe ALSA capture buffer size for *device* and return estimated latency in ms.
+    Runs a 0.1 s arecord with --verbose and parses the reported buffer_size.
+    Returns None on failure.
+    """
+    alsa_dev = device if device.startswith(("plug:", "hw:", "plughw:", "dsnoop")) else f"plug:{device}"
+    cmd = ["arecord", "-D", alsa_dev, "-f", "S16_LE", "-c", "1", "-r", str(rate),
+           "-d", "0.1", "--verbose", "/dev/null"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        text = r.stdout + r.stderr
+        m = re.search(r"buffer_size\s*:\s*(\d+)", text)
+        if m:
+            return int(m.group(1)) / rate * 1000.0
+    except Exception:
+        pass
+    return None
+
+
 def _tc_to_frames(tc: str, fps: int) -> Optional[int]:
     """Convert 'HH:MM:SS:FF' to absolute frame count within 24h."""
     m = _TC_RE.fullmatch(tc)
@@ -60,8 +80,16 @@ class LTCMonitor:
         self._last_tc_mono: Optional[float] = None
         self._jump_roll = RollingCounter(rolling_window_s)
 
+        # Probe ALSA capture delay once at construction time
+        alsa_delay: Optional[float] = None
+        if self.enabled:
+            alsa_delay = _probe_alsa_delay_ms(self.device)
+
         self._lock = threading.Lock()
-        self._status = LTCStatus(enabled=self.enabled, device=self.device, fps=self.fps, present=False)
+        self._status = LTCStatus(
+            enabled=self.enabled, device=self.device, fps=self.fps,
+            present=False, alsa_delay_ms=alsa_delay,
+        )
         self._stop = threading.Event()
         self._thr: Optional[threading.Thread] = None
         self._err_roll = RollingCounter(rolling_window_s)

@@ -52,6 +52,7 @@ class LTCStatus:
     decode_errors_rolling: int = 0
     jumps_total: int = 0
     jumps_rolling: int = 0
+    alsa_delay_ms: Optional[float] = None   # ALSA capture buffer latency (probed at startup)
     raw: Optional[str] = None
 
 

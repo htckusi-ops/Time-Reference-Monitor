@@ -21,6 +21,8 @@ from flask import send_from_directory
 from web_ui import ui_html, spectrum_html
 from web_clock_ui import ltc_clock_html
 from web_settings import settings_html
+from web_tcpdump import tcpdump_html
+from tcpdump_mgr import TcpdumpCapture
 from ltc_level import read_ltc_level
 from network_mgr import (
     get_network_status, apply_static, apply_dhcp,
@@ -31,6 +33,9 @@ from config import LTC_ALSA_DEVICE
 
 def _utc_iso_ms() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+_tcpdump = TcpdumpCapture()
 
 
 def create_app(
@@ -230,5 +235,50 @@ def create_app(
 
         level = read_ltc_level(device=device, duration_ms=duration_ms)
         return jsonify(level)
+
+    # ---------------------------
+    # tcpdump / PTP capture
+    # ---------------------------
+
+    @app.get("/tcpdump")
+    def tcpdump_page() -> Response:
+        return Response(tcpdump_html(), mimetype="text/html")
+
+    @app.get("/api/tcpdump/status")
+    def api_tcpdump_status() -> Response:
+        return jsonify(_tcpdump.status())
+
+    @app.post("/api/tcpdump/start")
+    def api_tcpdump_start() -> Response:
+        body = request.get_json(silent=True) or {}
+        iface = str(body.get("iface", "eth0")).strip() or "eth0"
+        ok, msg = _tcpdump.start(iface=iface)
+        return jsonify({"ok": ok, "message": msg})
+
+    @app.post("/api/tcpdump/stop")
+    def api_tcpdump_stop() -> Response:
+        ok, msg = _tcpdump.stop()
+        return jsonify({"ok": ok, "message": msg})
+
+    @app.get("/api/tcpdump/lines")
+    def api_tcpdump_lines() -> Response:
+        try:
+            since = int(request.args.get("since", "0"))
+        except ValueError:
+            since = 0
+        lines, seq = _tcpdump.get_lines_since(since)
+        return jsonify({"lines": lines, "seq": seq})
+
+    @app.get("/api/tcpdump/download")
+    def api_tcpdump_download() -> Response:
+        data = _tcpdump.pcap_bytes()
+        if not data:
+            return jsonify({"ok": False, "message": "Keine pcap-Datei vorhanden."}), 404
+        return send_file(
+            io.BytesIO(data),
+            mimetype="application/vnd.tcpdump.pcap",
+            as_attachment=True,
+            download_name="ptp_capture.pcap",
+        )
 
     return app
