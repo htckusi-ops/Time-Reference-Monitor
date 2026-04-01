@@ -28,7 +28,7 @@ ExecStart=/opt/time-reference-monitor/venv/bin/python3 run.py \
     --http \
     --http-host 0.0.0.0 \
     --http-port 8088 \
-    --ui-refresh-ms 20 \
+    --ui-refresh-ms 100 \
     --ui-api-poll-ms 250 \
     --ltc \
     --ltc-device dsnoop_ltc \
