@@ -9,11 +9,33 @@ Monitoring-Tool für Zeitreferenzen in professionellen Broadcast-Umgebungen.
 
 | Signal | Quelle | Anzeige |
 |--------|--------|---------|
-| PTP | `pmc` (linuxptp) | Offset, Delay, Port-State, GM-Identity, Zeitanzeige (nur wenn gültig) |
-| NTP | `chronyc tracking` | Synchronisationsstatus, Stratum, Referenz-ID |
-| LTC | `alsaltc` (ALSA + libltc) | Timecode HH:MM:SS:FF, Präsenz, Decode-Fehler, Sprünge, Delta zu PTP |
+| PTP | `pmc` (linuxptp) → `offsetFromMaster` | PTP-Grandmaster-Zeit, Offset, Delay, Port-State, GM-Identity |
+| NTP | `chronyc tracking` → `System time: X slow/fast` | NTP-Referenzzeit, Synchronisationsstatus, Stratum |
+| LTC | `alsaltc` (ALSA + libltc) | Timecode HH:MM:SS:FF, Präsenz, Decode-Fehler, Sprünge, Delta zu PTP/NTP |
 
 Alle Werte werden nur **angezeigt und bewertet** — keine Zeitdisziplinierung, kein Eingriff in laufende Dienste.
+
+### Zeitquellen — messtechnische Trennung
+
+Jede der drei Zeitreihen zeigt die **direkte Messung ihrer eigenen Referenz**, nicht den Systemclock:
+
+| Anzeige | Berechnung | Basis |
+|---------|-----------|-------|
+| **PTP** | `Systemclock − offsetFromMaster` | ptp4l misst `offsetFromMaster = Slave − Master` → Grandmaster-Zeit |
+| **NTP** | `Systemclock + system_offset_s` | `chronyc tracking` liefert `"X seconds slow/fast of NTP time"` |
+| **LTC** | direkter dekodierter Timecode | ltcdump → ALSA-Capture → libltc, Lokalzeit des LTC-Generators |
+
+Das setzt voraus, dass:
+- **chrony** den Systemclock ausschliesslich über NTP diszipliniert (keine PTP-Refclock — siehe `rpi/chrony/chrony.conf`)
+- **ptp4l** im Monitor-Modus (`free_running 1`) läuft — misst Offset, greift aber **nicht** in den Systemclock ein (siehe `rpi/ptp4l/ptp4l.conf`)
+
+Beide Bedingungen werden durch `setup.sh` / `update.sh` automatisch konfiguriert.
+
+**Δ(NTP-PTP):** Wenn chrony `system_offset_s` liefert und ptp4l `offset_ns` meldet:
+```
+Δ(NTP-PTP) = chrony_system_offset_s × 1000 + ptp_offset_ns / 1e6  [ms]
+```
+Andernfalls Fallback auf `offset_ns / 1e6` allein (= Δ(Systemclock − PTP)).
 
 ---
 
@@ -30,18 +52,16 @@ PTP-Genauigkeit hängt direkt davon ab, ob das Netzwerk-Interface **Hardware-Tim
 | **RPi CM4** | Ja (PHY-Level, BCM54210PE) | Stabil, ~5–15 ns auf direktem Link, ~5–6 µs über Switches |
 | **RPi CM5** | Ja (PHY + MAC) | Beste Option; vollständige Unterstützung ab Kernel 6.12 |
 
-**RPi 4 Model B:** ptp4l muss im Software-Timestamp-Modus betrieben werden:
-```bash
-sudo ptp4l -i eth0 -S -m -q   # -S = software timestamping
-```
-Im systemd-Service `time-reference-monitor.service` entsprechend `--source real` mit `-S`-Flag in der ptp4l-Konfiguration verwenden. Für ein reines Monitoring-Tool (kein Grandmaster) ist die resultierende Genauigkeit von ~10–50 µs oft ausreichend.
+**RPi 4 Model B:** ptp4l muss im Software-Timestamp-Modus betrieben werden. In `rpi/ptp4l/ptp4l.conf` ist bereits `time_stamping software` gesetzt — das passt für den RPi 4. Kein `-S`-Flag auf der Kommandozeile nötig. Für ein reines Monitoring-Tool (kein Grandmaster) ist die resultierende Genauigkeit von ~10–50 µs oft ausreichend.
 
 **RPi 5:** Hardware-Timestamping ist im Kernel vorhanden (MAC-Level via RP1-Chip), aber seit 2024 gibt es wiederholte Regressionen. **Raspberry Pi OS Bookworm (Stand Anfang 2026) ist betroffen** — Kernel 6.12.25–6.12.35 funktioniert nicht. Kernel 6.12.10 und 6.15 sind stabil. Workaround bis ein Fix landet: `sudo rpi-update` für einen neueren Pre-Release-Kernel, oder Software-Timestamps mit `-S`.
 
-Zusätzlich benötigt Hardware-Timestamping auf dem RPi 5 folgenden Eintrag in `/etc/linuxptp/ptp4l.conf`, sonst werden Timestamps stillschweigend verworfen:
+Zusätzlich benötigt Hardware-Timestamping auf dem RPi 5 folgenden Eintrag in `rpi/ptp4l/ptp4l.conf`, sonst werden Timestamps stillschweigend verworfen:
 ```ini
 hwts_filter    full
+time_stamping  hardware
 ```
+`time_stamping` in `rpi/ptp4l/ptp4l.conf` von `software` auf `hardware` ändern und `hwts_filter full` ergänzen.
 
 **Prüfen ob Hardware-Timestamping verfügbar ist:**
 ```bash
@@ -71,6 +91,12 @@ cd alsaltc-v02 && make && sudo make install
 ```
 
 Der vorkompilierte `alsaltc`-Binary im Repository-Root ist für **x86_64**. Auf dem Raspberry Pi immer aus den Quellen kompilieren.
+
+### ALSA-Capture-Delay
+
+Die LTC-Capture-Latenz (`alsa_delay_ms`) wird beim ersten LTC-Frame automatisch via `arecord --verbose` gemessen. Basis ist `period_size / sample_rate` (= ein ALSA-Interrupt-Periode = tatsächliche Capture-Latenz). Der Wert wird von allen Δ(LTC-*)-Berechnungen abgezogen.
+
+Falls der Wert beim Start `—` zeigt (Gerät war beim Booten noch nicht bereit), wird beim nächsten empfangenen LTC-Frame automatisch nachgemessen.
 
 ---
 
@@ -154,22 +180,41 @@ Das Skript:
 3. Kompiliert `alsaltc` aus den Quellen für ARM
 4. Legt `/opt/time-reference-monitor/` mit Python-venv an
 5. Installiert `/etc/asound.conf` (dsnoop-Config)
-6. Schreibt `/etc/X11/Xwrapper.config` (VT-Zugriff für rootless Xorg → chromium-kiosk)
-7. Aktiviert systemd-Dienste
+6. Installiert `/etc/chrony/chrony.conf` (NTP-only, pool.ntp.org)
+7. Installiert `/etc/linuxptp/ptp4l.conf` (Monitor-Modus: `free_running 1`, `slaveOnly 1`)
+8. Schreibt `/etc/X11/Xwrapper.config` (VT-Zugriff für rootless Xorg → chromium-kiosk)
+9. Aktiviert systemd-Dienste
 
 Nach dem Setup:
 
 ```bash
-# LTC-Karte prüfen und ggf. anpassen:
+# 1. PTP-Interface setzen (Standard: eth0):
+sudo nano /etc/time-reference-monitor.conf   # PTP_IFACE=eth0 → anpassen
+sudo systemctl daemon-reload
+
+# 2. LTC-Karte prüfen und ggf. anpassen:
 arecord -l
 sudo nano /etc/asound.conf          # Kartennamen anpassen (Standard: hw:US2x2HR,0)
 
-# Monitor-Konfiguration anpassen (Interface, Domain, LTC-FPS …):
+# 3. Weitere Monitor-Parameter (Domain, LTC-FPS …):
 sudo nano /etc/systemd/system/time-reference-monitor.service
 sudo systemctl daemon-reload
 
 sudo reboot
 ```
+
+### Netzwerk-Interface konfigurieren
+
+Das PTP-Interface wird **einmalig** in `/etc/time-reference-monitor.conf` gesetzt — beide Dienste lesen es von dort:
+
+```bash
+sudo nano /etc/time-reference-monitor.conf
+# PTP_IFACE=eth0   ← anpassen
+sudo systemctl daemon-reload
+sudo systemctl restart ptp4l time-reference-monitor
+```
+
+`ptp4l.service` und `time-reference-monitor.service` lesen `PTP_IFACE` via `EnvironmentFile`. Damit ist die Interface-Konfiguration nur an **einer** Stelle notwendig.
 
 ### Konfiguration des Monitor-Dienstes
 
@@ -191,7 +236,7 @@ sudo systemctl restart time-reference-monitor
 | Parameter | Default | Anmerkung |
 |-----------|---------|-----------|
 | `--source` | `real` | `mock` nur für Tests ohne PTP-Hardware |
-| `--iface` | `eth0` | **anpassen** falls anderes Interface |
+| `--iface` | `${PTP_IFACE:-eth0}` | Wird aus `/etc/time-reference-monitor.conf` gelesen |
 | `--domain` | `0` | PTP-Domain-Nummer |
 | `--poll` | `0.25` s | PTP-Abfrageintervall |
 | `--http-host` | `0.0.0.0` | von allen Interfaces erreichbar |
@@ -208,6 +253,8 @@ sudo systemctl restart time-reference-monitor
 
 | Dienst | Beschreibung |
 |--------|-------------|
+| `ptp4l.service` | PTP-Slave (Monitor-Modus: `free_running 1`, misst Offset, keine Clockdisziplinierung) |
+| `chrony.service` | NTP-Synchronisation des Systemclocks (NTP-only, kein PTP-Refclock) |
 | `time-reference-monitor.service` | Python-Backend (PTP/NTP/LTC), Port 8088 |
 | `chromium-kiosk.service` | X11 auf VT7 + Chromium im Kiosk-Modus |
 | `ssh.service` | SSH-Server (wird durch setup.sh aktiviert) |
@@ -378,12 +425,15 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 3. Python-Abhängigkeiten aktualisieren (`pip install -r requirements.txt`)
 4. `alsaltc` neu kompilieren — **nur wenn der C-Source neuer als das installierte Binary ist**
 5. Systemd-Service-Dateien aktualisieren + `daemon-reload` (Kiosk-Restart nur bei Änderung)
-6. ALSA-Konfiguration aktualisieren (Backup nach `/etc/asound.conf.bak`)
-7. `/etc/X11/Xwrapper.config` aktualisieren (idempotent — nur bei Abweichung)
-8. Kiosk-Konfigurationsdatei erstellen (nur wenn `/etc/time-reference-monitor.conf` fehlt)
-9. `config.txt` HDMI-Mode synchronisieren basierend auf `HDMI_MODE` in der Konfigurationsdatei
-10. sudoers-Regel aktualisieren (`ptp` darf `reboot` / `poweroff` ohne Passwort)
-11. `time-reference-monitor` neu starten
+6. ptp4l Drop-Ins aktualisieren (`uds-permissions.conf`, `time-reference-monitor.conf`)
+7. `/etc/linuxptp/ptp4l.conf` aktualisieren — Monitor-Modus (`free_running 1`, `slaveOnly 1`); Backup nach `.bak`
+8. `/etc/chrony/chrony.conf` aktualisieren — NTP-only; Backup nach `.bak`; chrony neu starten
+9. ALSA-Konfiguration aktualisieren (Backup nach `/etc/asound.conf.bak`)
+10. `/etc/X11/Xwrapper.config` aktualisieren (idempotent — nur bei Abweichung)
+11. Kiosk-Konfigurationsdatei erstellen (nur wenn `/etc/time-reference-monitor.conf` fehlt)
+12. `config.txt` HDMI-Mode synchronisieren basierend auf `HDMI_MODE` in der Konfigurationsdatei
+13. sudoers-Regel aktualisieren (`ptp` darf `reboot` / `poweroff` ohne Passwort)
+14. `time-reference-monitor` neu starten
 
 Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sobald der Backend-Dienst wieder antwortet.
 
@@ -556,23 +606,39 @@ Voraussetzung: Die sudoers-Regel aus `setup.sh` muss installiert sein (`/etc/sud
 
 ```json
 {
+  "meta": {
+    "ts_utc": "2026-04-01T10:00:00.123+00:00",
+    "tz_offset_s": 7200
+  },
   "status": {
     "ptp_valid": true,
     "port_state": "SLAVE",
     "gm_identity": "AC-DE-48-FF-FE-12-34-56",
     "offset_ns": -5234,
     "mean_path_delay_ns": 8978,
-    "ptp_time_utc_iso": "2026-03-25T10:00:00.123Z"
+    "ptp_time_utc_iso": "2026-04-01T10:00:00.118+00:00"
   },
-  "ntp": { "status": "synced", "stratum": 2, "ref": "PTP0" },
+  "ntp": {
+    "status": "synced",
+    "stratum": 2,
+    "ref": "195.148.127.77",
+    "system_offset_s": 0.000023456
+  },
   "ltc": {
     "present": true,
-    "timecode": "10:00:12:08",
+    "timecode": "12:00:12:08",
     "fps": "25",
+    "alsa_delay_ms": 85.3,
     "jumps_total": 0
   }
 }
 ```
+
+**Schlüsselfelder:**
+- `meta.tz_offset_s` — UTC-Offset des RPi-Systemclocks in Sekunden (z.B. 7200 = UTC+2); wird für Δ(LTC-PTP) adj und NTP-TZ-Anzeige genutzt
+- `status.ptp_time_utc_iso` — PTP-Grandmaster-Zeit: `Systemclock − offsetFromMaster` (Vorzeichen korrigiert)
+- `ntp.system_offset_s` — chrony-Offset: NTP_Zeit = Systemclock + system_offset_s (positiv = System geht nach)
+- `ltc.alsa_delay_ms` — ALSA-Capture-Latenz in ms (aus `period_size / sample_rate`); wird von allen LTC-Deltas abgezogen
 
 ---
 

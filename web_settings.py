@@ -153,6 +153,144 @@ _HTML = """<!doctype html>
       oder Dateien in <code>/etc/NetworkManager/system-connections/</code>
     </p>
   </div>
+
+  <!-- ── NTP-Simulation ── -->
+  <div class="card">
+    <h2>NTP-Simulation</h2>
+    <div class="current" id="ntpSrcCurrent">Lade…</div>
+
+    <div class="field">
+      <label>Quelle</label>
+      <select id="ntpSrcSelect">
+        <option value="real">Real — chrony (live)</option>
+        <option value="mock">Simulation (Mock)</option>
+      </select>
+    </div>
+
+    <div id="ntpMockOptions" style="display:none">
+      <div class="field">
+        <label>Preset</label>
+        <select id="ntpMockPreset">
+          <option value="clean">Rein ± 5 µs — normaler NTP-Lock</option>
+          <option value="jitter">Jitter ± 500 µs — schlechte NTP-Qualität</option>
+          <option value="drift">Drift 0.5 ppm — kontinuierlicher Gangfehler</option>
+          <option value="step">Sprung 500 ms alle 30 s — Zeitsprünge</option>
+          <option value="ref_flap">Ref-Wechsel alle 20 s — NTP-Server-Failover</option>
+          <option value="unsynced">Ausfall alle 30 s — NTP-Verlustereignisse</option>
+          <option value="combo">Kombination — Wander + Drift + Ref-Wechsel</option>
+          <option value="custom">Benutzerdefiniert…</option>
+        </select>
+      </div>
+
+      <div id="ntpCustomParams" style="display:none">
+        <div class="row-fields">
+          <div class="field"><label>Jitter (µs)</label>
+            <input id="ncpJitter" type="number" value="5" min="0"/></div>
+          <div class="field"><label>Wander (µs)</label>
+            <input id="ncpWander" type="number" value="0" min="0"/></div>
+        </div>
+        <div class="row-fields">
+          <div class="field"><label>Drift (ppm)</label>
+            <input id="ncpDrift" type="number" value="0" step="0.01"/></div>
+          <div class="field"><label>Wander-Periode (s)</label>
+            <input id="ncpWanderPeriod" type="number" value="60" min="1"/></div>
+        </div>
+        <div class="row-fields">
+          <div class="field"><label>Ausfall-Intervall (s, 0=aus)</label>
+            <input id="ncpUnsyncedEvery" type="number" value="0" min="0"/></div>
+          <div class="field"><label>Ausfall-Dauer (s)</label>
+            <input id="ncpUnsyncedDur" type="number" value="10" min="1"/></div>
+        </div>
+        <div class="row-fields">
+          <div class="field"><label>Ref-Flap-Intervall (s, 0=aus)</label>
+            <input id="ncpRefFlap" type="number" value="0" min="0"/></div>
+          <div class="field"><label>Sprung alle (s, 0=aus)</label>
+            <input id="ncpStepEvery" type="number" value="0" min="0"/></div>
+        </div>
+        <div class="row-fields">
+          <div class="field"><label>Sprungweite (ms)</label>
+            <input id="ncpStepMs" type="number" value="0"/></div>
+          <div class="field"><label>Stratum (Basis)</label>
+            <input id="ncpStratum" type="number" value="2" min="1" max="15"/></div>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="btnSaveNtpSrc">Übernehmen</button>
+    <div class="msg" id="msgNtpSrc"></div>
+    <p class="hint">
+      Im Mock-Modus werden chrony-Abfragen durch einen internen NTP-Simulator ersetzt.<br>
+      Der Systemclock und chrony laufen weiter — nur die Monitor-Anzeige nutzt simulierte Werte.<br>
+      Rückkehr zu «Real» stellt sofort die echte chrony-Abfrage wieder her.
+    </p>
+  </div>
+
+  <!-- ── PTP-Quelle / Simulation ── -->
+  <div class="card">
+    <h2>PTP-Quelle / Test-Simulation</h2>
+    <div class="current" id="ptpSrcCurrent">Lade…</div>
+
+    <div class="field">
+      <label>Quelle</label>
+      <select id="ptpSrcSelect">
+        <option value="real">Real — ptp4l (live)</option>
+        <option value="mock">Simulation (Mock)</option>
+      </select>
+    </div>
+
+    <div id="mockOptions" style="display:none">
+      <div class="field">
+        <label>Preset</label>
+        <select id="mockPreset">
+          <option value="clean">Rein ± 50 ns — normaler PTP-Lock</option>
+          <option value="jitter">Jitter ± 2 µs — schlechte Netzwerkqualität</option>
+          <option value="wander">Wander ± 10 µs — langsame Temperaturdrift</option>
+          <option value="dropout">Ausfall alle 20 s — PTP-Verlustereignisse</option>
+          <option value="gm_flap">GM-Wechsel alle 30 s — Grandmaster-Failover</option>
+          <option value="drift">Drift 500 ppb — kontinuierlicher Gangfehler</option>
+          <option value="step">Sprung ±100 µs alle 30 s — Zeitsprünge</option>
+          <option value="custom">Benutzerdefiniert…</option>
+        </select>
+      </div>
+
+      <div id="customParams" style="display:none">
+        <div class="row-fields">
+          <div class="field"><label>Jitter (ns)</label>
+            <input id="cpJitter" type="number" value="50" min="0"/></div>
+          <div class="field"><label>Wander (ns)</label>
+            <input id="cpWander" type="number" value="0" min="0"/></div>
+        </div>
+        <div class="row-fields">
+          <div class="field"><label>Drift (ppb)</label>
+            <input id="cpDrift" type="number" value="0"/></div>
+          <div class="field"><label>Wander-Periode (s)</label>
+            <input id="cpWanderPeriod" type="number" value="60" min="1"/></div>
+        </div>
+        <div class="row-fields">
+          <div class="field"><label>Ausfall-Intervall (s, 0=aus)</label>
+            <input id="cpDropoutEvery" type="number" value="0" min="0"/></div>
+          <div class="field"><label>Ausfall-Dauer (s)</label>
+            <input id="cpDropoutDur" type="number" value="3" min="1"/></div>
+        </div>
+        <div class="row-fields">
+          <div class="field"><label>GM-Flap-Intervall (s, 0=aus)</label>
+            <input id="cpGmFlap" type="number" value="0" min="0"/></div>
+          <div class="field"><label>Sprung alle (s, 0=aus)</label>
+            <input id="cpStepEvery" type="number" value="0" min="0"/></div>
+        </div>
+        <div class="field"><label>Sprungweite (ns)</label>
+          <input id="cpStepNs" type="number" value="0"/></div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="btnSavePtpSrc">Übernehmen</button>
+    <div class="msg" id="msgPtpSrc"></div>
+    <p class="hint">
+      Im Mock-Modus werden ptp4l-Abfragen durch einen internen Simulator ersetzt.<br>
+      Der Systemclock und ptp4l laufen weiter — nur die Monitor-Anzeige nutzt simulierte Werte.<br>
+      Rückkehr zu «Real» stellt sofort die echte ptp4l-Abfrage wieder her.
+    </p>
+  </div>
 </div>
 
 <script>
@@ -289,10 +427,167 @@ _HTML = """<!doctype html>
     }}
   }});
 
+  // ── PTP source / simulation ──────────────────────────────────────────────
+  const PRESET_LABELS = {{
+    clean:   'Rein ± 50 ns',
+    jitter:  'Jitter ± 2 µs',
+    wander:  'Wander ± 10 µs',
+    dropout: 'Ausfall alle 20 s',
+    gm_flap: 'GM-Wechsel alle 30 s',
+    drift:   'Drift 500 ppb',
+    step:    'Sprung ±100 µs alle 30 s',
+    custom:  'Benutzerdefiniert',
+  }};
+
+  async function loadPtpSource() {{
+    try {{
+      const r = await fetch('/api/ptp-source', {{cache:'no-store'}});
+      const d = await r.json();
+      const isMock = d.source === 'mock';
+      $('ptpSrcSelect').value = d.source;
+      $('mockOptions').style.display = isMock ? '' : 'none';
+      if (isMock && d.params && d.params.preset) {{
+        $('mockPreset').value = d.params.preset in PRESET_LABELS ? d.params.preset : 'custom';
+        $('customParams').style.display = d.params.preset === 'custom' ? '' : 'none';
+      }}
+      const label = isMock
+        ? 'Simulation aktiv: ' + (PRESET_LABELS[d.params?.preset] || d.params?.preset || '—')
+        : 'Quelle: Real — ptp4l (live)';
+      $('ptpSrcCurrent').textContent = label;
+    }} catch(e) {{
+      $('ptpSrcCurrent').textContent = 'Nicht verfügbar';
+    }}
+  }}
+
+  $('ptpSrcSelect').addEventListener('change', () => {{
+    $('mockOptions').style.display = $('ptpSrcSelect').value === 'mock' ? '' : 'none';
+  }});
+
+  $('mockPreset').addEventListener('change', () => {{
+    $('customParams').style.display = $('mockPreset').value === 'custom' ? '' : 'none';
+  }});
+
+  $('btnSavePtpSrc').addEventListener('click', async () => {{
+    const src = $('ptpSrcSelect').value;
+    let body = {{ source: src }};
+    if (src === 'mock') {{
+      const preset = $('mockPreset').value;
+      if (preset === 'custom') {{
+        body = {{
+          source: 'mock', preset: 'custom',
+          jitter_ns: parseInt($('cpJitter').value) || 0,
+          wander_ns: parseInt($('cpWander').value) || 0,
+          wander_period_s: parseFloat($('cpWanderPeriod').value) || 60,
+          drift_ppb: parseFloat($('cpDrift').value) || 0,
+          dropout_every_s: parseFloat($('cpDropoutEvery').value) || 0,
+          dropout_duration_s: parseFloat($('cpDropoutDur').value) || 3,
+          gm_flap_every_s: parseFloat($('cpGmFlap').value) || 0,
+          step_every_s: parseFloat($('cpStepEvery').value) || 0,
+          step_ns: parseInt($('cpStepNs').value) || 0,
+        }};
+      }} else {{
+        body = {{ source: 'mock', preset }};
+      }}
+    }}
+    try {{
+      const r = await fetch('/api/ptp-source', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(body),
+      }});
+      const d = await r.json();
+      showMsg('msgPtpSrc', d.ok, d.ok
+        ? (src === 'mock' ? 'Simulation aktiv: ' + (body.preset || '') : 'Zurück auf Real-Quelle.')
+        : (d.message || 'Fehler'));
+      loadPtpSource();
+    }} catch(e) {{
+      showMsg('msgPtpSrc', false, 'Fehler: ' + e.message);
+    }}
+  }});
+
+  // ── NTP source / simulation ──────────────────────────────────────────────
+  const NTP_PRESET_LABELS = {{
+    clean:    'Rein ± 5 µs',
+    jitter:   'Jitter ± 500 µs',
+    drift:    'Drift 0.5 ppm',
+    step:     'Sprung 500 ms alle 30 s',
+    ref_flap: 'Ref-Wechsel alle 20 s',
+    unsynced: 'Ausfall alle 30 s',
+    combo:    'Kombination',
+    custom:   'Benutzerdefiniert',
+  }};
+
+  async function loadNtpSource() {{
+    try {{
+      const r = await fetch('/api/ntp-source', {{cache:'no-store'}});
+      const d = await r.json();
+      const isMock = d.source === 'mock';
+      $('ntpSrcSelect').value = d.source;
+      $('ntpMockOptions').style.display = isMock ? '' : 'none';
+      if (isMock && d.params && d.params.preset) {{
+        $('ntpMockPreset').value = d.params.preset in NTP_PRESET_LABELS ? d.params.preset : 'custom';
+        $('ntpCustomParams').style.display = d.params.preset === 'custom' ? '' : 'none';
+      }}
+      const label = isMock
+        ? 'Simulation aktiv: ' + (NTP_PRESET_LABELS[d.params?.preset] || d.params?.preset || '—')
+        : 'Quelle: Real — chrony (live)';
+      $('ntpSrcCurrent').textContent = label;
+    }} catch(e) {{
+      $('ntpSrcCurrent').textContent = 'Nicht verfügbar';
+    }}
+  }}
+
+  $('ntpSrcSelect').addEventListener('change', () => {{
+    $('ntpMockOptions').style.display = $('ntpSrcSelect').value === 'mock' ? '' : 'none';
+  }});
+
+  $('ntpMockPreset').addEventListener('change', () => {{
+    $('ntpCustomParams').style.display = $('ntpMockPreset').value === 'custom' ? '' : 'none';
+  }});
+
+  $('btnSaveNtpSrc').addEventListener('click', async () => {{
+    const src = $('ntpSrcSelect').value;
+    let body = {{ source: src }};
+    if (src === 'mock') {{
+      const preset = $('ntpMockPreset').value;
+      if (preset === 'custom') {{
+        body = {{
+          source: 'mock', preset: 'custom',
+          jitter_s:          (parseFloat($('ncpJitter').value) || 0) * 1e-6,
+          wander_s:          (parseFloat($('ncpWander').value) || 0) * 1e-6,
+          wander_period_s:   parseFloat($('ncpWanderPeriod').value) || 60,
+          drift_ppm:         parseFloat($('ncpDrift').value) || 0,
+          unsynced_every_s:  parseFloat($('ncpUnsyncedEvery').value) || 0,
+          unsynced_duration_s: parseFloat($('ncpUnsyncedDur').value) || 10,
+          ref_flap_every_s:  parseFloat($('ncpRefFlap').value) || 0,
+          step_every_s:      parseFloat($('ncpStepEvery').value) || 0,
+          step_s:            (parseFloat($('ncpStepMs').value) || 0) * 1e-3,
+          stratum:           parseInt($('ncpStratum').value) || 2,
+        }};
+      }} else {{
+        body = {{ source: 'mock', preset }};
+      }}
+    }}
+    try {{
+      const r = await fetch('/api/ntp-source', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify(body),
+      }});
+      const d = await r.json();
+      showMsg('msgNtpSrc', d.ok, d.ok
+        ? (src === 'mock' ? 'NTP-Simulation aktiv: ' + (body.preset || '') : 'Zurück auf Real-Quelle (chrony).')
+        : (d.message || 'Fehler'));
+      loadNtpSource();
+    }} catch(e) {{
+      showMsg('msgNtpSrc', false, 'Fehler: ' + e.message);
+    }}
+  }});
+
   // ── init ─────────────────────────────────────────────────────────────────
   loadNet();
   loadNtp();
   loadWifi();
+  loadPtpSource();
+  loadNtpSource();
 }})();
 </script>
 </body>

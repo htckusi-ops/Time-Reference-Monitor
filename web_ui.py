@@ -511,20 +511,30 @@ function renderLedMeter(ledPeak){{
   }}
 
   function uiTick(){{
-    // RPi server time interpolated from last API response.
-    // Both NTP and PTP use this so the display freezes when the RPi goes offline.
+    // RPi system clock interpolated from last API response.
+    // Freezes when RPi goes offline; used as base for NTP and PTP corrections.
     const srvNow = (srvBaseMs != null && srvLocalMs != null)
       ? new Date(srvBaseMs + (Date.now() - srvLocalMs))
       : null;
 
-    if(srvNow) {{
-      // NTP 7-segment (UTC time from RPi, HH:MM:SS.CC)
-      const nh = srvNow.getUTCHours(), nm = srvNow.getUTCMinutes(), ns2 = srvNow.getUTCSeconds();
-      const ncs = Math.floor(srvNow.getUTCMilliseconds() / 10);
+    const ntp = lastApi ? (lastApi.ntp || {{}}) : {{}};
+    const meta = lastApi ? (lastApi.meta || {{}}) : {{}};
+    const st   = lastApi ? (lastApi.status || {{}}) : {{}};
+
+    // ── NTP time ─────────────────────────────────────────────────────────────
+    // NTP_time = system_clock + chrony system_offset_s
+    // system_offset_s > 0: system is slow (NTP is ahead); < 0: system is fast.
+    const ntpOffsetMs = (srvNow && ntp.system_offset_s != null) ? ntp.system_offset_s * 1000 : 0;
+    const ntpNow = srvNow ? new Date(srvNow.getTime() + ntpOffsetMs) : null;
+
+    if(ntpNow) {{
+      const nh = ntpNow.getUTCHours(), nm = ntpNow.getUTCMinutes(), ns2 = ntpNow.getUTCSeconds();
+      const ncs = Math.floor(ntpNow.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
-      els('ntpDateLine').textContent = 'NTP Date: ' + srvNow.toISOString().slice(0,10);
-      // TZ offset from the RPi browser locale (reflects the RPi's configured timezone)
-      const tzOffMin = -srvNow.getTimezoneOffset();
+      els('ntpDateLine').textContent = 'NTP Date: ' + ntpNow.toISOString().slice(0,10);
+      // TZ offset from RPi server (meta.tz_offset_s); falls back to browser TZ if unavailable
+      const srvTzOffS = meta.tz_offset_s != null ? meta.tz_offset_s : null;
+      const tzOffMin = srvTzOffS != null ? Math.round(srvTzOffS / 60) : -srvNow.getTimezoneOffset();
       const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
       els('ntpTzLine').textContent = 'NTP TZ: UTC' + (tzOffMin>=0?'+':'-') + pad2(tzH)+':'+pad2(tzM);
     }} else {{
@@ -541,13 +551,13 @@ function renderLedMeter(ledPeak){{
       ? 'ALSA cap. delay: ' + alsaDelayMs.toFixed(1) + ' ms'
       : 'ALSA cap. delay: —';
 
-    // Δ(LTC-NTP): LTC corrected for ALSA delay vs RPi system time
-    if(srvNow && ltc.enabled && ltc.present && ltc.timecode) {{
-      const fps = ltc.fps || (lastApi?.meta?.ltc_fps) || 25;
+    // Δ(LTC-NTP): LTC corrected for ALSA delay vs pure NTP time
+    if(ntpNow && ltc.enabled && ltc.present && ltc.timecode) {{
+      const fps = ltc.fps || meta.ltc_fps || 25;
       const ltcTod = parseTcToTodMs(ltc.timecode, fps);
       if(ltcTod != null) {{
         const ltcCorr = ltcTod - alsaDelayMs;
-        const ntpTod = todMsFromUtcDate(srvNow);
+        const ntpTod = todMsFromUtcDate(ntpNow);
         els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): ' + wrapDeltaMs(ltcCorr - ntpTod).toFixed(3) + ' ms';
       }} else {{
         els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
@@ -566,37 +576,53 @@ function renderLedMeter(ledPeak){{
       return;
     }}
 
-    const meta = lastApi.meta || {{}};
-    const st = lastApi.status || {{}};
+    // ── PTP time ─────────────────────────────────────────────────────────────
+    // PTP_time = system_clock - offsetFromMaster  (ptp4l: slave - master)
+    // ptp_time_utc_iso is already corrected in sources_ptp.py; ptpDeltaMs picks
+    // up that correction relative to meta.ts_utc (≈ system clock at snapshot time).
+    const ptpDeltaMs = (st.ptp_time_utc_iso && meta.ts_utc)
+      ? new Date(st.ptp_time_utc_iso).getTime() - new Date(meta.ts_utc).getTime()
+      : 0;
+    const ptpNow = srvNow ? new Date(srvNow.getTime() + ptpDeltaMs) : null;
 
-    // PTP date (from API snapshot)
     els('ptpDateLine').textContent = (st.ptp_valid && st.ptp_time_utc_iso)
       ? 'PTP Date: ' + st.ptp_time_utc_iso.slice(0,10)
       : 'PTP Date: —';
 
-    if(ptpCanTick && srvNow) {{
-      // PTP time: interpolated from RPi server timestamp (chrony tracks PTP grandmaster)
-      const ph = srvNow.getUTCHours(), pm = srvNow.getUTCMinutes(), ps = srvNow.getUTCSeconds();
-      const pcs = Math.floor(srvNow.getUTCMilliseconds() / 10);
+    if(ptpCanTick && ptpNow) {{
+      // PTP 7-segment: pure PTP grandmaster time
+      const ph = ptpNow.getUTCHours(), pm = ptpNow.getUTCMinutes(), ps = ptpNow.getUTCSeconds();
+      const pcs = Math.floor(ptpNow.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
 
-      // Δ(NTP-PTP): direct from ptp4l offset_ns — the authoritative measurement
+      // Δ(NTP-PTP) = NTP_time - PTP_time
+      // When chrony system_offset_s is available: Δ = ntpOffsetMs - ptpDeltaMs
+      // (= sys_offset_s + offset_ns/1e6 in ms).
+      // Fallback: offset_ns/1e6 from ptp4l alone (= Δ(system - PTP_master)).
       const offNs = st.offset_ns;
-      els('deltaLine').textContent = (offNs != null)
-        ? 'Δ(NTP-PTP): ' + (offNs / 1e6).toFixed(3) + ' ms'
-        : 'Δ(NTP-PTP): —';
+      if(ntp.system_offset_s != null && offNs != null) {{
+        els('deltaLine').textContent = 'Δ(NTP-PTP): ' + (ntpOffsetMs - ptpDeltaMs).toFixed(3) + ' ms';
+      }} else if(offNs != null) {{
+        els('deltaLine').textContent = 'Δ(NTP-PTP): ' + (offNs / 1e6).toFixed(3) + ' ms';
+      }} else {{
+        els('deltaLine').textContent = 'Δ(NTP-PTP): —';
+      }}
 
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
         const ltcTod = parseTcToTodMs(ltc.timecode, fps);
-        const ptpTodLocal = todMsFromLocalDate(srvNow);
-        const ptpTodUtc  = todMsFromUtcDate(srvNow);
-        const tzMs = ptpTodLocal - ptpTodUtc;
+        const ptpTodUtc = todMsFromUtcDate(ptpNow);
+        // Use RPi server timezone offset (meta.tz_offset_s) so Δ(LTC-PTP) adj is correct
+        // even when the WebUI is accessed from a remote browser in a different timezone.
+        const srvTzMs = (meta.tz_offset_s != null)
+          ? meta.tz_offset_s * 1000
+          : (todMsFromLocalDate(srvNow) - todMsFromUtcDate(srvNow));
+        const ptpTodLocal = ptpTodUtc + srvTzMs;
         if(ltcTod != null) {{
           const ltcCorr = ltcTod - alsaDelayMs;
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + wrapDeltaMs(ltcCorr - ptpTodLocal).toFixed(3) + ' ms';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + wrapDeltaMs(ltcCorr - ptpTodUtc).toFixed(3) + ' ms';
-          els('ltcTzLine').textContent = 'System TZ (PTP): ' + (tzMs/1000).toFixed(0) + ' s (' + tzMs.toFixed(0) + ' ms)';
+          els('ltcTzLine').textContent = 'System TZ (PTP): ' + (srvTzMs/1000).toFixed(0) + ' s (' + srvTzMs.toFixed(0) + ' ms)';
         }} else {{
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';

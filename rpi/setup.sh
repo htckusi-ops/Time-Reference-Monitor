@@ -131,7 +131,55 @@ install_alsa() {
     fi
 }
 
-# ── 5. systemd services ───────────────────────────────────────────────────────
+# ── 5a. chrony configuration (NTP-only) ──────────────────────────────────────
+configure_chrony() {
+    local dest=""
+    # Debian Bookworm: /etc/chrony/chrony.conf; older: /etc/chrony.conf
+    if [ -d /etc/chrony ]; then
+        dest="/etc/chrony/chrony.conf"
+    else
+        dest="/etc/chrony.conf"
+    fi
+
+    if [ -f "$dest" ]; then
+        warn "Backing up existing ${dest} → ${dest}.bak"
+        cp "$dest" "${dest}.bak"
+    fi
+    cp "${REPO_DIR}/rpi/chrony/chrony.conf" "$dest"
+    info "chrony config installed: ${dest}  (NTP-only, no PTP refclock)"
+    info "  To use custom NTP servers, edit ${dest} and run: sudo systemctl restart chrony"
+    systemctl restart chrony 2>/dev/null || true
+}
+
+# ── 5b. ptp4l configuration (monitor-only, free_running) ─────────────────────
+configure_ptp4l() {
+    local dest="/etc/linuxptp/ptp4l.conf"
+    mkdir -p /etc/linuxptp
+
+    if [ -f "$dest" ]; then
+        warn "Backing up existing ${dest} → ${dest}.bak"
+        cp "$dest" "${dest}.bak"
+    fi
+    cp "${REPO_DIR}/rpi/ptp4l/ptp4l.conf" "$dest"
+    info "ptp4l config installed: ${dest}  (free_running=1, slaveOnly=1)"
+
+    # Install the service drop-in that overrides ExecStart with our config + PTP_IFACE
+    mkdir -p /etc/systemd/system/ptp4l.service.d
+    cp "${REPO_DIR}/rpi/systemd/ptp4l.service.d/time-reference-monitor.conf" \
+        /etc/systemd/system/ptp4l.service.d/time-reference-monitor.conf
+    info "ptp4l service drop-in installed (reads PTP_IFACE from /etc/time-reference-monitor.conf)"
+
+    systemctl daemon-reload
+    if systemctl is-active --quiet ptp4l.service 2>/dev/null; then
+        systemctl restart ptp4l.service
+        info "ptp4l restarted with new config."
+    else
+        info "ptp4l is not running yet; it will use the new config when started."
+        systemctl enable ptp4l.service 2>/dev/null || true
+    fi
+}
+
+# ── 5c. systemd services ──────────────────────────────────────────────────────
 install_services() {
     info "Installing systemd services…"
 
@@ -289,6 +337,8 @@ install_packages
 build_alsaltc
 install_app
 install_alsa
+configure_chrony
+configure_ptp4l
 install_services
 configure_sudoers
 install_kiosk_conf

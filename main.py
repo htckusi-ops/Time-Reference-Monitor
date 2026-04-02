@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import dataclasses
 import threading
 import time
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from models import LTCStatus
 from sources_ntp import read_chrony_tracking
 from sources_ptp import poll_ptp_real
 from sources_ltc import LTCMonitor
-from mock_sim import MockParams, MockPTP
+from mock_sim import MockParams, MockPTP, MockNTPParams, MockNTP
 from status_bus import StatusBus
 from webapp import create_app
 from spectrum import SpectrumManager
@@ -100,8 +101,48 @@ def main() -> None:
 
     bus.add_event("INFO", "START", f"Started (source={args.source}, iface={args.iface}, domain={args.domain})")
 
-    # PTP source setup
-    mock = None
+    # ── NTP mock presets ──────────────────────────────────────────────────────
+    NTP_MOCK_PRESETS = {
+        "clean":    MockNTPParams(jitter_s=5e-6),
+        "jitter":   MockNTPParams(jitter_s=500e-6, wander_s=100e-6),
+        "drift":    MockNTPParams(jitter_s=5e-6, drift_ppm=0.5),
+        "step":     MockNTPParams(jitter_s=5e-6, step_every_s=30, step_s=0.5),
+        "ref_flap": MockNTPParams(jitter_s=5e-6, ref_flap_every_s=20),
+        "unsynced": MockNTPParams(jitter_s=5e-6, unsynced_every_s=30, unsynced_duration_s=10),
+        "combo":    MockNTPParams(jitter_s=200e-6, wander_s=1e-3, drift_ppm=0.2, ref_flap_every_s=60),
+    }
+
+    # ── NTP runtime-switchable source ─────────────────────────────────────────
+    _ntp_src_lock = threading.Lock()
+    _ntp_src = {"mock": None, "params": None}
+
+    def get_ntp_source():
+        with _ntp_src_lock:
+            return {"source": "mock" if _ntp_src["mock"] else "real", "params": _ntp_src["params"]}
+
+    def set_ntp_source(mock_instance_or_none, params_dict=None):
+        with _ntp_src_lock:
+            _ntp_src["mock"] = mock_instance_or_none
+            _ntp_src["params"] = params_dict
+        label = "mock" if mock_instance_or_none else "real"
+        bus.add_event("INFO", "NTP_SOURCE_CHANGED", f"NTP source switched to {label}")
+
+    # ── PTP mock presets ──────────────────────────────────────────────────────
+    MOCK_PRESETS = {
+        "clean":    MockParams(jitter_ns=50),
+        "jitter":   MockParams(jitter_ns=2000, wander_ns=500),
+        "wander":   MockParams(jitter_ns=500, wander_ns=10_000, wander_period_s=60),
+        "dropout":  MockParams(jitter_ns=100, dropout_every_s=20, dropout_duration_s=5),
+        "gm_flap":  MockParams(jitter_ns=100, gm_flap_every_s=30),
+        "drift":    MockParams(jitter_ns=100, drift_ppb=500),
+        "step":     MockParams(jitter_ns=100, step_every_s=30, step_ns=100_000),
+    }
+
+    # ── Runtime-switchable PTP source ─────────────────────────────────────────
+    # _src["mock"] = None  → real ptp4l polling
+    # _src["mock"] = MockPTP(...)  → simulation
+    _src_lock = threading.Lock()
+    _initial_mock = None
     if args.source == "mock":
         mp = MockParams(
             jitter_ns=args.mock_jitter_ns,
@@ -114,10 +155,24 @@ def main() -> None:
             dropout_duration_s=args.mock_dropout_duration_s,
             gm_flap_every_s=args.mock_gm_flap_every_s,
         )
-        mock = MockPTP(mp)
+        _initial_mock = MockPTP(mp)
+    _src = {"mock": _initial_mock, "params": dataclasses.asdict(_initial_mock.p) if _initial_mock else None}
+
+    def get_ptp_source():
+        with _src_lock:
+            return {"source": "mock" if _src["mock"] else "real", "params": _src["params"]}
+
+    def set_ptp_source(mock_instance_or_none, params_dict=None):
+        with _src_lock:
+            _src["mock"] = mock_instance_or_none
+            _src["params"] = params_dict
+        label = "mock" if mock_instance_or_none else "real"
+        bus.add_event("INFO", "SOURCE_CHANGED", f"PTP source switched to {label}")
 
     def meta_provider():
-        return meta
+        with _src_lock:
+            active = "mock" if _src["mock"] else "real"
+        return {**meta, "tz_offset_s": time.localtime().tm_gmtoff, "source": active}
 
     def ptp_loop():
         last_poll = time.monotonic()
@@ -126,8 +181,10 @@ def main() -> None:
         while True:
             t0 = time.monotonic()
             try:
-                if mock is not None:
-                    st, raw = mock.poll()
+                with _src_lock:
+                    cur_mock = _src["mock"]
+                if cur_mock is not None:
+                    st, raw = cur_mock.poll()
                 else:
                     st, raw = poll_ptp_real(int(args.domain), trace=bool(args.trace))
 
@@ -156,9 +213,14 @@ def main() -> None:
     def ntp_loop():
         while True:
             try:
-                st, raw = read_chrony_tracking()
-                if args.trace:
-                    st.raw = raw
+                with _ntp_src_lock:
+                    cur_ntp_mock = _ntp_src["mock"]
+                if cur_ntp_mock is not None:
+                    st, raw = cur_ntp_mock.poll()
+                else:
+                    st, raw = read_chrony_tracking()
+                    if args.trace:
+                        st.raw = raw
                 if st.last_update_utc:
                     try:
                         t = datetime.fromisoformat(st.last_update_utc)
@@ -210,6 +272,13 @@ def main() -> None:
             spectrum=spectrum,
             ui_refresh_ms=int(args.ui_refresh_ms),
             ui_api_poll_ms=int(args.ui_api_poll_ms),
+            get_ptp_source=get_ptp_source,
+            set_ptp_source=set_ptp_source,
+            mock_presets=MOCK_PRESETS,
+            ptp_domain=int(args.domain),
+            get_ntp_source=get_ntp_source,
+            set_ntp_source=set_ntp_source,
+            ntp_mock_presets=NTP_MOCK_PRESETS,
         )
         app.run(host=args.http_host, port=int(args.http_port), threaded=True)
     else:

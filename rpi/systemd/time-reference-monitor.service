@@ -1,10 +1,7 @@
 [Unit]
 Description=Time Reference Monitor (PTP/NTP/LTC)
-After=network-online.target chrony.service
-Wants=network-online.target
-# Uncomment if ptp4l runs as a systemd service:
-# After=network-online.target chrony.service ptp4l.service
-# BindsTo=ptp4l.service
+After=network-online.target chrony.service ptp4l.service
+Wants=network-online.target ptp4l.service
 
 [Service]
 Type=simple
@@ -15,14 +12,18 @@ IOSchedulingClass=best-effort
 IOSchedulingPriority=4
 WorkingDirectory=/opt/time-reference-monitor
 
+# PTP_IFACE is read from /etc/time-reference-monitor.conf (shared with ptp4l service)
+EnvironmentFile=-/etc/time-reference-monitor.conf
+
 # --- Core: PTP polling via pmc, NTP via chronyc ---
 # --source real  = live pmc queries (requires ptp4l running)
-# --iface        = network interface with PTP (e.g. eth0)
+# --iface        = network interface with PTP – set PTP_IFACE in
+#                  /etc/time-reference-monitor.conf (default: eth0)
 # --domain       = PTP domain number (default 0)
 # --poll         = polling interval in seconds
 ExecStart=/opt/time-reference-monitor/venv/bin/python3 run.py \
     --source real \
-    --iface eth0 \
+    --iface ${PTP_IFACE:-eth0} \
     --domain 0 \
     --poll 0.25 \
     --http \
