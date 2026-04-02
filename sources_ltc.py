@@ -26,27 +26,51 @@ def _probe_alsa_delay_ms(device: str, rate: int = 48000) -> Optional[float]:
     Uses arecord --verbose; parses period_size from the setup block (= one interrupt
     period = actual capture-to-read latency). Falls back to buffer_size/4.
     Returns None on failure.
+
+    Two attempts are made:
+      1. Without explicit format flags — lets ALSA/dsnoop negotiate the native format.
+         Named devices (ltc_left_mono, dsnoop aliases) require this.
+      2. With -f S16_LE -c 1 -r <rate> — fallback for plain hw: devices.
     """
-    # Do NOT wrap in plug: — "plug:default" breaks the common "default" device.
-    # Pass device as-is; users who need format conversion should specify plughw:X,Y.
-    cmd = ["arecord", "-D", device, "-f", "S16_LE", "-c", "1", "-r", str(rate),
-           "-d", "1", "--verbose", "/dev/null"]
+    # Do NOT wrap in plug: — "plug:default" / "plug:ltc_left_mono" breaks named devices.
+    attempts = [
+        # Attempt 1: no format flags → ALSA uses the device's native format.
+        # Required for dsnoop aliases defined in asound.conf (ltc_left_mono etc.)
+        ["arecord", "-D", device, "-d", "1", "--verbose", "/dev/null"],
+        # Attempt 2: explicit S16_LE → fallback for plain hw: devices.
+        ["arecord", "-D", device, "-f", "S16_LE", "-c", "1", "-r", str(rate),
+         "-d", "1", "--verbose", "/dev/null"],
+    ]
+    for cmd in attempts:
+        result = _run_arecord_probe(cmd)
+        if result is not None:
+            return result
+    return None
+
+
+def _run_arecord_probe(cmd: list) -> Optional[float]:
+    """Run one arecord probe attempt; parse period_size/buffer_size from verbose output."""
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, bufsize=1)
         lines: list = []
+        rate_from_output: Optional[int] = None
         try:
             deadline = time.monotonic() + 4.0
             while time.monotonic() < deadline:
-                # Non-blocking line read via select so we can bail on deadline
                 ready, _, _ = select.select([proc.stdout], [], [], 0.3)
                 if not ready:
                     continue
                 line = proc.stdout.readline()
-                if not line:          # EOF – process exited
+                if not line:
                     break
                 lines.append(line)
-                if "period_size" in line:  # setup block complete
+                # Capture actual rate from verbose output (may differ from requested)
+                if rate_from_output is None:
+                    rm = re.search(r"rate\s*[=:]\s*(\d+)", line)
+                    if rm:
+                        rate_from_output = int(rm.group(1))
+                if "period_size" in line:
                     break
         finally:
             try:
@@ -61,11 +85,12 @@ def _probe_alsa_delay_ms(device: str, rate: int = 48000) -> Optional[float]:
         # ALSA verbose uses "key : value" or "key = value" depending on version
         m = re.search(r"period_size\s*[=:]\s*(\d+)", text)
         if m:
-            return int(m.group(1)) / rate * 1000.0
-        # fallback: buffer_size / 4 (ring buffer is typically 4× one period)
+            r = rate_from_output or 48000
+            return int(m.group(1)) / r * 1000.0
         m = re.search(r"buffer_size\s*[=:]\s*(\d+)", text)
         if m:
-            return int(m.group(1)) / 4.0 / rate * 1000.0
+            r = rate_from_output or 48000
+            return int(m.group(1)) / 4.0 / r * 1000.0
     except Exception:
         pass
     return None

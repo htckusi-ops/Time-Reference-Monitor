@@ -237,4 +237,22 @@ def set_ntp_server(server: str) -> Tuple[bool, str]:
     if r.returncode != 0:
         return False, (r.stderr or r.stdout).strip()
 
+    # Persist the server so update.sh and DHCP-triggered conf rewrites can restore it
+    _persist_ntp_server(server)
+
     return True, f"NTP-Server auf {server} gesetzt, chrony neu gestartet."
+
+
+# Writable data dir (owned by the app user); does not need sudo.
+_NTP_PERSIST_PATH = "/var/lib/time-reference-monitor/ntp_server"
+
+
+def _persist_ntp_server(server: str) -> None:
+    """Write the user's NTP server to the persistence file (survives conf overwrites)."""
+    try:
+        import os
+        os.makedirs(os.path.dirname(_NTP_PERSIST_PATH), exist_ok=True)
+        with open(_NTP_PERSIST_PATH, "w") as f:
+            f.write(server.strip() + "\n")
+    except Exception:
+        pass  # non-critical: chrony.conf is already updated

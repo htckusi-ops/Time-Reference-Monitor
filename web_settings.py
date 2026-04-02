@@ -130,8 +130,12 @@ _HTML = """<!doctype html>
       <label>NTP-Server</label>
       <input id="ntpServer" type="text" placeholder="pool.ntp.org"/>
     </div>
-    <p class="hint">Erster server/pool-Eintrag in chrony.conf wird ersetzt.
-    Nach dem Speichern startet chrony automatisch neu.</p>
+    <p class="hint">Erster server/pool-Eintrag in chrony.conf wird ersetzt; chrony startet neu.<br>
+    Die Einstellung wird in <code>/var/lib/time-reference-monitor/ntp_server</code> gespeichert
+    und bei jedem <code>sudo bash rpi/update.sh</code> automatisch wiederhergestellt.<br>
+    Falls der Eintrag trotzdem zurückgesetzt wird: NetworkManager-DHCP-Dispatcher prüfen
+    (<code>/etc/NetworkManager/dispatcher.d/</code>) — dieser kann NTP-Server aus dem
+    DHCP-Lease in chrony.conf schreiben.</p>
     <button class="btn btn-primary" id="btnSaveNtp">NTP speichern</button>
     <div class="msg" id="msgNtp"></div>
   </div>

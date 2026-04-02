@@ -147,10 +147,25 @@ CHRONY_CONF=""
 if ! diff -q "${REPO_DIR}/rpi/chrony/chrony.conf" "$CHRONY_CONF" &>/dev/null 2>&1; then
     [ -f "$CHRONY_CONF" ] && cp "$CHRONY_CONF" "${CHRONY_CONF}.bak"
     cp "${REPO_DIR}/rpi/chrony/chrony.conf" "$CHRONY_CONF"
-    systemctl restart chrony 2>/dev/null || true
-    info "chrony.conf aktualisiert (NTP-only). Neustart von chrony ausgeführt."
+    info "chrony.conf aktualisiert (NTP-only)."
 else
     info "chrony.conf unverändert."
+fi
+
+# Re-apply any NTP server that was set via the Settings UI.
+# set_ntp_server() in network_mgr.py writes the chosen server here.
+# This survives update.sh runs AND NetworkManager DHCP-triggered conf rewrites.
+NTP_PERSIST="/var/lib/time-reference-monitor/ntp_server"
+if [ -f "$NTP_PERSIST" ]; then
+    CUSTOM_NTP=$(cat "$NTP_PERSIST" | tr -d '[:space:]')
+    if [ -n "$CUSTOM_NTP" ]; then
+        # Replace only the first server/pool line; keep the rest of the file intact.
+        sed -i "0,/^\(server\|pool\) /s|^\(server\|pool\) \S\+|server ${CUSTOM_NTP}|" "$CHRONY_CONF"
+        info "NTP-Server wiederhergestellt aus Persistenz-Datei: ${CUSTOM_NTP}"
+        systemctl restart chrony 2>/dev/null || true
+    fi
+else
+    systemctl restart chrony 2>/dev/null || true
 fi
 
 # ── Xwrapper.config ──────────────────────────────────────────────────────────
