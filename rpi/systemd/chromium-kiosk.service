@@ -23,10 +23,20 @@ StandardInput=tty
 # Input group needed so libinput/evdev can open /dev/input/* event nodes.
 SupplementaryGroups=audio video input
 
-# Remove stale X lock files left over from unclean shutdowns/reboots.
-# '+' runs this command as root (needed: lock files are owned by root).
-# '-' ignores the exit code if the files don't exist.
+# 1) Remove stale X lock files left over from unclean shutdowns/reboots.
+#    '+' runs this command as root (needed: lock files are owned by root).
+#    '-' ignores the exit code if the files don't exist.
 ExecStartPre=-+/bin/rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
+
+# 2) Ensure /tmp/.X11-unix exists with sticky-bit 1777.
+#    /tmp is a fresh tmpfs after each boot; x11-common does not always create
+#    this directory on Bookworm — Xorg fails silently if it is missing.
+ExecStartPre=+/bin/mkdir -p /tmp/.X11-unix
+ExecStartPre=+/bin/chmod 1777 /tmp/.X11-unix
+
+# 3) Ensure Xwrapper.config allows rootless Xorg on a VT from a systemd service.
+#    xserver-xorg-legacy package updates can reset this file, breaking VT access.
+ExecStartPre=+/bin/bash -c 'grep -q needs_root_rights /etc/X11/Xwrapper.config 2>/dev/null || { mkdir -p /etc/X11; printf "allowed_users=anybody\nneeds_root_rights=yes\n" > /etc/X11/Xwrapper.config; echo "[kiosk-pre] Xwrapper.config wiederhergestellt."; }'
 
 # xinit starts X on display :0 on VT7, then runs kiosk.sh inside that X session.
 # -nocursor removed: mouse cursor visibility is managed by unclutter in kiosk.sh.
