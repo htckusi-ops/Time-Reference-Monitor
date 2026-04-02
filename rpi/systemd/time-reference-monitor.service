@@ -12,6 +12,10 @@ IOSchedulingClass=best-effort
 IOSchedulingPriority=4
 WorkingDirectory=/opt/time-reference-monitor
 
+# PTP_IFACE default (overridden by /etc/time-reference-monitor.conf below).
+# NOTE: systemd does NOT support bash ${VAR:-default} syntax in ExecStart.
+# Set the default here; EnvironmentFile overrides it when the conf exists.
+Environment=PTP_IFACE=eth0
 # PTP_IFACE is read from /etc/time-reference-monitor.conf (shared with ptp4l service)
 EnvironmentFile=-/etc/time-reference-monitor.conf
 
@@ -23,7 +27,7 @@ EnvironmentFile=-/etc/time-reference-monitor.conf
 # --poll         = polling interval in seconds
 ExecStart=/opt/time-reference-monitor/venv/bin/python3 run.py \
     --source real \
-    --iface ${PTP_IFACE:-eth0} \
+    --iface ${PTP_IFACE} \
     --domain 0 \
     --poll 0.25 \
     --http \

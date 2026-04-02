@@ -307,7 +307,11 @@ function renderLedMeter(ledPeak){{
   function pad2(n) {{ return String(n).padStart(2,'0'); }}
 
   function renderSevenSeg(el, timeStr) {{
-    if(el) el.textContent = timeStr || '--:--:--.--';
+    if(!el) return;
+    el.textContent = timeStr || '--:--:--.--';
+    // Dim inactive state: identical font/size keeps layout stable; low opacity
+    // signals no signal without causing the 7-seg area to reflow.
+    el.style.opacity = timeStr ? '' : '0.18';
   }}
 
   function setDot(dotEl, state){{
@@ -421,8 +425,16 @@ function renderLedMeter(ledPeak){{
     els('noPtpLine').textContent = st.no_ptp_since_utc || '—';
     els('gmChgLine').textContent = String(roll.gm_changes_rolling ?? '—');
 
-    const ntpLine = `NTP: ${{ntp.status || 'unknown'}} | stratum=${{(ntp.stratum ?? '—')}} | ref=${{(ntp.ref ?? '—')}} | last_update_age=${{(ntp.last_update_age_s ?? '—')}}`;
-    els('ntpLine').textContent = ntpLine;
+    const ntpOffsetDisp = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
+    const ntpParts = [
+      `NTP: ${{ntp.status || 'unknown'}}`,
+      `stratum=${{ntp.stratum ?? '—'}}`,
+      `ref=${{ntp.ref ?? '—'}}`,
+      `offset=${{ntpOffsetDisp}}`,
+    ];
+    if(ntp.rms_offset_s != null)  ntpParts.push(`rms=${{(ntp.rms_offset_s*1000).toFixed(3)}} ms`);
+    if(ntp.frequency_ppm != null) ntpParts.push(`freq=${{ntp.frequency_ppm.toFixed(3)}} ppm`);
+    els('ntpLine').textContent = ntpParts.join(' | ');
 
     // NTP status badge
     const ntpStat = els('ntpStatusBadge');
@@ -435,7 +447,8 @@ function renderLedMeter(ledPeak){{
     const tc = ltc.timecode || '—';
     const fps = ltc.fps || '—';
     const age = (ltc.last_update_age_s != null) ? (Math.round(ltc.last_update_age_s*10)/10)+'s' : '—';
-    els('ltcLine').textContent = `LTC: ${{pres}} | tc=${{tc}} | fps=${{fps}} | last_update_age=${{age}}`;
+    // tc omitted here — already shown prominently in the large 7-seg display above
+    els('ltcLine').textContent = `LTC: ${{pres}} | fps=${{fps}} | age=${{age}}`;
 
     // LTC status badge
     const ltcStat = els('ltcStatusBadge');
@@ -778,7 +791,10 @@ def spectrum_html() -> str:
       <pre id=\"status\">{{}}</pre>
 
       <div style=\"height:12px;\"></div>
-      <div class=\"muted\">Image</div>
+      <div class=\"row\" style=\"margin-bottom:6px;\">
+        <span class=\"muted\">Image</span>
+        <a id=\"imgDownload\" class=\"btn\" href=\"#\" download=\"LTC_Spectrum.png\" style=\"display:none;\">&#11015; Download PNG</a>
+      </div>
       <div id=\"imgWrap\" class=\"muted\">No image yet. Click GENERATE.</div>
       <div style=\"height:10px;\"></div>
       <img id=\"img\" alt=\"spectrum\" style=\"display:none;\"/>
@@ -811,9 +827,25 @@ def spectrum_html() -> str:
     el('status').textContent = JSON.stringify(j, null, 2);
     el('state').textContent = j.state || '—';
     if(j.has_image){{
+      const imgUrl = '/api/spectrum/image?ts=' + Date.now();
       el('img').style.display='block';
-      el('img').src = '/api/spectrum/image?ts=' + Date.now();
+      el('img').src = imgUrl;
       el('imgWrap').textContent='';
+      // Build timestamped filename: YYYYMMDD-HH_MM_SS_UTC-LTC_Spectrum.png
+      const dl = el('imgDownload');
+      dl.href = imgUrl;
+      if(j.last_generated_utc) {{
+        const d = new Date(j.last_generated_utc);
+        const fn = d.getUTCFullYear().toString()
+          + String(d.getUTCMonth()+1).padStart(2,'0')
+          + String(d.getUTCDate()).padStart(2,'0') + '-'
+          + String(d.getUTCHours()).padStart(2,'0') + '_'
+          + String(d.getUTCMinutes()).padStart(2,'0') + '_'
+          + String(d.getUTCSeconds()).padStart(2,'0')
+          + '_UTC-LTC_Spectrum.png';
+        dl.download = fn;
+      }}
+      dl.style.display='';
     }}
     if(j.has_audio){{
       const ts = Date.now();

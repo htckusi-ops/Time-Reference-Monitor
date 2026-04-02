@@ -36,6 +36,8 @@ class NTPStatus:
     last_update_utc: Optional[str] = None
     last_update_age_s: Optional[float] = None
     system_offset_s: Optional[float] = None  # chrony: NTP_time - system_clock (+ = system slow)
+    rms_offset_s: Optional[float] = None     # chrony: RMS offset (jitter measure)
+    frequency_ppm: Optional[float] = None    # chrony: clock frequency error (+ = slow)
     raw: Optional[str] = None
 
 
