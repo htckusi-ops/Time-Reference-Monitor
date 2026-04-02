@@ -62,8 +62,28 @@ def read_chrony_tracking(timeout_s: float = 1.0) -> Tuple[NTPStatus, str]:
                 val = float(m.group(1))
                 system_offset_s = val if m.group(2) == "slow" else -val
 
+        # "RMS offset : 0.000000123 seconds"  → jitter measure
+        rms_offset_s = None
+        rms_raw = fields.get("rms offset") or fields.get("rms_offset")
+        if rms_raw:
+            m = re.match(r"([\d.eE+\-]+)\s+seconds?", rms_raw)
+            if m:
+                rms_offset_s = float(m.group(1))
+
+        # "Frequency  : 1.234 ppm slow"  → positive = clock too slow (needs to run faster)
+        # "Frequency  : 1.234 ppm fast"  → negative = clock too fast
+        frequency_ppm = None
+        freq_raw = fields.get("frequency")
+        if freq_raw:
+            m = re.match(r"([\d.eE+\-]+)\s+ppm\s+(slow|fast)", freq_raw)
+            if m:
+                val = float(m.group(1))
+                frequency_ppm = val if m.group(2) == "slow" else -val
+
         st = NTPStatus(status=status, stratum=stratum, ref=ref, last_update_utc=utc_iso_ms(),
-                       system_offset_s=system_offset_s)
+                       system_offset_s=system_offset_s,
+                       rms_offset_s=rms_offset_s,
+                       frequency_ppm=frequency_ppm)
         return st, raw
     except FileNotFoundError:
         st = NTPStatus(status="unknown", last_update_utc=utc_iso_ms())
