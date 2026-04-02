@@ -49,6 +49,9 @@ def create_app(
     set_ptp_source: Callable = None,
     mock_presets: Dict = None,
     ptp_domain: int = 0,
+    get_ntp_source: Callable = None,
+    set_ntp_source: Callable = None,
+    ntp_mock_presets: Dict = None,
 ) -> Flask:
     app = Flask(__name__)
     BASE_DIR = os.path.dirname(__file__)
@@ -203,6 +206,56 @@ def create_app(
                 preset = "custom"
             instance = MockPTP(mp)
             set_ptp_source(instance, {**dataclasses.asdict(mp), "preset": preset})
+            return jsonify({"ok": True, "source": "mock", "preset": preset,
+                            "params": dataclasses.asdict(mp)})
+
+        return jsonify({"ok": False, "message": f"Unknown source: {source}"}), 400
+
+    # ---------------------------
+    # NTP source / simulation API
+    # ---------------------------
+
+    @app.get("/api/ntp-source")
+    def api_ntp_source_get() -> Response:
+        if get_ntp_source is None:
+            return jsonify({"source": "real", "params": None, "preset_names": []})
+        info = get_ntp_source()
+        preset_names = list(ntp_mock_presets.keys()) if ntp_mock_presets else []
+        return jsonify({**info, "preset_names": preset_names})
+
+    @app.post("/api/ntp-source")
+    def api_ntp_source_post() -> Response:
+        if set_ntp_source is None:
+            return jsonify({"ok": False, "message": "NTP source switching not available."}), 400
+        from mock_sim import MockNTPParams, MockNTP
+        import dataclasses
+        body = request.get_json(silent=True) or {}
+        source = str(body.get("source", "real")).strip().lower()
+
+        if source == "real":
+            set_ntp_source(None, None)
+            return jsonify({"ok": True, "source": "real"})
+
+        if source == "mock":
+            preset = str(body.get("preset", "")).strip()
+            if preset and ntp_mock_presets and preset in ntp_mock_presets:
+                mp = ntp_mock_presets[preset]
+            else:
+                mp = MockNTPParams(
+                    jitter_s=float(body.get("jitter_s", 5e-6)),
+                    wander_s=float(body.get("wander_s", 0.0)),
+                    wander_period_s=float(body.get("wander_period_s", 60.0)),
+                    drift_ppm=float(body.get("drift_ppm", 0.0)),
+                    step_every_s=float(body.get("step_every_s", 0.0)),
+                    step_s=float(body.get("step_s", 0.0)),
+                    ref_flap_every_s=float(body.get("ref_flap_every_s", 0.0)),
+                    unsynced_every_s=float(body.get("unsynced_every_s", 0.0)),
+                    unsynced_duration_s=float(body.get("unsynced_duration_s", 0.0)),
+                    stratum=int(body.get("stratum", 2)),
+                )
+                preset = "custom"
+            instance = MockNTP(mp)
+            set_ntp_source(instance, {**dataclasses.asdict(mp), "preset": preset})
             return jsonify({"ok": True, "source": "mock", "preset": preset,
                             "params": dataclasses.asdict(mp)})
 
