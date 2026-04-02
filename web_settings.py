@@ -249,6 +249,9 @@ _HTML = """<!doctype html>
           <option value="gm_flap">GM-Wechsel alle 30 s — Grandmaster-Failover</option>
           <option value="drift">Drift 500 ppb — kontinuierlicher Gangfehler</option>
           <option value="step">Sprung ±100 µs alle 30 s — Zeitsprünge</option>
+          <option value="combo_gm">GM-Wechsel + Wander — Kombination</option>
+          <option value="combo_drift">Drift + Wander — Kombination</option>
+          <option value="combo_storm">Sprung + Ausfall + GM — Sturm</option>
           <option value="custom">Benutzerdefiniert…</option>
         </select>
       </div>
@@ -434,9 +437,12 @@ _HTML = """<!doctype html>
     wander:  'Wander ± 10 µs',
     dropout: 'Ausfall alle 20 s',
     gm_flap: 'GM-Wechsel alle 30 s',
-    drift:   'Drift 500 ppb',
-    step:    'Sprung ±100 µs alle 30 s',
-    custom:  'Benutzerdefiniert',
+    drift:       'Drift 500 ppb',
+    step:        'Sprung ±100 µs alle 30 s',
+    combo_gm:    'GM-Wechsel + Wander',
+    combo_drift: 'Drift + Wander',
+    combo_storm: 'Sprung + Ausfall + GM',
+    custom:      'Benutzerdefiniert',
   }};
 
   async function loadPtpSource() {{

@@ -129,13 +129,18 @@ def main() -> None:
 
     # ── PTP mock presets ──────────────────────────────────────────────────────
     MOCK_PRESETS = {
-        "clean":    MockParams(jitter_ns=50),
-        "jitter":   MockParams(jitter_ns=2000, wander_ns=500),
-        "wander":   MockParams(jitter_ns=500, wander_ns=10_000, wander_period_s=60),
-        "dropout":  MockParams(jitter_ns=100, dropout_every_s=20, dropout_duration_s=5),
-        "gm_flap":  MockParams(jitter_ns=100, gm_flap_every_s=30),
-        "drift":    MockParams(jitter_ns=100, drift_ppb=500),
-        "step":     MockParams(jitter_ns=100, step_every_s=30, step_ns=100_000),
+        "clean":        MockParams(jitter_ns=50),
+        "jitter":       MockParams(jitter_ns=2000, wander_ns=500),
+        "wander":       MockParams(jitter_ns=500, wander_ns=10_000, wander_period_s=60),
+        "dropout":      MockParams(jitter_ns=100, dropout_every_s=20, dropout_duration_s=5),
+        "gm_flap":      MockParams(jitter_ns=100, gm_flap_every_s=30),
+        "drift":        MockParams(jitter_ns=100, drift_ppb=500),
+        "step":         MockParams(jitter_ns=100, step_every_s=30, step_ns=100_000),
+        # combinations
+        "combo_gm":     MockParams(jitter_ns=500, wander_ns=5_000, wander_period_s=30, gm_flap_every_s=20),
+        "combo_drift":  MockParams(jitter_ns=200, drift_ppb=500, wander_ns=3_000, wander_period_s=60),
+        "combo_storm":  MockParams(jitter_ns=2_000, step_every_s=20, step_ns=100_000,
+                                   dropout_every_s=60, dropout_duration_s=5, gm_flap_every_s=40),
     }
 
     # ── Runtime-switchable PTP source ─────────────────────────────────────────

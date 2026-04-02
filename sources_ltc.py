@@ -23,39 +23,47 @@ def utc_iso_ms() -> str:
 def _probe_alsa_delay_ms(device: str, rate: int = 48000) -> Optional[float]:
     """
     Probe ALSA capture period size for *device* and return capture latency in ms.
-    Uses arecord --verbose with a 1 s duration; parses period_size (= one interrupt
-    period = the actual capture-to-read latency). Falls back to buffer_size if absent.
+    Uses arecord --verbose; parses period_size from the setup block (= one interrupt
+    period = actual capture-to-read latency). Falls back to buffer_size/4.
     Returns None on failure.
     """
-    alsa_dev = device if device.startswith(("plug:", "hw:", "plughw:", "dsnoop")) else f"plug:{device}"
-    # -d 1: 1 second is the shortest reliable integer duration for arecord;
-    # "-d 0.1" is silently treated as 0 (= infinite) on most platforms.
-    cmd = ["arecord", "-D", alsa_dev, "-f", "S16_LE", "-c", "1", "-r", str(rate),
+    # Do NOT wrap in plug: — "plug:default" breaks the common "default" device.
+    # Pass device as-is; users who need format conversion should specify plughw:X,Y.
+    cmd = ["arecord", "-D", device, "-f", "S16_LE", "-c", "1", "-r", str(rate),
            "-d", "1", "--verbose", "/dev/null"]
     try:
-        # Use Popen so we can kill once we have the setup block (before recording ends)
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True)
+                                text=True, bufsize=1)
         lines: list = []
         try:
-            deadline = time.monotonic() + 3.0
-            for line in proc.stdout:
-                lines.append(line)
-                # period_size appears in the ALSA setup block right before recording starts
-                if "period_size" in line:
+            deadline = time.monotonic() + 4.0
+            while time.monotonic() < deadline:
+                # Non-blocking line read via select so we can bail on deadline
+                ready, _, _ = select.select([proc.stdout], [], [], 0.3)
+                if not ready:
+                    continue
+                line = proc.stdout.readline()
+                if not line:          # EOF – process exited
                     break
-                if time.monotonic() > deadline:
+                lines.append(line)
+                if "period_size" in line:  # setup block complete
                     break
         finally:
-            proc.kill()
-            proc.wait()
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                pass
         text = "".join(lines)
-        # period_size = one interrupt period → actual capture latency
-        m = re.search(r"period_size\s*:\s*(\d+)", text)
+        # ALSA verbose uses "key : value" or "key = value" depending on version
+        m = re.search(r"period_size\s*[=:]\s*(\d+)", text)
         if m:
             return int(m.group(1)) / rate * 1000.0
-        # fallback: buffer_size (over-estimates; divide by 4 as a heuristic)
-        m = re.search(r"buffer_size\s*:\s*(\d+)", text)
+        # fallback: buffer_size / 4 (ring buffer is typically 4× one period)
+        m = re.search(r"buffer_size\s*[=:]\s*(\d+)", text)
         if m:
             return int(m.group(1)) / 4.0 / rate * 1000.0
     except Exception:

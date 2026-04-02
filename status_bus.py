@@ -18,7 +18,9 @@ def utc_iso_ms() -> str:
 
 class StatusBus:
     def __init__(self, gm_window_s: int, error_window_s: int, startup_grace_s: float, db_writer: Optional[DBWriter],
-                 ntp_offset_jump_threshold_s: float = 0.1):
+                 ntp_offset_jump_threshold_s: float = 0.1,
+                 ptp_offset_jump_threshold_ns: int = 50_000,
+                 ptp_drift_warn_ppb: float = 300.0):
         self._lock = threading.Lock()
 
         self._ptp = PTPStatus()
@@ -43,9 +45,16 @@ class StatusBus:
         self._sum = Summaries()
 
         self._ntp_offset_jump_threshold_s = float(ntp_offset_jump_threshold_s)
+        self._ptp_offset_jump_threshold_ns = int(ptp_offset_jump_threshold_ns)
+        self._ptp_drift_warn_ppb = float(ptp_drift_warn_ppb)
 
         self._last_gm: Optional[str] = None
         self._last_ptp_valid: Optional[bool] = None
+        self._last_ptp_offset_ns: Optional[int] = None
+        self._last_port_state: Optional[str] = None
+        # sliding window for drift: deque of (monotonic_time, offset_ns)
+        self._ptp_drift_history: Deque = deque(maxlen=40)
+        self._last_ptp_drift_event_mono: Optional[float] = None
         self._last_ntp_status: Optional[str] = None
         self._last_ntp_ref: Optional[str] = None
         self._last_ntp_offset_s: Optional[float] = None
@@ -109,6 +118,7 @@ class StatusBus:
             if ptp.ptp_valid:
                 self._first_ptp_ok_seen = True
 
+            # ── GM change ─────────────────────────────────────────────────────
             if ptp.gm_identity and self._last_gm and ptp.gm_identity != self._last_gm:
                 self._sum.gm_changes_total += 1
                 self._roll_gm.add()
@@ -118,9 +128,11 @@ class StatusBus:
             if ptp.gm_identity:
                 self._last_gm = ptp.gm_identity
 
+            # ── loss / recovery ───────────────────────────────────────────────
             if self._last_ptp_valid is not None and self._last_ptp_valid and (not ptp.ptp_valid):
                 self._sum.ptp_loss_total += 1
                 self._roll_ptp_loss.add()
+                self._ptp_drift_history.clear()
                 self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="ALARM", type="PTP_LOST",
                                               message="PTP sync lost.",
                                               suppressed=self._should_suppress_for_state("ALARM")))
@@ -129,6 +141,60 @@ class StatusBus:
                                               message=f"PTP sync recovered. GM={ptp.gm_identity or '—'} state={ptp.port_state or '—'}",
                                               suppressed=False))
             self._last_ptp_valid = ptp.ptp_valid
+
+            # ── port state change ─────────────────────────────────────────────
+            if ptp.port_state and self._last_port_state and ptp.port_state != self._last_port_state:
+                sev = "INFO" if ptp.port_state in ("SLAVE", "MASTER") else "WARN"
+                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity=sev, type="PTP_PORT_STATE_CHANGED",
+                                              message=f"PTP port state: {self._last_port_state} -> {ptp.port_state}",
+                                              suppressed=self._should_suppress_for_state(sev)))
+            if ptp.port_state:
+                self._last_port_state = ptp.port_state
+
+            if ptp.ptp_valid and ptp.offset_ns is not None:
+                # ── offset jump (single-poll spike) ───────────────────────────
+                if (self._last_ptp_offset_ns is not None
+                        and abs(ptp.offset_ns - self._last_ptp_offset_ns) > self._ptp_offset_jump_threshold_ns):
+                    delta_us = (ptp.offset_ns - self._last_ptp_offset_ns) / 1000.0
+                    self._events.appendleft(Event(
+                        ts_utc=utc_iso_ms(), severity="WARN", type="PTP_OFFSET_JUMP",
+                        message=f"PTP offset jump: {delta_us:+.1f} µs (now {ptp.offset_ns / 1000:.1f} µs)",
+                        suppressed=self._should_suppress_for_state("WARN"),
+                    ))
+                self._last_ptp_offset_ns = ptp.offset_ns
+
+                # ── sustained drift via linear regression ─────────────────────
+                # Store (monotonic_time, offset_ns) for OLS slope estimation.
+                # Requires ≥20 samples; SE(slope) ≈ σ_jitter/√Σ(t-t̄)² — with
+                # maxlen=40 and 300 ppb threshold this avoids false triggers even
+                # at jitter=2 µs while reliably catching drift ≥ 300 ppb.
+                mono_now = time.monotonic()
+                self._ptp_drift_history.append((mono_now, ptp.offset_ns))
+                n = len(self._ptp_drift_history)
+                if n >= 20:
+                    ts_vals = [t for t, _ in self._ptp_drift_history]
+                    os_vals = [o for _, o in self._ptp_drift_history]
+                    t_mean = sum(ts_vals) / n
+                    o_mean = sum(os_vals) / n
+                    num = sum((ts_vals[i] - t_mean) * (os_vals[i] - o_mean) for i in range(n))
+                    den = sum((ts_vals[i] - t_mean) ** 2 for i in range(n))
+                    if den > 0:
+                        drift_ppb = num / den  # ns/s ≡ ppb
+                        dt_span = ts_vals[-1] - ts_vals[0]
+                        cooldown_ok = (self._last_ptp_drift_event_mono is None
+                                       or (mono_now - self._last_ptp_drift_event_mono) > 60.0)
+                        if abs(drift_ppb) > self._ptp_drift_warn_ppb and cooldown_ok:
+                            self._last_ptp_drift_event_mono = mono_now
+                            self._ptp_drift_history.clear()
+                            sev = "ALARM" if abs(drift_ppb) > self._ptp_drift_warn_ppb * 5 else "WARN"
+                            self._events.appendleft(Event(
+                                ts_utc=utc_iso_ms(), severity=sev, type="PTP_DRIFT_DETECTED",
+                                message=f"PTP drift: {drift_ppb:+.0f} ppb over {dt_span:.0f} s",
+                                suppressed=self._should_suppress_for_state(sev),
+                            ))
+            else:
+                self._ptp_drift_history.clear()
+
             self._ptp = ptp
 
     def update_ntp(self, ntp: NTPStatus) -> None:
