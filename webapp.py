@@ -311,6 +311,22 @@ def create_app(
 
         return send_file(io.BytesIO(b), mimetype="image/png")
 
+    @app.get("/api/spectrum/audio")
+    def api_spectrum_audio() -> Response:
+        if spectrum is None:
+            return jsonify({"ok": False, "message": "Spectrum is not configured."}), 400
+
+        b = spectrum.wav_bytes()
+        if not b:
+            return jsonify({"ok": False, "message": "No audio available yet."}), 404
+
+        return send_file(
+            io.BytesIO(b),
+            mimetype="audio/wav",
+            download_name="ltc_capture.wav",
+            as_attachment=False,
+        )
+
     # ---------------------------
     # System control (kiosk)
     # ---------------------------

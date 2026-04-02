@@ -24,6 +24,7 @@ class SpectrumStatus:
     device: str = ""
     duration_s: int = 0
     has_image: bool = False
+    has_audio: bool = False
     last_generated_utc: Optional[str] = None
 
 
@@ -49,6 +50,7 @@ class SpectrumManager:
         self._lock = threading.Lock()
         self._status = SpectrumStatus()
         self._img: Optional[bytes] = None
+        self._wav: Optional[bytes] = None
         self._worker: Optional[threading.Thread] = None
 
     def status(self) -> Dict[str, Any]:
@@ -58,6 +60,10 @@ class SpectrumManager:
     def image_bytes(self) -> Optional[bytes]:
         with self._lock:
             return self._img
+
+    def wav_bytes(self) -> Optional[bytes]:
+        with self._lock:
+            return self._wav
 
     def generate(self, *, duration_s: int, device: str) -> Dict[str, Any]:
         device = str(device or "").strip()
@@ -79,8 +85,10 @@ class SpectrumManager:
             self._status.device = device
             self._status.duration_s = duration_s
             self._status.has_image = False
+            self._status.has_audio = False
             self._status.last_generated_utc = None
             self._img = None
+            self._wav = None
 
             t = threading.Thread(
                 target=self._run_job,
@@ -119,6 +127,13 @@ class SpectrumManager:
                     check=True,
                     text=True,
                 )
+
+                # store WAV bytes for browser playback / download
+                with open(wav_path, "rb") as f:
+                    wav_data = f.read()
+                with self._lock:
+                    self._wav = wav_data
+                    self._status.has_audio = True
 
                 # 2) render spectrogram (PNG)
                 sox_cmd = [
