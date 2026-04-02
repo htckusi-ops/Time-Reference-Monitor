@@ -127,15 +127,15 @@ def ui_html() -> str:
       <div class="bigtime" id="ptpBox">
         <div class="timeLabel">PTP</div>
         <div class="timeStatus alarm" id="ptpStatusBadge">NO PTP SYNC</div>
-        <div class="seg-wrap" id="ptpTimeSegs">--:--:--.--</div>
+        <div class="seg-wrap" id="ptpTimeSegs" style="opacity:0.18">00:00:00.00</div>
 
         <div class="timeLabel">NTP</div>
         <div class="timeStatus muted" id="ntpStatusBadge">—</div>
-        <div class="seg-wrap" id="ntpTimeSegs">--:--:--.--</div>
+        <div class="seg-wrap" id="ntpTimeSegs" style="opacity:0.18">00:00:00.00</div>
 
         <div class="timeLabel">LTC</div>
         <div class="timeStatus muted" id="ltcStatusBadge">—</div>
-        <div class="seg-wrap" id="ltcTimeSegs">--:--:--.--</div>
+        <div class="seg-wrap" id="ltcTimeSegs" style="opacity:0.18">00:00:00.00</div>
       </div>
 
 <div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
@@ -308,9 +308,11 @@ function renderLedMeter(ledPeak){{
 
   function renderSevenSeg(el, timeStr) {{
     if(!el) return;
-    el.textContent = timeStr || '--:--:--.--';
-    // Dim inactive state: identical font/size keeps layout stable; low opacity
-    // signals no signal without causing the 7-seg area to reflow.
+    // Use '00:00:00.00' as placeholder (not '--:--:--.--') so that the Seg7 font
+    // renders the same-width digit glyphs in both active and inactive states.
+    // The '-' glyph is narrower than digits in Seg7, causing the grid column to
+    // resize when the display switches between placeholder and live time.
+    el.textContent = timeStr || '00:00:00.00';
     el.style.opacity = timeStr ? '' : '0.18';
   }}
 
@@ -505,10 +507,20 @@ function renderLedMeter(ledPeak){{
 
     ptpCanTick = canTick;
 
-    // Store server timestamp for NTP/PTP time interpolation
+    // Store server timestamp for NTP/PTP time interpolation.
+    // Monotonic: only advance the base if the new server time is >= the already-interpolated
+    // value. This prevents a backward flicker when an API response arrives with a timestamp
+    // slightly behind the live interpolation (due to network latency).
     if (meta.ts_utc) {{
-      srvBaseMs  = new Date(meta.ts_utc).getTime();
-      srvLocalMs = Date.now();
+      const newBase = new Date(meta.ts_utc).getTime();
+      const newNow  = Date.now();
+      const curInterp = (srvBaseMs != null && srvLocalMs != null)
+          ? srvBaseMs + (newNow - srvLocalMs)
+          : null;
+      if (curInterp === null || newBase >= curInterp) {{
+        srvBaseMs  = newBase;
+        srvLocalMs = newNow;
+      }}
     }}
 
     updateEvents(data.events || []);

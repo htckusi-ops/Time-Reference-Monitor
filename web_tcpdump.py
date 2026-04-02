@@ -18,9 +18,6 @@ body  { font-family: var(--mono); background: var(--bg); color: var(--text); mar
 .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
 h1    { font-size: 19px; margin: 0 0 3px; }
 .sub  { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
-.back { display:inline-flex; align-items:center; gap:6px; color:var(--accent);
-        text-decoration:none; font-size:13px; margin-bottom:16px; }
-.back:hover { text-decoration: underline; }
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
 .field  { display: flex; flex-direction: column; gap: 4px; }
 .field label { font-size: 11px; color: var(--muted); }
@@ -72,9 +69,13 @@ _HTML = """<!doctype html>
 </head>
 <body>
 <div class="wrap">
-  <a class="back" href="/">&#8592; Zurück zum Monitor</a>
-  <h1>PTP Capture</h1>
-  <p class="sub">Echtzeit-tcpdump für PTP-Pakete (UDP 319/320 + EtherType 0x88F7)</p>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">
+    <div>
+      <h1 style="margin:0 0 4px;">PTP Capture</h1>
+      <p class="sub" style="margin:0;">Echtzeit-tcpdump für PTP-Pakete (UDP 319/320 + EtherType 0x88F7)</p>
+    </div>
+    <button class="btn" id="btnClose">&#10005; Close</button>
+  </div>
 
   <div class="toolbar">
     <div class="field">
@@ -228,6 +229,11 @@ _HTML = """<!doctype html>
 
   $('btnClear').addEventListener('click', () => {{
     termLines = []; lineSeq = 0; renderTerm();
+  }});
+
+  $('btnClose').addEventListener('click', function() {{
+    window.close();
+    setTimeout(function() {{ window.location.href = '/'; }}, 150);
   }});
 
   $('btnDownload').addEventListener('click', () => {{
