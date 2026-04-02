@@ -17,7 +17,8 @@ def utc_iso_ms() -> str:
 
 
 class StatusBus:
-    def __init__(self, gm_window_s: int, error_window_s: int, startup_grace_s: float, db_writer: Optional[DBWriter]):
+    def __init__(self, gm_window_s: int, error_window_s: int, startup_grace_s: float, db_writer: Optional[DBWriter],
+                 ntp_offset_jump_threshold_s: float = 0.1):
         self._lock = threading.Lock()
 
         self._ptp = PTPStatus()
@@ -41,9 +42,13 @@ class StatusBus:
 
         self._sum = Summaries()
 
+        self._ntp_offset_jump_threshold_s = float(ntp_offset_jump_threshold_s)
+
         self._last_gm: Optional[str] = None
         self._last_ptp_valid: Optional[bool] = None
         self._last_ntp_status: Optional[str] = None
+        self._last_ntp_ref: Optional[str] = None
+        self._last_ntp_offset_s: Optional[float] = None
         self._last_ltc_present: Optional[bool] = None
 
         self._db = db_writer
@@ -128,13 +133,53 @@ class StatusBus:
 
     def update_ntp(self, ntp: NTPStatus) -> None:
         with self._lock:
+            # ── status transitions ────────────────────────────────────────────
             if self._last_ntp_status is not None and ntp.status != self._last_ntp_status:
                 self._sum.ntp_flaps_total += 1
                 self._roll_ntp_flap.add()
-                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="WARN", type="NTP_STATUS_CHANGED",
-                                              message=f"NTP status changed: {self._last_ntp_status} -> {ntp.status}",
-                                              suppressed=self._should_suppress_for_state("WARN")))
+                if ntp.status == "unsynced":
+                    self._events.appendleft(Event(
+                        ts_utc=utc_iso_ms(), severity="ALARM", type="NTP_LOST",
+                        message="NTP sync lost (unsynced).",
+                        suppressed=self._should_suppress_for_state("ALARM"),
+                    ))
+                elif ntp.status == "synced":
+                    self._events.appendleft(Event(
+                        ts_utc=utc_iso_ms(), severity="INFO", type="NTP_RECOVERED",
+                        message=f"NTP sync recovered. ref={ntp.ref or '—'} stratum={ntp.stratum or '—'}",
+                        suppressed=False,
+                    ))
+                else:
+                    self._events.appendleft(Event(
+                        ts_utc=utc_iso_ms(), severity="WARN", type="NTP_STATUS_CHANGED",
+                        message=f"NTP status changed: {self._last_ntp_status} -> {ntp.status}",
+                        suppressed=self._should_suppress_for_state("WARN"),
+                    ))
             self._last_ntp_status = ntp.status
+
+            # ── reference server change ───────────────────────────────────────
+            if ntp.ref and self._last_ntp_ref and ntp.ref != self._last_ntp_ref:
+                self._events.appendleft(Event(
+                    ts_utc=utc_iso_ms(), severity="WARN", type="NTP_REF_CHANGED",
+                    message=f"NTP reference changed: {self._last_ntp_ref} -> {ntp.ref} (stratum={ntp.stratum or '—'})",
+                    suppressed=self._should_suppress_for_state("WARN"),
+                ))
+            if ntp.ref:
+                self._last_ntp_ref = ntp.ref
+
+            # ── large offset jump ─────────────────────────────────────────────
+            if (ntp.system_offset_s is not None
+                    and self._last_ntp_offset_s is not None
+                    and abs(ntp.system_offset_s - self._last_ntp_offset_s) > self._ntp_offset_jump_threshold_s):
+                delta_ms = (ntp.system_offset_s - self._last_ntp_offset_s) * 1000.0
+                self._events.appendleft(Event(
+                    ts_utc=utc_iso_ms(), severity="WARN", type="NTP_OFFSET_JUMP",
+                    message=f"NTP offset jump: {delta_ms:+.1f} ms (now {ntp.system_offset_s * 1000:.1f} ms)",
+                    suppressed=self._should_suppress_for_state("WARN"),
+                ))
+            if ntp.system_offset_s is not None:
+                self._last_ntp_offset_s = ntp.system_offset_s
+
             self._ntp = ntp
 
     def update_ltc(self, ltc: LTCStatus) -> None:

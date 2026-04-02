@@ -782,6 +782,14 @@ def spectrum_html() -> str:
       <div id=\"imgWrap\" class=\"muted\">No image yet. Click GENERATE.</div>
       <div style=\"height:10px;\"></div>
       <img id=\"img\" alt=\"spectrum\" style=\"display:none;\"/>
+
+      <div id=\"audioWrap\" style=\"display:none; margin-top:18px;\">
+        <div class=\"row\" style=\"margin-bottom:8px;\">
+          <span class=\"muted\">Audio playback</span>
+          <a id=\"audioDownload\" class=\"btn\" href=\"#\" download=\"ltc_capture.wav\">&#11015; Download WAV</a>
+        </div>
+        <audio id=\"audioPlayer\" controls style=\"width:100%; border-radius:12px;\"></audio>
+      </div>
     </div>
   </div>
 
@@ -806,6 +814,13 @@ def spectrum_html() -> str:
       el('img').style.display='block';
       el('img').src = '/api/spectrum/image?ts=' + Date.now();
       el('imgWrap').textContent='';
+    }}
+    if(j.has_audio){{
+      const ts = Date.now();
+      const url = '/api/spectrum/audio?ts=' + ts;
+      el('audioPlayer').src = url;
+      el('audioDownload').href = url;
+      el('audioWrap').style.display='block';
     }}
     return j;
   }}
