@@ -23,21 +23,18 @@ def utc_iso_ms() -> str:
 def _probe_alsa_delay_ms(device: str, rate: int = 48000) -> Optional[float]:
     """
     Probe ALSA capture period size for *device* and return capture latency in ms.
-    Uses arecord --verbose; parses period_size from the setup block (= one interrupt
-    period = actual capture-to-read latency). Falls back to buffer_size/4.
-    Returns None on failure.
 
-    Two attempts are made:
-      1. Without explicit format flags — lets ALSA/dsnoop negotiate the native format.
-         Named devices (ltc_left_mono, dsnoop aliases) require this.
-      2. With -f S16_LE -c 1 -r <rate> — fallback for plain hw: devices.
+    Three strategies, tried in order:
+      1. arecord without format flags  — lets dsnoop/ALSA negotiate native format.
+      2. arecord with -f S16_LE        — fallback for plain hw: devices.
+      3. /proc/asound/ procfs          — most reliable when ltcdump already has the
+                                         device open; reads actual configured params.
+    Returns latency in ms, or None if all three fail.
     """
-    # Do NOT wrap in plug: — "plug:default" / "plug:ltc_left_mono" breaks named devices.
     attempts = [
-        # Attempt 1: no format flags → ALSA uses the device's native format.
-        # Required for dsnoop aliases defined in asound.conf (ltc_left_mono etc.)
+        # No format flags: ALSA/dsnoop uses native format (required for named devices).
         ["arecord", "-D", device, "-d", "1", "--verbose", "/dev/null"],
-        # Attempt 2: explicit S16_LE → fallback for plain hw: devices.
+        # Explicit S16_LE: fallback for plain hw: devices.
         ["arecord", "-D", device, "-f", "S16_LE", "-c", "1", "-r", str(rate),
          "-d", "1", "--verbose", "/dev/null"],
     ]
@@ -45,6 +42,29 @@ def _probe_alsa_delay_ms(device: str, rate: int = 48000) -> Optional[float]:
         result = _run_arecord_probe(cmd)
         if result is not None:
             return result
+    # Strategy 3: read from procfs — works when ltcdump already has the device open.
+    return _probe_alsa_delay_from_proc()
+
+
+def _probe_alsa_delay_from_proc() -> Optional[float]:
+    """
+    Read period_size from /proc/asound/card*/pcm*c/sub*/hw_params.
+    When ltcdump is running the configured hw params are visible here.
+    Returns latency in ms for the first open capture stream found, or None.
+    """
+    import glob as _glob
+    for path in sorted(_glob.glob("/proc/asound/card*/pcm*c/sub*/hw_params")):
+        try:
+            with open(path) as f:
+                content = f.read()
+            if not content.strip() or content.strip() == "closed":
+                continue
+            rate_m = re.search(r"rate:\s*(\d+)", content)
+            period_m = re.search(r"period_size:\s*(\d+)", content)
+            if rate_m and period_m:
+                return int(period_m.group(1)) / int(rate_m.group(1)) * 1000.0
+        except Exception:
+            continue
     return None
 
 
