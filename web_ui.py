@@ -839,7 +839,10 @@ def spectrum_html() -> str:
     const j = await r.json();
     el('status').textContent = JSON.stringify(j, null, 2);
 
-    for(let i=0;i<80;i++){{ 
+    // Poll until done: duration_s capture + up to 30s for sox + 5s headroom,
+    // checked every 250 ms.  Fixed 80-iteration cap was too short for ≥30s captures.
+    const maxPolls = Math.ceil((payload.duration_s + 35) * 4);
+    for(let i=0;i<maxPolls;i++){{
       const st = await getStatus();
       if(st.state !== 'generating') break;
       await new Promise(res=>setTimeout(res, 250));
