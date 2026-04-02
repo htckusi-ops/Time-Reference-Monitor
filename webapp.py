@@ -45,6 +45,10 @@ def create_app(
     *,
     ui_refresh_ms: int = 50,
     ui_api_poll_ms: int = 250,
+    get_ptp_source: Callable = None,
+    set_ptp_source: Callable = None,
+    mock_presets: Dict = None,
+    ptp_domain: int = 0,
 ) -> Flask:
     app = Flask(__name__)
     BASE_DIR = os.path.dirname(__file__)
@@ -153,6 +157,56 @@ def create_app(
             return jsonify({"ok": False, "message": "Kein Server angegeben."}), 400
         ok, msg = set_ntp_server(server)
         return jsonify({"ok": ok, "message": msg})
+
+    # ---------------------------
+    # PTP source / simulation API
+    # ---------------------------
+
+    @app.get("/api/ptp-source")
+    def api_ptp_source_get() -> Response:
+        if get_ptp_source is None:
+            return jsonify({"source": "real", "params": None, "presets": {}})
+        info = get_ptp_source()
+        preset_names = list(mock_presets.keys()) if mock_presets else []
+        return jsonify({**info, "preset_names": preset_names})
+
+    @app.post("/api/ptp-source")
+    def api_ptp_source_post() -> Response:
+        if set_ptp_source is None:
+            return jsonify({"ok": False, "message": "Source switching not available."}), 400
+        from mock_sim import MockParams, MockPTP
+        import dataclasses
+        body = request.get_json(silent=True) or {}
+        source = str(body.get("source", "real")).strip().lower()
+
+        if source == "real":
+            set_ptp_source(None, None)
+            return jsonify({"ok": True, "source": "real"})
+
+        if source == "mock":
+            preset = str(body.get("preset", "")).strip()
+            if preset and mock_presets and preset in mock_presets:
+                mp = mock_presets[preset]
+            else:
+                # Custom params — pick from body, fall back to clean defaults
+                mp = MockParams(
+                    jitter_ns=int(body.get("jitter_ns", 50)),
+                    wander_ns=int(body.get("wander_ns", 0)),
+                    wander_period_s=float(body.get("wander_period_s", 10.0)),
+                    drift_ppb=float(body.get("drift_ppb", 0.0)),
+                    step_every_s=float(body.get("step_every_s", 0.0)),
+                    step_ns=int(body.get("step_ns", 0)),
+                    dropout_every_s=float(body.get("dropout_every_s", 0.0)),
+                    dropout_duration_s=float(body.get("dropout_duration_s", 0.0)),
+                    gm_flap_every_s=float(body.get("gm_flap_every_s", 0.0)),
+                )
+                preset = "custom"
+            instance = MockPTP(mp)
+            set_ptp_source(instance, {**dataclasses.asdict(mp), "preset": preset})
+            return jsonify({"ok": True, "source": "mock", "preset": preset,
+                            "params": dataclasses.asdict(mp)})
+
+        return jsonify({"ok": False, "message": f"Unknown source: {source}"}), 400
 
     # ---------------------------
     # Spectrum endpoints (on-demand)
