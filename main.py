@@ -1,9 +1,11 @@
 from __future__ import annotations
 import argparse
 import dataclasses
+import os
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Tuple
 
 import config
 from db import DBWriter
@@ -15,6 +17,25 @@ from mock_sim import MockParams, MockPTP, MockNTPParams, MockNTP
 from status_bus import StatusBus
 from webapp import create_app
 from spectrum import SpectrumManager
+
+
+_DOMAIN_PERSIST_PATH = "/var/lib/time-reference-monitor/ptp_domain"
+
+
+def _read_persisted_domain(default: int) -> int:
+    """Return domain from persistence file, or default if absent/invalid."""
+    try:
+        with open(_DOMAIN_PERSIST_PATH) as f:
+            return int(f.read().strip())
+    except Exception:
+        return default
+
+
+def _write_persisted_domain(domain: int) -> None:
+    """Write domain number to persistence file (survives reboots)."""
+    os.makedirs(os.path.dirname(_DOMAIN_PERSIST_PATH), exist_ok=True)
+    with open(_DOMAIN_PERSIST_PATH, "w") as f:
+        f.write(str(domain) + "\n")
 
 
 def utc_now() -> datetime:
@@ -87,7 +108,7 @@ def main() -> None:
 
     meta = {
         "iface": args.iface,
-        "domain": int(args.domain),
+        "domain": _initial_domain,
         "source": args.source,
         "poll_s": float(args.poll),
         "gm_window_s": int(args.gm_window_s),
@@ -99,7 +120,29 @@ def main() -> None:
         "ui_api_poll_ms": int(args.ui_api_poll_ms),
     }
 
-    bus.add_event("INFO", "START", f"Started (source={args.source}, iface={args.iface}, domain={args.domain})")
+    # ── PTP domain – runtime-switchable, optionally persisted ────────────────
+    # Load from persistence file first; --domain CLI arg is the fallback.
+    _initial_domain = _read_persisted_domain(int(args.domain))
+    _domain_lock = threading.Lock()
+    _cur_domain  = {"value": _initial_domain}
+
+    def get_ptp_domain() -> int:
+        with _domain_lock:
+            return _cur_domain["value"]
+
+    def set_ptp_domain(domain: int, persist: bool = False) -> Tuple[bool, str]:
+        with _domain_lock:
+            _cur_domain["value"] = domain
+        bus.add_event("INFO", "DOMAIN_CHANGED", f"PTP domain changed to {domain}")
+        if persist:
+            try:
+                _write_persisted_domain(domain)
+            except Exception as exc:
+                return True, f"Domain {domain} aktiv (Persist fehlgeschlagen: {exc})"
+        label = "gespeichert" if persist else "temporär gesetzt"
+        return True, f"PTP Domain {domain} {label}."
+
+    bus.add_event("INFO", "START", f"Started (source={args.source}, iface={args.iface}, domain={_initial_domain})")
 
     # ── NTP mock presets ──────────────────────────────────────────────────────
     NTP_MOCK_PRESETS = {
@@ -177,7 +220,9 @@ def main() -> None:
     def meta_provider():
         with _src_lock:
             active = "mock" if _src["mock"] else "real"
-        return {**meta, "tz_offset_s": time.localtime().tm_gmtoff, "source": active}
+        # Override static meta["domain"] with the live (possibly user-changed) value
+        return {**meta, "tz_offset_s": time.localtime().tm_gmtoff, "source": active,
+                "domain": get_ptp_domain()}
 
     def ptp_loop():
         last_poll = time.monotonic()
@@ -191,7 +236,7 @@ def main() -> None:
                 if cur_mock is not None:
                     st, raw = cur_mock.poll()
                 else:
-                    st, raw = poll_ptp_real(int(args.domain), trace=bool(args.trace))
+                    st, raw = poll_ptp_real(get_ptp_domain(), trace=bool(args.trace))
 
                 now = time.monotonic()
                 st.poll_age_ms = int((now - last_poll) * 1000.0)
@@ -280,7 +325,9 @@ def main() -> None:
             get_ptp_source=get_ptp_source,
             set_ptp_source=set_ptp_source,
             mock_presets=MOCK_PRESETS,
-            ptp_domain=int(args.domain),
+            ptp_domain=_initial_domain,
+            get_ptp_domain=get_ptp_domain,
+            set_ptp_domain=set_ptp_domain,
             get_ntp_source=get_ntp_source,
             set_ntp_source=set_ntp_source,
             ntp_mock_presets=NTP_MOCK_PRESETS,
