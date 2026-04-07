@@ -182,10 +182,12 @@ class DomainScanner:
     def _run(self) -> None:
         """Background thread: capture + parse."""
         try:
-            # Remove any leftover PCAP from a previous scan
+            # Remove any leftover PCAP from a previous scan.
+            # The file may be root-owned (created by sudo tcpdump) – catch
+            # PermissionError and skip; tcpdump will overwrite it anyway.
             try:
                 os.remove(_SCAN_PCAP)
-            except FileNotFoundError:
+            except (FileNotFoundError, PermissionError):
                 pass
 
             with self._lock:
