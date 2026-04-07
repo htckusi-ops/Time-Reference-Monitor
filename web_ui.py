@@ -187,9 +187,9 @@ def ui_html() -> str:
             <div id="ltcLevelText" class="ledText">—</div>
         </div>
       <div class="hr"></div>
-
-      <div class="kv2" style="margin-top:8px;">
-        <!-- Left column: connection & timing -->
+      <h3 style="margin-bottom:8px;">PTP</h3>
+      <div class="kv2">
+        <!-- Left: connection & timing -->
         <div class="kv">
           <div class="kv-k">State</div><div class="kv-v" id="stateLine">—</div>
           <div class="kv-k">Port state</div><div class="kv-v" id="portStateLine">—</div>
@@ -203,10 +203,8 @@ def ui_html() -> str:
           <div class="kv-k">Poll age (ms)</div><div class="kv-v" id="ageLine">—</div>
           <div class="kv-k">GM changes</div><div class="kv-v" id="gmChgLine">—</div>
           <div class="kv-k">NO PTP since</div><div class="kv-v" id="noPtpLine">—</div>
-          <div class="kv-k">NTP status</div><div class="kv-v" id="ntpLine">—</div>
-          <div class="kv-k">LTC status</div><div class="kv-v" id="ltcLine">—</div>
         </div>
-        <!-- Right column: GM / source info -->
+        <!-- Right: GM / source info -->
         <div class="kv">
           <div class="kv-k">Source</div><div class="kv-v" id="sourceLine">—</div>
           <div class="kv-k">Time source</div><div class="kv-v" id="timeSourceLine">—</div>
@@ -220,6 +218,26 @@ def ui_html() -> str:
           <div class="kv-k">GM priority2</div><div class="kv-v" id="gmPrio2Line">—</div>
           <div class="kv-k">GM clock class</div><div class="kv-v" id="gmClockClassLine">—</div>
           <div class="kv-k">GM clock acc.</div><div class="kv-v" id="gmClockAccLine">—</div>
+        </div>
+      </div>
+
+      <div class="hr"></div>
+      <h3 style="margin-bottom:8px;">NTP</h3>
+      <div class="kv2">
+        <!-- Left: sync state -->
+        <div class="kv">
+          <div class="kv-k">Status</div><div class="kv-v" id="ntpStatusLine">—</div>
+          <div class="kv-k">Stratum</div><div class="kv-v" id="ntpStratumLine">—</div>
+          <div class="kv-k">Reference</div><div class="kv-v" id="ntpRefLine">—</div>
+          <div class="kv-k">Last update</div><div class="kv-v" id="ntpLastUpdateLine">—</div>
+          <div class="kv-k">Update age</div><div class="kv-v" id="ntpAgeLine">—</div>
+          <div class="kv-k">NTP flaps</div><div class="kv-v" id="ntpFlapLine">—</div>
+        </div>
+        <!-- Right: quality metrics -->
+        <div class="kv">
+          <div class="kv-k">System offset</div><div class="kv-v" id="ntpSysOffLine">—</div>
+          <div class="kv-k">RMS offset</div><div class="kv-v" id="ntpRmsOffLine">—</div>
+          <div class="kv-k">Frequency</div><div class="kv-v" id="ntpFreqLine">—</div>
         </div>
       </div>
     </div>
@@ -474,16 +492,16 @@ function renderLedMeter(ledPeak){{
     els('freqTraceLine').textContent = (st.frequency_traceable != null) ? (st.frequency_traceable ? 'yes' : 'no') : '—';
     els('ptpTimescaleLine').textContent = (st.ptp_timescale != null) ? (st.ptp_timescale ? 'PTP' : 'ARB') : '—';
 
-    const ntpOffsetDisp = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
-    const ntpParts = [
-      `NTP: ${{ntp.status || 'unknown'}}`,
-      `stratum=${{ntp.stratum ?? '—'}}`,
-      `ref=${{ntp.ref ?? '—'}}`,
-      `offset=${{ntpOffsetDisp}}`,
-    ];
-    if(ntp.rms_offset_s != null)  ntpParts.push(`rms=${{(ntp.rms_offset_s*1000).toFixed(3)}} ms`);
-    if(ntp.frequency_ppm != null) ntpParts.push(`freq=${{ntp.frequency_ppm.toFixed(3)}} ppm`);
-    els('ntpLine').textContent = ntpParts.join(' | ');
+    // NTP detail rows
+    els('ntpStatusLine').textContent  = ntp.status || '—';
+    els('ntpStratumLine').textContent = (ntp.stratum != null) ? String(ntp.stratum) : '—';
+    els('ntpRefLine').textContent     = ntp.ref || '—';
+    els('ntpLastUpdateLine').textContent = ntp.last_update_utc || '—';
+    els('ntpAgeLine').textContent     = (ntp.last_update_age_s != null) ? ntp.last_update_age_s.toFixed(1)+' s' : '—';
+    els('ntpFlapLine').textContent    = String(roll.ntp_flaps_rolling ?? '—');
+    els('ntpSysOffLine').textContent  = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
+    els('ntpRmsOffLine').textContent  = (ntp.rms_offset_s != null) ? (ntp.rms_offset_s*1000).toFixed(3)+' ms' : '—';
+    els('ntpFreqLine').textContent    = (ntp.frequency_ppm != null) ? ntp.frequency_ppm.toFixed(3)+' ppm' : '—';
 
     // NTP status badge
     const ntpStat = els('ntpStatusBadge');
@@ -496,8 +514,6 @@ function renderLedMeter(ledPeak){{
     const tc = ltc.timecode || '—';
     const fps = ltc.fps || '—';
     const age = (ltc.last_update_age_s != null) ? (Math.round(ltc.last_update_age_s*10)/10)+'s' : '—';
-    // tc omitted here — already shown prominently in the large 7-seg display above
-    els('ltcLine').textContent = `LTC: ${{pres}} | fps=${{fps}} | age=${{age}}`;
 
     // LTC status badge
     const ltcStat = els('ltcStatusBadge');
