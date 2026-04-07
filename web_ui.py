@@ -433,7 +433,20 @@ function renderLedMeter(ledPeak){{
     els('pillMeta').textContent = `${{meta.source || '—'}} | ${{meta.iface || '—'}} | domain=${{meta.domain ?? '—'}} | poll=${{meta.poll_s ?? '—'}}s`;
     els('footMeta').textContent = `API: ${{meta.ts_utc || '—'}}`;
 
-    els('sourceLine').textContent = meta.source || '—';
+    // Source: "mock", "real / local (MASTER)", "real / remote (SLAVE)", "real"
+    (function() {{
+      const src = meta.source || '';
+      if (src === 'mock') {{ els('sourceLine').textContent = 'mock'; return; }}
+      if (src === 'real') {{
+        const ps = (st.port_state || '').toUpperCase();
+        if (ps === 'MASTER') {{ els('sourceLine').textContent = 'real / local (MASTER)'; }}
+        else if (ps === 'SLAVE' || ps === 'UNCALIBRATED') {{ els('sourceLine').textContent = 'real / remote (' + ps + ')'; }}
+        else if (ps && ps !== 'UNKNOWN') {{ els('sourceLine').textContent = 'real / ' + ps.toLowerCase(); }}
+        else {{ els('sourceLine').textContent = 'real'; }}
+        return;
+      }}
+      els('sourceLine').textContent = src || '—';
+    }})();
     els('ifaceLine').textContent = meta.iface || '—';
     els('domainLine').textContent = String(meta.domain ?? '—');
 

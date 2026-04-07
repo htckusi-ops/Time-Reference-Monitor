@@ -102,35 +102,72 @@ def get_wifi_status() -> Dict[str, Any]:
     }
 
 
+_CHRONY_SOURCES_FILE = "/etc/chrony/sources.d/time-reference-monitor.sources"
+_NTP_PERSIST_PATH = "/var/lib/time-reference-monitor/ntp_server"
+
+
 def get_ntp_server() -> str:
-    """Return the first configured NTP server from chrony.conf."""
+    """Return the configured NTP server.
+
+    Reads from our sources.d file first (survives chrony.conf rewrites),
+    then falls back to the first server/pool entry in chrony.conf.
+    """
+    # Primary: our own sources.d file
     try:
-        with open("/etc/chrony/chrony.conf") as f:
+        with open(_CHRONY_SOURCES_FILE) as f:
             for line in f:
                 s = line.strip()
-                if s.startswith(("server ", "pool ")):
+                if s and not s.startswith("#") and s.startswith(("server ", "pool ")):
                     parts = s.split()
                     if len(parts) >= 2:
                         return parts[1]
     except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    # Fallback: chrony.conf
+    for path in ("/etc/chrony/chrony.conf", "/etc/chrony.conf"):
         try:
-            with open("/etc/chrony.conf") as f:
+            with open(path) as f:
                 for line in f:
                     s = line.strip()
                     if s.startswith(("server ", "pool ")):
                         parts = s.split()
                         if len(parts) >= 2:
                             return parts[1]
+        except FileNotFoundError:
+            continue
         except Exception:
-            pass
-    except Exception:
-        pass
+            break
     return ""
 
 
-# ── write ─────────────────────────────────────────────────────────────────────
+def set_ntp_server(server: str) -> Tuple[bool, str]:
+    """Write the NTP server to /etc/chrony/sources.d/ and reload chrony sources.
 
-def apply_static(
+    Uses the sources.d drop-in directory (available since chrony 4.x / Bookworm).
+    This avoids touching chrony.conf, survives update.sh runs, and does not
+    require a full chrony restart — 'chronyc reload sources' is sufficient.
+    """
+    content = (
+        "# Written by Time Reference Monitor – do not edit manually.\n"
+        f"server {server} iburst\n"
+    )
+
+    r = subprocess.run(
+        ["sudo", "tee", _CHRONY_SOURCES_FILE],
+        input=content, capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout).strip()
+
+    r = _sudo("chronyc", "reload", "sources", timeout=10)
+    if r.returncode != 0:
+        # Non-fatal: the file is written; chrony will pick it up on next restart
+        return True, f"NTP-Server auf {server} gesetzt (chronyc reload sources: {(r.stderr or r.stdout).strip()})"
+
+    return True, f"NTP-Server auf {server} gesetzt."
     iface: str, ip: str, prefix: str, gateway: str, dns: str
 ) -> Tuple[bool, str]:
     """Apply static IP configuration via nmcli."""
@@ -192,67 +229,3 @@ def set_wifi(enabled: bool) -> Tuple[bool, str]:
     return True, f"WiFi {'aktiviert' if enabled else 'deaktiviert'}."
 
 
-def set_ntp_server(server: str) -> Tuple[bool, str]:
-    """Replace the first server/pool entry in chrony.conf and restart chrony."""
-    chrony_paths = ["/etc/chrony/chrony.conf", "/etc/chrony.conf"]
-    conf_path = None
-    for p in chrony_paths:
-        try:
-            open(p).close()
-            conf_path = p
-            break
-        except FileNotFoundError:
-            continue
-
-    if not conf_path:
-        return False, "chrony.conf nicht gefunden."
-
-    try:
-        with open(conf_path) as f:
-            lines = f.readlines()
-    except Exception as e:
-        return False, str(e)
-
-    new_lines = []
-    replaced = False
-    for line in lines:
-        if not replaced and line.strip().startswith(("server ", "pool ")):
-            new_lines.append(f"server {server} iburst\n")
-            replaced = True
-        else:
-            new_lines.append(line)
-    if not replaced:
-        new_lines.insert(0, f"server {server} iburst\n")
-
-    new_content = "".join(new_lines)
-
-    r = subprocess.run(
-        ["sudo", "tee", conf_path],
-        input=new_content, capture_output=True, text=True, timeout=10
-    )
-    if r.returncode != 0:
-        return False, (r.stderr or r.stdout).strip()
-
-    r = _sudo("systemctl", "restart", "chrony", timeout=20)
-    if r.returncode != 0:
-        return False, (r.stderr or r.stdout).strip()
-
-    # Persist the server so update.sh and DHCP-triggered conf rewrites can restore it
-    _persist_ntp_server(server)
-
-    return True, f"NTP-Server auf {server} gesetzt, chrony neu gestartet."
-
-
-# Writable data dir (owned by the app user); does not need sudo.
-_NTP_PERSIST_PATH = "/var/lib/time-reference-monitor/ntp_server"
-
-
-def _persist_ntp_server(server: str) -> None:
-    """Write the user's NTP server to the persistence file (survives conf overwrites)."""
-    try:
-        import os
-        os.makedirs(os.path.dirname(_NTP_PERSIST_PATH), exist_ok=True)
-        with open(_NTP_PERSIST_PATH, "w") as f:
-            f.write(server.strip() + "\n")
-    except Exception:
-        pass  # non-critical: chrony.conf is already updated
