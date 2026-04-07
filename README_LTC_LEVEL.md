@@ -1,11 +1,10 @@
-V04 – LTC Level integration (minimal patch)
+# README_LTC_LEVEL — Veraltete Integrationsbeschreibung
 
-This bundle ONLY adds an LTC audio level meter to an otherwise working v03 codebase.
-Spectrum, PTP, NTP remain unchanged.
+> **Hinweis:** Diese Datei beschreibt den alten V04-Integrations-Patch, der `ltc_level.py` als separaten Patch in einen V03-Codestand einbaute.
 
-Files:
-- ltc_level.py        : ALSA capture + RMS/PEAK calculation
-- webapp_ltc_level.py : Flask endpoint /api/ltc/level
-- web_ui_ltc_level.js : UI additions (horizontal LED-style bar)
+Die LTC-Pegelanzeige ist seit V05 vollständig in den Haupt-Codestand integriert:
 
-Integration steps are documented inline.
+- **`ltc_level.py`**: ALSA-Capture (dsnoop_ltc) mit RMS/Peak-Berechnung, läuft als eigenständiger Thread
+- **`web_ui.py`**: Horizontaler LED-Pegel-Meter im Dashboard, aktualisiert über `/api/ltc/level` alle 200 ms
+
+Es sind keine separaten Patch-Dateien (`webapp_ltc_level.py`, `web_ui_ltc_level.js`) mehr nötig.

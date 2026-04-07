@@ -21,7 +21,7 @@ def utc_iso_ms(dt: Optional[datetime] = None) -> str:
 def _run_pmc(domain: int, cmd: str, timeout_s: float = config.PMC_TIMEOUT_S) -> str:
     client_sock = f"/tmp/pmc.{os.getpid()}"
     p = subprocess.run(
-        ["pmc", "-u", "-i", client_sock, "-s", "/var/run/ptp4lro", "-b", str(domain), cmd],
+        ["pmc", "-u", "-i", client_sock, "-s", "/var/run/ptp4lro", "-d", str(domain), cmd],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

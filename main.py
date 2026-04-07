@@ -106,20 +106,6 @@ def main() -> None:
         db_writer=dbw,
     )
 
-    meta = {
-        "iface": args.iface,
-        "domain": _initial_domain,
-        "source": args.source,
-        "poll_s": float(args.poll),
-        "gm_window_s": int(args.gm_window_s),
-        "error_window_s": int(args.error_window_s),
-        "stale_threshold_ms": int(args.stale_threshold_ms),
-        "trace": bool(args.trace),
-        "display_decimals": int(args.display_decimals),
-        "ui_refresh_ms": int(args.ui_refresh_ms),
-        "ui_api_poll_ms": int(args.ui_api_poll_ms),
-    }
-
     # ── PTP domain – runtime-switchable, optionally persisted ────────────────
     # Load from persistence file first; --domain CLI arg is the fallback.
     _initial_domain = _read_persisted_domain(int(args.domain))
@@ -141,6 +127,20 @@ def main() -> None:
                 return True, f"Domain {domain} aktiv (Persist fehlgeschlagen: {exc})"
         label = "gespeichert" if persist else "temporär gesetzt"
         return True, f"PTP Domain {domain} {label}."
+
+    meta = {
+        "iface": args.iface,
+        "domain": _initial_domain,
+        "source": args.source,
+        "poll_s": float(args.poll),
+        "gm_window_s": int(args.gm_window_s),
+        "error_window_s": int(args.error_window_s),
+        "stale_threshold_ms": int(args.stale_threshold_ms),
+        "trace": bool(args.trace),
+        "display_decimals": int(args.display_decimals),
+        "ui_refresh_ms": int(args.ui_refresh_ms),
+        "ui_api_poll_ms": int(args.ui_api_poll_ms),
+    }
 
     bus.add_event("INFO", "START", f"Started (source={args.source}, iface={args.iface}, domain={_initial_domain})")
 

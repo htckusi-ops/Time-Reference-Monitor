@@ -57,6 +57,24 @@ def ui_html() -> str:
     .foot{{margin-top:12px; color:var(--muted); font-size:12px; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;}}
     .mono{{font-family:var(--mono);}}
     .muted{{color:var(--muted);}}
+    /* Nav dropdown */
+    .nav-wrap{{position:relative; display:inline-block;}}
+    .nav-btn{{cursor:pointer; user-select:none; border:1px solid var(--line); background:rgba(255,255,255,.03);
+              color:var(--text); border-radius:12px; padding:8px 14px; font-family:var(--mono); font-size:12px;
+              display:flex; align-items:center; gap:8px; white-space:nowrap;}}
+    .nav-btn:hover{{background:rgba(255,255,255,.07);}}
+    .nav-drop{{display:none; position:absolute; top:100%; right:0; min-width:180px;
+               padding-top:8px; z-index:999;}}
+    .nav-drop-inner{{background:#111826; border:1px solid var(--line); border-radius:14px;
+                     box-shadow:0 12px 32px rgba(0,0,0,.45); padding:6px;}}
+    .nav-wrap:hover .nav-drop{{display:block;}}
+    .nav-item{{display:block; width:100%; text-align:left; padding:9px 14px; border-radius:10px;
+               font-family:var(--mono); font-size:12px; color:var(--text); text-decoration:none;
+               background:none; border:none; cursor:pointer; box-sizing:border-box;}}
+    .nav-item:hover{{background:rgba(255,255,255,.07); color:var(--text);}}
+    .nav-item.danger{{color:rgba(255,130,130,.9);}}
+    .nav-item.danger:hover{{background:rgba(255,60,60,.12);}}
+    .nav-sep{{height:1px; background:var(--line); margin:4px 0;}}
     .hr{{height:1px; background:rgba(38,50,71,.7); margin:12px 0;}}
     .evtBox{{max-height: 440px; overflow:auto; border:1px solid rgba(38,50,71,.65); border-radius:12px;}}
         .ledMeter{{
@@ -106,23 +124,27 @@ def ui_html() -> str:
     <div class="row">
       <div class="pill" id="pillMeta">—</div>
       <div class="badge"><span class="dot" id="dotState"></span><span id="txtState">—</span></div>
+      <div class="nav-wrap">
+        <div class="nav-btn">&#9776; Menu</div>
+        <div class="nav-drop">
+          <div class="nav-drop-inner">
+            <button class="nav-item" id="btnReload">&#8635; Reload</button>
+            <a class="nav-item" href="/ltc-clock" target="_blank" rel="noopener">&#9654; Screen Clock…</a>
+            <a class="nav-item" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">&#126;&#126; LTC Spectrum…</a>
+            <a class="nav-item" href="/tcpdump" target="_blank" rel="noopener">&#128268; PTP Capture…</a>
+            <a class="nav-item" href="/settings">&#9881; Settings</a>
+            <div class="nav-sep"></div>
+            <button class="nav-item danger" id="btnReboot">&#9210; Reboot</button>
+            <button class="nav-item danger" id="btnShutdown">&#9209; Shutdown</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
   <div class="grid">
     <div class="card">
-      <div class="split">
-        <h3>Reference Time</h3>
-        <div class="row">
-          <div class="btn" id="btnReload">RELOAD</div>
-          <a class="btn" href="/ltc-clock" target="_blank" rel="noopener">Screen Clock…</a>
-          <a class="btn" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">LTC Spectrum…</a>
-          <a class="btn" href="/settings">⚙ Settings</a>
-          <a class="btn" href="/tcpdump" target="_blank" rel="noopener">PTP Capture…</a>
-          <div class="btn btn-sys" id="btnReboot">REBOOT</div>
-          <div class="btn btn-sys" id="btnShutdown">SHUTDOWN</div>
-        </div>
-      </div>
+      <h3>Reference Time</h3>
 
       <div class="bigtime" id="ptpBox">
         <div class="timeLabel">PTP</div>

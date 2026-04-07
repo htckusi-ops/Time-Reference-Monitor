@@ -38,33 +38,41 @@ Es fehlte ein Werkzeug, das diese drei Quellen **gleichzeitig und kontinuierlich
 ## 3. Architektur
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Raspberry Pi                            │
-│                                                             │
-│  ┌────────────┐  ┌────────────┐  ┌────────────────────┐    │
-│  │  ptp4l     │  │  chrony    │  │  ALSA (dsnoop_ltc) │    │
-│  │  (slave)   │  │  (NTP)     │  │  LTC-Audioeingang  │    │
-│  └─────┬──────┘  └─────┬──────┘  └─────────┬──────────┘    │
-│        │ pmc            │ chronyc            │               │
-│  ┌─────▼──────────────────────────────────▼──────────┐    │
-│  │              Python-Backend (main.py)               │    │
-│  │                                                     │    │
-│  │  sources_ptp ──► status_bus ◄── sources_ntp        │    │
-│  │  sources_ltc ──►     │       ◄── ltc_level          │    │
-│  │  (alsaltc)           │           (arecord)          │    │
-│  │                      │                              │    │
-│  │                   db.py ──► ptp_monitor.sqlite      │    │
-│  │                      │                              │    │
-│  │                  webapp.py (Flask)                  │    │
-│  │                  /api/status  /api/ltc/level        │    │
-│  │                  /spectrum    /ltc-clock            │    │
-│  └─────────────────────────┬───────────────────────────┘    │
-│                             │ HTTP :8088                     │
-│  ┌──────────────────────────▼───────────────────────────┐   │
-│  │  Chromium (kiosk, VT7)                               │   │
-│  │  → http://localhost:8088/                            │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Raspberry Pi                             │
+│                                                                 │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────┐        │
+│  │  ptp4l     │  │  chrony    │  │  ALSA (dsnoop_ltc) │        │
+│  │  (slave)   │  │  (NTP)     │  │  LTC-Audioeingang  │        │
+│  └─────┬──────┘  └─────┬──────┘  └─────────┬──────────┘        │
+│        │ pmc            │ chronyc            │                   │
+│  ┌─────▼──────────────────────────────────▼──────────────┐    │
+│  │              Python-Backend (main.py)                   │    │
+│  │                                                         │    │
+│  │  sources_ptp ──► status_bus ◄── sources_ntp            │    │
+│  │  sources_ltc ──►     │       ◄── ltc_level              │    │
+│  │  (alsaltc)           │           (arecord)              │    │
+│  │                      │                                  │    │
+│  │                   db.py ──► ptp_monitor.sqlite          │    │
+│  │                      │                                  │    │
+│  │  ┌───────────────────┴──────────────────────────────┐  │    │
+│  │  │             webapp.py (Flask)                     │  │    │
+│  │  │  Dauerlaufend:                                    │  │    │
+│  │  │  /             /api/status   /api/ltc/level       │  │    │
+│  │  │  /ltc-clock    /api/events   /settings            │  │    │
+│  │  │                                                   │  │    │
+│  │  │  On-Demand / Diagnose:                            │  │    │
+│  │  │  /spectrum   ←── spectrum.py (SpectrumManager)   │  │    │
+│  │  │  /tcpdump    ←── tcpdump_mgr.py (TcpdumpCapture) │  │    │
+│  │  │  /settings   ←── domain_scanner.py (DomainScan)  │  │    │
+│  │  └───────────────────────────────────────────────────┘  │    │
+│  └────────────────────────────┬──────────────────────────────┘    │
+│                                │ HTTP :8088                        │
+│  ┌─────────────────────────────▼────────────────────────────┐    │
+│  │  Chromium (kiosk, VT7)                                   │    │
+│  │  → http://localhost:8088/                                │    │
+│  └──────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Threads
@@ -79,6 +87,11 @@ Das Backend betreibt vier dauerlaufende Threads neben dem Flask-HTTP-Server:
 | `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` HH:MM:SS:FF | kontinuierlich |
 
 Alle Zugriffe auf gemeinsamen Zustand laufen über `threading.Lock()`.
+
+Zusätzlich gibt es **kurzlebige Scan-Threads** auf Anfrage:
+- `DomainScanner` (`domain_scanner.py`): Startet beim Domain-Scan einen temporären Thread, der `tcpdump` für einen begrenzten Paketblock ausführt und sich nach Abschluss selbst beendet.
+- `TcpdumpCapture` (`tcpdump_mgr.py`): Zwei parallele Threads (PCAP-Schreiber + Text-Reader) für die Live-Capture-Seite; laufen nur, solange der Browser die `/tcpdump`-Seite geöffnet hat.
+- `SpectrumManager` (`spectrum.py`): Kurzlebiger Prozess (arecord → sox), der nach Abschluss der Aufnahme endet.
 
 ---
 
@@ -124,16 +137,92 @@ ALSA hw:X,0
 
 Bewusstes Design als **Single-Page-Application ohne JavaScript-Framework**:
 - Ein einziger `GET /api/status`-Poll alle 250 ms
-- PTP-Zeit wird client-seitig interpoliert (Monoton-Korrektur verhindert Rückläufer)
+- PTP-Zeit wird client-seitig **monoton interpoliert** — `performance.now()`-basierte Hochrechnung, Korrektur verhindert Rückläufer bei Netzwerk-Jitter
 - Keine WebSockets, keine langen HTTP-Polls — einfach, robust, cache-freundlich
 - LTC-Audio-Pegel über separaten `/api/ltc/level`-Endpunkt (200 ms, unabhängig vom Status-Poll)
 
-### `spectrum.py` — Spektrogramm
+Verfügbare Seiten:
 
-On-Demand-Werkzeug zur Signalqualitäts-Diagnose:
-- `arecord` → `sox` → PNG
-- Ergebnis landet in `/dev/shm` (RAM-Disk), nie auf der SD-Karte
-- Nützlich bei LTC-Dekodierungsfehlern: sichtbar machen ob Pegel, Rauschen oder falsche Frequenz das Problem ist
+| URL | Seite |
+|-----|-------|
+| `/` | Haupt-Dashboard (PTP/NTP/LTC, 7-Seg, Fehlerzähler, Ereignislog) |
+| `/ltc-clock` | Screen Clock (Vollbild, LTC/PTP/Local, Schrift/Farbe/Breite konfigurierbar) |
+| `/spectrum` | LTC Spektrum (On-Demand-Aufnahme + FFT-PNG + WAV-Download) |
+| `/tcpdump` | PTP Capture (Live-tcpdump, Ring-Buffer, PCAP-Download) |
+| `/settings` | Einstellungen (Netzwerk, NTP, WLAN, PTP Domain, Simulation) |
+
+---
+
+## 4b. Analyse- und Diagnosewerkzeuge
+
+### `tcpdump_mgr.py` — PTP Capture (`/tcpdump`)
+
+**Klasse:** `TcpdumpCapture`
+
+Zwei parallele kurzlebige Prozesse, die nur laufen, solange der Browser die `/tcpdump`-Seite geöffnet hat:
+
+1. **PCAP-Schreiber**: `tcpdump` mit Filter `(udp port 319 or udp port 320) or ether proto 0x88f7` schreibt eine temporäre PCAP-Datei in `/dev/shm`
+2. **Text-Reader**: Ein zweiter `tcpdump`-Prozess liest denselben Filter im lesbaren Format, gibt Zeilen in einen **Ring-Buffer von 500 Zeilen** aus
+
+Die Ausgabe wird über SSE (Server-Sent Events) an den Browser gestreamt — kein Polling nötig, kein WebSocket.
+
+**PCAP-Download:** Die temporäre PCAP-Datei aus `/dev/shm` wird als Download bereitgestellt und kann mit Wireshark geöffnet werden.
+
+**Lehrwert:**
+- Sichtbar, welche PTP-Nachrichtentypen ausgetauscht werden (Sync/Follow_Up für Two-Step-Clocks, Delay_Req/Resp für Path-Delay-Messung, Announce für GM-Election)
+- Alle aktiven PTP-Domains gleichzeitig sichtbar — nützlich in Broadcast-Umgebungen mit AES67, ST 2110, DANTE
+- Grandmaster-Identität aus Announce-Paketen ablesen (Clock Identity, Priority1/2, Clock Class)
+- Multicast-Gruppen: `224.0.1.129` (PTP v2 General), `224.0.0.107` (Peer Delay), `01:1b:19` (L2 Multicast)
+
+---
+
+### `domain_scanner.py` — PTP-Domain-Scanner (`/settings > PTP Domain`)
+
+**Klasse:** `DomainScanner`
+
+Kurzlebiger Scan-Thread auf Anfrage (startet, scannt, beendet sich):
+
+1. `tcpdump` erfasst genau **500 PTP-Pakete** (gleicher Filter wie `/tcpdump`)
+2. Ein **reiner Python-PCAP-Parser** (keine externen Abhängigkeiten) öffnet die temporäre PCAP-Datei
+3. Unterstützte Frame-Typen: **L2 Ethernet** (EtherType 0x88F7), **IPv4** (UDP 319/320), **IPv6**, **VLAN-getaggt** (802.1Q)
+4. Aus dem PTP-Header wird **Byte 4** (offset 0-basiert) als `domainNumber` extrahiert
+5. Alle gefundenen Domain-Nummern werden mit Vorkommen-Zähler zurückgegeben
+
+**Wichtig:** Der Monitor ruft `pmc` mit `-d N` auf (Domain-Nummer, steuert auf welcher Domain pmc lauscht), **nicht** `-b N` (`-b` ist `boundaryHops` — die Hop-Tiefe bei pmc-UDS-Abfragen, ein anderer Parameter).
+
+**Domain zur Laufzeit wechseln:**
+
+| Aktion | Wirkung |
+|--------|---------|
+| **Aktiv (bis Reboot)** | Setzt die Domain im laufenden Prozess; kein Schreibzugriff auf Disk |
+| **Aktiv & Speichern** | Wie oben, zusätzlich Persistenz-Datei `/var/lib/time-reference-monitor/ptp_domain` schreiben |
+
+Beim Dienststart: Falls die Persistenz-Datei existiert, wird ihr Wert gegenüber dem `--domain`-CLI-Argument bevorzugt — Domain-Änderungen bleiben über Neustarts hinweg wirksam ohne die systemd-Unit-Datei zu editieren.
+
+---
+
+### `spectrum.py` — LTC Spektrum (`/spectrum`)
+
+**Klasse:** `SpectrumManager`
+
+On-Demand-Pipeline zur Signalqualitäts-Diagnose:
+
+```
+arecord (ALSA, dsnoop_ltc)
+    │
+    ▼  WAV in /dev/shm
+sox (FFT-Analyse)
+    │
+    ▼  PNG-Spektrogramm in /dev/shm
+Browser: PNG-Anzeige + WAV-Download + PNG-Download
+```
+
+Alle Dateien landen in `/dev/shm` (RAM-Disk) — **keine SD-Karten-Schreibzugriffe**.
+
+**Analysenutzen:**
+- LTC bei 25 fps SMPTE liegt im Frequenzband ~600 Hz – 2,4 kHz — sofort sichtbar, ob das Signal im richtigen Bereich liegt
+- Rauschen (breitbandig), Netzbrumm (50/100 Hz-Peaks) oder falsche Pegel direkt erkennbar
+- **WAV-Download**: Aufnahme für Post-Analyse mit Audacity oder anderen Werkzeugen
 
 ---
 
@@ -187,9 +276,11 @@ Vorteile gegenüber Desktop-Autologin-Methode (LXDE-Autostart):
 
 ## 7. Erweiterungsmöglichkeiten (nicht implementiert)
 
-- **SNMP-Trap / Syslog-Export** bei ALARM-Events
-- **Mehrere PTP-Domains** gleichzeitig überwachen
+- **SNMP-Trap / Syslog-Export** bei ALARM-Events — auch als SNMP-Traps für bestehende NMS-Infrastruktur
 - **Redundante Grandmaster-Überwachung** (BC-Topologie)
 - **Historische Offset-Kurven** (Chart.js über SQLite-Abfrage)
 - **REST-API für externe Dashboards** (Grafana via Prometheus-Exporter)
-- **LTC-Einspeisung aus mehreren Kanälen** gleichzeitig
+- **LTC-Einspeisung aus mehreren Kanälen** gleichzeitig (Stereo-Split L/R auf zwei libltc-Instanzen)
+- **HTTP Basic Auth für Remote-Zugriff** — Localhost (Kiosk) ohne Auth, alle anderen IPs mit Credential (bcrypt-Hash in `/etc/time-reference-monitor/htpasswd`)
+- **Laufzeit-Konfiguration weiterer Parameter** über `POST /api/config`: Poll-Intervall, Stale-Threshold, Fehlerzeitfenster, LTC-FPS, Jump-Toleranz (aktuell nur PTP-Domain zur Laufzeit änderbar)
+- **SNMP-Traps bei ALARM-Events** — Integration in bestehende Netzwerk-Management-Systeme ohne Log-Scraping
