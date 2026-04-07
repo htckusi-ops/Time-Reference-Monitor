@@ -29,9 +29,9 @@ def ui_html() -> str:
     .card{{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow: 0 10px 24px rgba(0,0,0,.25);}}
     .card h3{{margin:0 0 10px 0; font-size:13px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
     @font-face{{font-family:'Seg7';src:url('/font/Segment7Standard.otf') format('opentype');font-weight:400;font-style:normal;}}
-    .bigtime{{padding:14px 16px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:76px minmax(110px,1fr) auto; align-items:center; row-gap:16px; column-gap:10px;}}
+    .bigtime{{padding:14px 16px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:76px 140px 1fr; align-items:center; row-gap:16px; column-gap:10px;}}
     .timeLabel{{font-size:30px; font-weight:700;}}
-    .timeStatus{{font-family:var(--mono); font-size:17px; font-weight:600;}}
+    .timeStatus{{font-family:var(--mono); font-size:17px; font-weight:600; white-space:normal; word-break:break-word; line-height:1.3;}}
     .timeStatus.ok{{color:var(--ok);}} .timeStatus.warn{{color:var(--warn);}} .timeStatus.alarm{{color:var(--alarm);}} .timeStatus.muted{{color:var(--muted);}}
     .seg-wrap{{font-family:'Seg7',var(--mono); font-size:48px; line-height:1; letter-spacing:0.05em; color:var(--text); white-space:nowrap;}}
     .smalltime{{font-family:var(--mono); font-size:13px; color:var(--muted); margin-top:8px;}}
@@ -40,6 +40,8 @@ def ui_html() -> str:
     .kv{{display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; font-size:13px;}}
     .kv-k{{color:var(--muted);}}
     .kv-v{{font-family:var(--mono);}}
+    .kv2{{display:grid; grid-template-columns:1fr 1fr; gap:0 20px;}}
+    .kv2 .kv{{grid-template-columns:130px 1fr;}}
     .badge{{display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:12px; border:1px solid var(--line); background:rgba(0,0,0,.2); font-family:var(--mono); font-size:12px;}}
     .dot{{width:10px; height:10px; border-radius:999px; background:var(--muted);}}
     .dot.ok{{background:var(--ok);}} .dot.warn{{background:var(--warn);}} .dot.alarm{{background:var(--alarm);}}
@@ -77,41 +79,13 @@ def ui_html() -> str:
     .nav-sep{{height:1px; background:var(--line); margin:4px 0;}}
     .hr{{height:1px; background:rgba(38,50,71,.7); margin:12px 0;}}
     .evtBox{{max-height: 440px; overflow:auto; border:1px solid rgba(38,50,71,.65); border-radius:12px;}}
-        .ledMeter{{
-  display:flex; gap:3px; align-items:flex-end;
-  padding:8px; border-radius:14px;
-  border:1px solid rgba(38,50,71,.65);
-  background:rgba(0,0,0,.22);
-}}
-.led{{
-  width:10px; height:18px; border-radius:3px;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
-  opacity: .18;                 /* off = sehr schwach */
-  filter: saturate(1.2);
-}}
-
-/* Grundfarbe immer setzen (auch wenn off) */
-.led.g{{ background: var(--ok); }}
-.led.o{{ background: var(--warn); }}
-.led.r{{ background: var(--alarm); }}
-
-/* Peak-Layer: heller */
-.led.peak{{
-  opacity: .55;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25), 0 0 10px rgba(255,255,255,.06);
-}}
-
-/* RMS-Layer: ganz hell */
-.led.rms{{
-  opacity: 1;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.15), 0 0 18px rgba(255,255,255,.10);
-}}
-
-
-.ledText{{
-  margin-top:6px; font-size:12px; color:var(--muted); text-align:center;
-  font-family: var(--mono);
-}}
+    .ledWrap{{display:flex; align-items:center; gap:8px; margin:6px 0 8px 0;}}
+    .ledMeter{{display:inline-flex; gap:2px; align-items:flex-end; padding:5px 6px; border-radius:8px; border:1px solid rgba(38,50,71,.65); background:rgba(0,0,0,.22);}}
+    .led{{width:5px; height:9px; border-radius:2px; box-shadow:inset 0 0 0 1px rgba(0,0,0,.35); opacity:.18; filter:saturate(1.2);}}
+    .led.g{{background:var(--ok);}} .led.o{{background:var(--warn);}} .led.r{{background:var(--alarm);}}
+    .led.peak{{opacity:.55; box-shadow:inset 0 0 0 1px rgba(0,0,0,.25), 0 0 6px rgba(255,255,255,.06);}}
+    .led.rms{{opacity:1; box-shadow:inset 0 0 0 1px rgba(0,0,0,.15), 0 0 10px rgba(255,255,255,.10);}}
+    .ledText{{font-size:12px; color:var(--muted); font-family:var(--mono); white-space:nowrap;}}
   </style>
 </head>
 <body>
@@ -180,33 +154,62 @@ def ui_html() -> str:
       <div class="smalltime">
       LTC Audio Level ({config.LTC_ALSA_DEVICE})
         </div>
-        <div style="margin: 8px 12px 12px 12px;">
-            <div id="ltcLedMeter" class="ledMeter"></div>
-            <div id="ltcLevelText" class="ledText">—</div>
+        <div class="ledWrap">
+          <div id="ltcLedMeter" class="ledMeter"></div>
+          <div id="ltcLevelText" class="ledText">—</div>
         </div>
       <div class="hr"></div>
+      <h3 style="margin-bottom:8px;">PTP</h3>
+      <div class="kv2">
+        <!-- Left: connection & timing -->
+        <div class="kv">
+          <div class="kv-k">State</div><div class="kv-v" id="stateLine">—</div>
+          <div class="kv-k">Port state</div><div class="kv-v" id="portStateLine">—</div>
+          <div class="kv-k">PTP valid</div><div class="kv-v" id="ptpValidLine">—</div>
+          <div class="kv-k">GM present</div><div class="kv-v" id="gmPresentLine">—</div>
+          <div class="kv-k">Interface</div><div class="kv-v" id="ifaceLine">—</div>
+          <div class="kv-k">Domain</div><div class="kv-v" id="domainLine">—</div>
+          <div class="kv-k">PTP version</div><div class="kv-v" id="ptpVerLine">—</div>
+          <div class="kv-k">Offset (ns)</div><div class="kv-v" id="offLine">—</div>
+          <div class="kv-k">Path delay (ns)</div><div class="kv-v" id="delayLine">—</div>
+          <div class="kv-k">Poll age (ms)</div><div class="kv-v" id="ageLine">—</div>
+          <div class="kv-k">GM changes</div><div class="kv-v" id="gmChgLine">—</div>
+          <div class="kv-k">NO PTP since</div><div class="kv-v" id="noPtpLine">—</div>
+        </div>
+        <!-- Right: GM / source info -->
+        <div class="kv">
+          <div class="kv-k">Source</div><div class="kv-v" id="sourceLine">—</div>
+          <div class="kv-k">Time source</div><div class="kv-v" id="timeSourceLine">—</div>
+          <div class="kv-k">UTC offset</div><div class="kv-v" id="utcOffsetLine">—</div>
+          <div class="kv-k">Time traceable</div><div class="kv-v" id="timeTraceLine">—</div>
+          <div class="kv-k">Freq traceable</div><div class="kv-v" id="freqTraceLine">—</div>
+          <div class="kv-k">PTP timescale</div><div class="kv-v" id="ptpTimescaleLine">—</div>
+          <div class="kv-k">GM identity</div><div class="kv-v" id="gmLine">—</div>
+          <div class="kv-k">Parent port</div><div class="kv-v" id="parentPortLine">—</div>
+          <div class="kv-k">GM priority1</div><div class="kv-v" id="gmPrio1Line">—</div>
+          <div class="kv-k">GM priority2</div><div class="kv-v" id="gmPrio2Line">—</div>
+          <div class="kv-k">GM clock class</div><div class="kv-v" id="gmClockClassLine">—</div>
+          <div class="kv-k">GM clock acc.</div><div class="kv-v" id="gmClockAccLine">—</div>
+        </div>
+      </div>
 
-      <div class="kv" style="margin-top:8px;">
-        <div class="kv-k">State</div><div class="kv-v" id="stateLine">—</div>
-        <div class="kv-k">PTP source</div><div class="kv-v" id="sourceLine">—</div>
-        <div class="kv-k">Interface</div><div class="kv-v" id="ifaceLine">—</div>
-        <div class="kv-k">Domain</div><div class="kv-v" id="domainLine">—</div>
-
-        <div class="kv-k">PTP valid</div><div class="kv-v" id="ptpValidLine">—</div>
-        <div class="kv-k">GM present</div><div class="kv-v" id="gmPresentLine">—</div>
-        <div class="kv-k">Port state</div><div class="kv-v" id="portStateLine">—</div>
-        <div class="kv-k">PTP versions</div><div class="kv-v" id="ptpVerLine">—</div>
-
-        <div class="kv-k">GM identity</div><div class="kv-v" id="gmLine">—</div>
-        <div class="kv-k">Offset (ns)</div><div class="kv-v" id="offLine">—</div>
-        <div class="kv-k">Mean path delay (ns)</div><div class="kv-v" id="delayLine">—</div>
-        <div class="kv-k">Poll age (ms)</div><div class="kv-v" id="ageLine">—</div>
-
-        <div class="kv-k">GM changes (rolling)</div><div class="kv-v" id="gmChgLine">—</div>
-        <div class="kv-k">NO PTP since</div><div class="kv-v" id="noPtpLine">—</div>
-
-        <div class="kv-k">NTP status</div><div class="kv-v" id="ntpLine">—</div>
-        <div class="kv-k">LTC status</div><div class="kv-v" id="ltcLine">—</div>
+      <div class="hr"></div>
+      <h3 style="margin-bottom:8px;">NTP</h3>
+      <div class="kv2">
+        <!-- Left: sync state -->
+        <div class="kv">
+          <div class="kv-k">Status</div><div class="kv-v" id="ntpStatusLine">—</div>
+          <div class="kv-k">Stratum</div><div class="kv-v" id="ntpStratumLine">—</div>
+          <div class="kv-k">Reference</div><div class="kv-v" id="ntpRefLine">—</div>
+          <div class="kv-k">Last update</div><div class="kv-v" id="ntpLastUpdateLine">—</div>
+          <div class="kv-k">Update age</div><div class="kv-v" id="ntpAgeLine">—</div>
+        </div>
+        <!-- Right: quality metrics -->
+        <div class="kv">
+          <div class="kv-k">System offset</div><div class="kv-v" id="ntpSysOffLine">—</div>
+          <div class="kv-k">RMS offset</div><div class="kv-v" id="ntpRmsOffLine">—</div>
+          <div class="kv-k">Frequency</div><div class="kv-v" id="ntpFreqLine">—</div>
+        </div>
       </div>
     </div>
 
@@ -215,22 +218,23 @@ def ui_html() -> str:
         <h3>Rolling Error Summary</h3>
         <div class="row">
           <span class="badge"><span class="dot" id="dotErr"></span><span class="mono" id="errSummary">—</span></span>
+          <button class="btn" id="btnResetSummaries">Reset</button>
         </div>
       </div>
 
-      <div class="kv" style="margin-top:8px;">
-        <div class="kv-k">Errors (rolling)</div><div class="kv-v" id="errRoll">—</div>
-        <div class="kv-k">Warnings (rolling)</div><div class="kv-v" id="warnRoll">—</div>
-        <div class="kv-k">Alarms (rolling)</div><div class="kv-v" id="alarmRoll">—</div>
-        <div class="kv-k">PTP losses (rolling)</div><div class="kv-v" id="ptpLossRoll">—</div>
-        <div class="kv-k">NTP flaps (rolling)</div><div class="kv-v" id="ntpFlapRoll">—</div>
-        <div class="kv-k">LTC losses (rolling)</div><div class="kv-v" id="ltcLossRoll">—</div>
-        <div class="kv-k">LTC decode errs (rolling)</div><div class="kv-v" id="ltcDecRoll">—</div>
-        <div class="kv-k">GM changes (rolling)</div><div class="kv-v" id="gmChgRoll">—</div>
-
-        <div class="kv-k">Errors (total)</div><div class="kv-v" id="errTot">—</div>
-        <div class="kv-k">Warnings (total)</div><div class="kv-v" id="warnTot">—</div>
-        <div class="kv-k">Alarms (total)</div><div class="kv-v" id="alarmTot">—</div>
+      <div class="kv2" style="margin-top:8px;">
+        <div class="kv">
+          <div class="kv-k">Alarms</div><div class="kv-v" id="alarmRoll">—</div>
+          <div class="kv-k">Warnings</div><div class="kv-v" id="warnRoll">—</div>
+          <div class="kv-k">Errors</div><div class="kv-v" id="errRoll">—</div>
+          <div class="kv-k">PTP losses</div><div class="kv-v" id="ptpLossRoll">—</div>
+        </div>
+        <div class="kv">
+          <div class="kv-k">NTP flaps</div><div class="kv-v" id="ntpFlapRoll">—</div>
+          <div class="kv-k">LTC losses</div><div class="kv-v" id="ltcLossRoll">—</div>
+          <div class="kv-k">LTC decode errs</div><div class="kv-v" id="ltcDecRoll">—</div>
+          <div class="kv-k">GM changes</div><div class="kv-v" id="gmChgRoll">—</div>
+        </div>
       </div>
 
       <div class="hr"></div>
@@ -442,37 +446,50 @@ function renderLedMeter(ledPeak){{
     els('gmPresentLine').textContent = String(!!st.gm_present);
     els('portStateLine').textContent = st.port_state || '—';
     els('ptpVerLine').textContent = st.ptp_versions || '—';
-    els('gmLine').textContent = st.gm_identity || '—';
     els('offLine').textContent = (st.offset_ns != null) ? String(st.offset_ns) : '—';
     els('delayLine').textContent = (st.mean_path_delay_ns != null) ? String(st.mean_path_delay_ns) : '—';
     els('ageLine').textContent = (st.poll_age_ms != null) ? String(st.poll_age_ms) : '—';
     els('noPtpLine').textContent = st.no_ptp_since_utc || '—';
     els('gmChgLine').textContent = String(roll.gm_changes_rolling ?? '—');
+    // GM / source info
+    els('gmLine').textContent = st.gm_identity || '—';
+    els('parentPortLine').textContent = st.parent_port_identity || '—';
+    els('gmPrio1Line').textContent = (st.gm_priority1 != null) ? String(st.gm_priority1) : '—';
+    els('gmPrio2Line').textContent = (st.gm_priority2 != null) ? String(st.gm_priority2) : '—';
+    els('gmClockClassLine').textContent = (st.gm_clock_class != null) ? String(st.gm_clock_class) : '—';
+    els('gmClockAccLine').textContent = st.gm_clock_accuracy || '—';
+    els('timeSourceLine').textContent = st.time_source || '—';
+    els('utcOffsetLine').textContent = (st.utc_offset != null) ? `${{st.utc_offset}}s` : '—';
+    els('timeTraceLine').textContent = (st.time_traceable != null) ? (st.time_traceable ? 'yes' : 'no') : '—';
+    els('freqTraceLine').textContent = (st.frequency_traceable != null) ? (st.frequency_traceable ? 'yes' : 'no') : '—';
+    els('ptpTimescaleLine').textContent = (st.ptp_timescale != null) ? (st.ptp_timescale ? 'PTP' : 'ARB') : '—';
 
-    const ntpOffsetDisp = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
-    const ntpParts = [
-      `NTP: ${{ntp.status || 'unknown'}}`,
-      `stratum=${{ntp.stratum ?? '—'}}`,
-      `ref=${{ntp.ref ?? '—'}}`,
-      `offset=${{ntpOffsetDisp}}`,
-    ];
-    if(ntp.rms_offset_s != null)  ntpParts.push(`rms=${{(ntp.rms_offset_s*1000).toFixed(3)}} ms`);
-    if(ntp.frequency_ppm != null) ntpParts.push(`freq=${{ntp.frequency_ppm.toFixed(3)}} ppm`);
-    els('ntpLine').textContent = ntpParts.join(' | ');
+    // NTP detail rows
+    els('ntpStatusLine').textContent  = ntp.status || '—';
+    els('ntpStratumLine').textContent = (ntp.stratum != null) ? String(ntp.stratum) : '—';
+    els('ntpRefLine').textContent     = ntp.ref || '—';
+    els('ntpLastUpdateLine').textContent = ntp.last_update_utc || '—';
+    els('ntpAgeLine').textContent     = (ntp.last_update_age_s != null) ? ntp.last_update_age_s.toFixed(1)+' s' : '—';
+    els('ntpSysOffLine').textContent  = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
+    els('ntpRmsOffLine').textContent  = (ntp.rms_offset_s != null) ? (ntp.rms_offset_s*1000).toFixed(3)+' ms' : '—';
+    els('ntpFreqLine').textContent    = (ntp.frequency_ppm != null) ? ntp.frequency_ppm.toFixed(3)+' ppm' : '—';
 
     // NTP status badge
     const ntpStat = els('ntpStatusBadge');
     const ns = ntp.status || 'unknown';
     if(ns === 'synced') {{ ntpStat.className = 'timeStatus ok'; ntpStat.textContent = 'synced'; }}
     else if(ns === 'unknown') {{ ntpStat.className = 'timeStatus muted'; ntpStat.textContent = 'no data'; }}
+    else if(ns === 'unsynced') {{ ntpStat.className = 'timeStatus alarm'; ntpStat.textContent = 'unsynced'; }}
+    else if(ns === 'stale') {{
+      const ageStr = (ntp.last_update_age_s != null) ? ' ' + Math.round(ntp.last_update_age_s) + 's' : '';
+      ntpStat.className = 'timeStatus warn'; ntpStat.textContent = 'stale' + ageStr;
+    }}
     else {{ ntpStat.className = 'timeStatus warn'; ntpStat.textContent = ns; }}
 
     const pres = (ltc.enabled && ltc.present) ? 'present' : (ltc.enabled ? 'absent' : 'disabled');
     const tc = ltc.timecode || '—';
     const fps = ltc.fps || '—';
     const age = (ltc.last_update_age_s != null) ? (Math.round(ltc.last_update_age_s*10)/10)+'s' : '—';
-    // tc omitted here — already shown prominently in the large 7-seg display above
-    els('ltcLine').textContent = `LTC: ${{pres}} | fps=${{fps}} | age=${{age}}`;
 
     // LTC status badge
     const ltcStat = els('ltcStatusBadge');
@@ -497,18 +514,14 @@ function renderLedMeter(ledPeak){{
     els('errSummary').textContent = `roll err=${{eR}} warn=${{wR}} alarm=${{aR}}`;
     setDot(els('dotErr'), (aR>0)?'ALARM':(wR>0||eR>0)?'WARN':'OK');
 
-    els('errRoll').textContent = String(roll.errors_rolling ?? '—');
-    els('warnRoll').textContent = String(roll.warnings_rolling ?? '—');
     els('alarmRoll').textContent = String(roll.alarms_rolling ?? '—');
+    els('warnRoll').textContent = String(roll.warnings_rolling ?? '—');
+    els('errRoll').textContent = String(roll.errors_rolling ?? '—');
     els('ptpLossRoll').textContent = String(roll.ptp_loss_rolling ?? '—');
     els('ntpFlapRoll').textContent = String(roll.ntp_flaps_rolling ?? '—');
     els('ltcLossRoll').textContent = String(roll.ltc_loss_rolling ?? '—');
     els('ltcDecRoll').textContent = String(roll.ltc_decode_errors_rolling ?? '—');
     els('gmChgRoll').textContent = String(roll.gm_changes_rolling ?? '—');
-
-    els('errTot').textContent = String(tot.errors_total ?? '—');
-    els('warnTot').textContent = String(tot.warnings_total ?? '—');
-    els('alarmTot').textContent = String(tot.alarms_total ?? '—');
 
     // Decide if PTP should tick: only if valid AND not stale AND not paused
     const staleTh = meta.stale_threshold_ms ?? 2000;
@@ -571,8 +584,10 @@ function renderLedMeter(ledPeak){{
     // ── NTP time ─────────────────────────────────────────────────────────────
     // NTP_time = system_clock + chrony system_offset_s
     // system_offset_s > 0: system is slow (NTP is ahead); < 0: system is fast.
-    const ntpOffsetMs = (srvNow && ntp.system_offset_s != null) ? ntp.system_offset_s * 1000 : 0;
-    const ntpNow = srvNow ? new Date(srvNow.getTime() + ntpOffsetMs) : null;
+    // Grey out display when NTP is stale or unsynced.
+    const ntpLive = (ntp.status === 'synced');
+    const ntpOffsetMs = (srvNow && ntpLive && ntp.system_offset_s != null) ? ntp.system_offset_s * 1000 : 0;
+    const ntpNow = (srvNow && ntpLive) ? new Date(srvNow.getTime() + ntpOffsetMs) : null;
 
     if(ntpNow) {{
       const nh = ntpNow.getUTCHours(), nm = ntpNow.getUTCMinutes(), ns2 = ntpNow.getUTCSeconds();
@@ -690,6 +705,10 @@ function renderLedMeter(ledPeak){{
   }}
 
   els('btnReload').addEventListener('click', () => {{ window.location.reload(); }});
+
+  els('btnResetSummaries').addEventListener('click', async () => {{
+    await fetch('/api/reset-summaries', {{method:'POST'}});
+  }});
 
   els('btnReboot').addEventListener('click', async () => {{
     if (!confirm('System jetzt neu starten?')) return;
