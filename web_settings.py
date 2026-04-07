@@ -139,13 +139,13 @@ _HTML = """<!doctype html>
       </div>
     </div>
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
-      <button class="btn" id="btnApplyTemp">Temporär anwenden</button>
-      <button class="btn btn-primary" id="btnApplySave">Anwenden &amp; Speichern</button>
+      <button class="btn" id="btnApplyTemp">Aktiv (bis Reboot)</button>
+      <button class="btn btn-primary" id="btnApplySave">Aktiv &amp; Speichern</button>
     </div>
     <div class="msg" id="msgDomain"></div>
     <p class="hint">
-      <strong>Temporär</strong> aktiviert die Domain bis zum nächsten Neustart.<br>
-      <strong>Speichern</strong> schreibt die Domain nach
+      Beide Buttons aktivieren die Domain <strong>sofort</strong>.<br>
+      <strong>Aktiv &amp; Speichern</strong> schreibt die Domain zusätzlich nach
       <code>/var/lib/time-reference-monitor/ptp_domain</code> und lädt sie bei jedem Start.
     </p>
   </div>
@@ -698,8 +698,8 @@ _HTML = """<!doctype html>
         `<div class="domain-row">
           <span class="domain-num">Domain ${{dom}}</span>
           <span class="domain-cnt">${{cnt}}&nbsp;Pkts</span>
-          <button class="btn" data-domain="${{dom}}" data-persist="false">Temporär</button>
-          <button class="btn btn-primary" data-domain="${{dom}}" data-persist="true">Speichern</button>
+          <button class="btn" data-domain="${{dom}}" data-persist="false">Aktiv (bis Reboot)</button>
+          <button class="btn btn-primary" data-domain="${{dom}}" data-persist="true">Aktiv &amp; Speichern</button>
         </div>`
       ).join('');
     }}
