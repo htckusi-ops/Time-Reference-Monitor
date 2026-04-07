@@ -2,7 +2,7 @@ from __future__ import annotations
 import subprocess
 import re
 from datetime import datetime, timezone
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 
 from models import NTPStatus
 
@@ -80,14 +80,26 @@ def read_chrony_tracking(timeout_s: float = 1.0) -> Tuple[NTPStatus, str]:
                 val = float(m.group(1))
                 frequency_ppm = val if m.group(2) == "slow" else -val
 
-        st = NTPStatus(status=status, stratum=stratum, ref=ref, last_update_utc=utc_iso_ms(),
+        # "Ref time (UTC)  : Mon Apr  7 10:42:36 2026" — time of last reference sample
+        last_update_utc: Optional[str] = None
+        ref_time_raw = fields.get("ref time (utc)") or fields.get("ref time")
+        if ref_time_raw:
+            try:
+                normalised = re.sub(r"\s+", " ", ref_time_raw.strip())
+                dt = datetime.strptime(normalised, "%a %b %d %H:%M:%S %Y").replace(tzinfo=timezone.utc)
+                last_update_utc = dt.isoformat(timespec="seconds")
+            except ValueError:
+                pass
+
+        st = NTPStatus(status=status, stratum=stratum, ref=ref,
+                       last_update_utc=last_update_utc,
                        system_offset_s=system_offset_s,
                        rms_offset_s=rms_offset_s,
                        frequency_ppm=frequency_ppm)
         return st, raw
     except FileNotFoundError:
-        st = NTPStatus(status="unknown", last_update_utc=utc_iso_ms())
+        st = NTPStatus(status="unknown")
         return st, "chronyc not found"
     except Exception as e:
-        st = NTPStatus(status="unknown", last_update_utc=utc_iso_ms())
+        st = NTPStatus(status="unknown")
         return st, f"chronyc error: {e!r}"
