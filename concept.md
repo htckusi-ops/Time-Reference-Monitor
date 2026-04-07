@@ -38,33 +38,41 @@ Es fehlte ein Werkzeug, das diese drei Quellen **gleichzeitig und kontinuierlich
 ## 3. Architektur
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Raspberry Pi                            │
-│                                                             │
-│  ┌────────────┐  ┌────────────┐  ┌────────────────────┐    │
-│  │  ptp4l     │  │  chrony    │  │  ALSA (dsnoop_ltc) │    │
-│  │  (slave)   │  │  (NTP)     │  │  LTC-Audioeingang  │    │
-│  └─────┬──────┘  └─────┬──────┘  └─────────┬──────────┘    │
-│        │ pmc            │ chronyc            │               │
-│  ┌─────▼──────────────────────────────────▼──────────┐    │
-│  │              Python-Backend (main.py)               │    │
-│  │                                                     │    │
-│  │  sources_ptp ──► status_bus ◄── sources_ntp        │    │
-│  │  sources_ltc ──►     │       ◄── ltc_level          │    │
-│  │  (alsaltc)           │           (arecord)          │    │
-│  │                      │                              │    │
-│  │                   db.py ──► ptp_monitor.sqlite      │    │
-│  │                      │                              │    │
-│  │                  webapp.py (Flask)                  │    │
-│  │                  /api/status  /api/ltc/level        │    │
-│  │                  /spectrum    /ltc-clock            │    │
-│  └─────────────────────────┬───────────────────────────┘    │
-│                             │ HTTP :8088                     │
-│  ┌──────────────────────────▼───────────────────────────┐   │
-│  │  Chromium (kiosk, VT7)                               │   │
-│  │  → http://localhost:8088/                            │   │
-│  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Raspberry Pi                             │
+│                                                                 │
+│  ┌────────────┐  ┌────────────┐  ┌────────────────────┐        │
+│  │  ptp4l     │  │  chrony    │  │  ALSA (dsnoop_ltc) │        │
+│  │  (slave)   │  │  (NTP)     │  │  LTC-Audioeingang  │        │
+│  └─────┬──────┘  └─────┬──────┘  └─────────┬──────────┘        │
+│        │ pmc            │ chronyc            │                   │
+│  ┌─────▼──────────────────────────────────▼──────────────┐    │
+│  │              Python-Backend (main.py)                   │    │
+│  │                                                         │    │
+│  │  sources_ptp ──► status_bus ◄── sources_ntp            │    │
+│  │  sources_ltc ──►     │       ◄── ltc_level              │    │
+│  │  (alsaltc)           │           (arecord)              │    │
+│  │                      │                                  │    │
+│  │                   db.py ──► ptp_monitor.sqlite          │    │
+│  │                      │                                  │    │
+│  │  ┌───────────────────┴──────────────────────────────┐  │    │
+│  │  │             webapp.py (Flask)                     │  │    │
+│  │  │  Dauerlaufend:                                    │  │    │
+│  │  │  /             /api/status   /api/ltc/level       │  │    │
+│  │  │  /ltc-clock    /api/events   /settings            │  │    │
+│  │  │                                                   │  │    │
+│  │  │  On-Demand / Diagnose:                            │  │    │
+│  │  │  /spectrum   ←── spectrum.py (SpectrumManager)   │  │    │
+│  │  │  /tcpdump    ←── tcpdump_mgr.py (TcpdumpCapture) │  │    │
+│  │  │  /settings   ←── domain_scanner.py (DomainScan)  │  │    │
+│  │  └───────────────────────────────────────────────────┘  │    │
+│  └────────────────────────────┬──────────────────────────────┘    │
+│                                │ HTTP :8088                        │
+│  ┌─────────────────────────────▼────────────────────────────┐    │
+│  │  Chromium (kiosk, VT7)                                   │    │
+│  │  → http://localhost:8088/                                │    │
+│  └──────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ### Threads
@@ -79,6 +87,11 @@ Das Backend betreibt vier dauerlaufende Threads neben dem Flask-HTTP-Server:
 | `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` HH:MM:SS:FF | kontinuierlich |
 
 Alle Zugriffe auf gemeinsamen Zustand laufen über `threading.Lock()`.
+
+Zusätzlich gibt es **kurzlebige Scan-Threads** auf Anfrage:
+- `DomainScanner` (`domain_scanner.py`): Startet beim Domain-Scan einen temporären Thread, der `tcpdump` für einen begrenzten Paketblock ausführt und sich nach Abschluss selbst beendet.
+- `TcpdumpCapture` (`tcpdump_mgr.py`): Zwei parallele Threads (PCAP-Schreiber + Text-Reader) für die Live-Capture-Seite; laufen nur, solange der Browser die `/tcpdump`-Seite geöffnet hat.
+- `SpectrumManager` (`spectrum.py`): Kurzlebiger Prozess (arecord → sox), der nach Abschluss der Aufnahme endet.
 
 ---
 

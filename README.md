@@ -39,6 +39,129 @@ Andernfalls Fallback auf `offset_ns / 1e6` allein (= Δ(Systemclock − PTP)).
 
 ---
 
+## Web-Interface & Analysetools
+
+Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fünf Seiten:
+
+| Seite | URL | Funktion |
+|-------|-----|----------|
+| **Haupt-Dashboard** | `/` | PTP/NTP/LTC-Status, 7-Seg-Zeitanzeige, rollende Fehlerzähler, Ereignisprotokoll |
+| **Screen Clock** | `/ltc-clock` | Vollbild-Uhr (LTC/PTP/Local), konfigurierbare Schrift/Farbe/Breite, Close-Button |
+| **LTC Spektrum** | `/spectrum` | On-Demand-WAV-Aufnahme (arecord) + FFT-Spektrogramm (sox), PNG- und WAV-Download |
+| **PTP Capture** | `/tcpdump` | Echtzeit-tcpdump von PTP-Paketen (UDP 319/320 + EtherType 0x88F7), Live-Terminal mit Colorierung, PCAP-Download |
+| **Einstellungen** | `/settings` | Netzwerk (DHCP/statisch), NTP-Server, WLAN, PTP-Domain-Scanner, PTP/NTP-Simulation |
+
+### Haupt-Dashboard (`/`)
+
+Das Dashboard zeigt alle drei Zeitquellen gleichzeitig in Echtzeit:
+- **PTP-Status**: Grandmaster-Identität, Offset, Delay, Port-State (SLAVE/MASTER/UNCALIBRATED)
+- **NTP-Status**: Referenzserver, Stratum, System-Offset, Synchronisationszustand
+- **LTC-Status**: Timecode HH:MM:SS:FF, Präsenz, Dekodierqualität
+- **7-Segment-Zeitanzeige**: PTP-Zeit wird client-seitig monoton interpoliert (kein Rückläufer, stabile Breite durch Platzhalter `00:00:00.00`)
+- **Rollende Fehlerzähler**: Fehler im konfigurierbaren Zeitfenster (Standard 1 h), GM-Wechsel im 48-h-Fenster
+- **Δ-Werte**: Δ(NTP–PTP), Δ(LTC–PTP), Δ(LTC–NTP) mit ALSA-Capture-Delay-Kompensation
+- **Ereignisprotokoll**: Alle Statusübergänge mit UTC-Timestamp, Schweregrad und Typ
+
+### Screen Clock (`/ltc-clock`)
+
+Vollbild-Uhr für den Kiosk-Betrieb oder als separates Display:
+- Zeitquelle per Dropdown wählbar: **LTC** (dekodierter Timecode), **PTP** (UTC, API-gestützt), **Local** (Browser-Systemzeit)
+- Schriftgrösse, Farbe und Breite individuell konfigurierbar — persistiert im Browser-Localstorage
+- Close-Button für Kiosk-Betrieb (kehrt zum Dashboard zurück)
+- Monotone Interpolation verhindert Zeitrückläufer auch bei Netzwerk-Jitter
+
+### LTC Spektrum (`/spectrum`) — Signalqualitäts-Diagnose
+
+On-Demand-Werkzeug zur Diagnose des LTC-Audiosignals:
+
+**Ablauf:** `arecord` (ALSA, `dsnoop_ltc`) → `sox` FFT → PNG-Spektrogramm. Alle Dateien landen in `/dev/shm` (RAM-Disk) — **keine SD-Karten-Schreibzugriffe**.
+
+**Analysenutzen:**
+- LTC-Signal bei 25 fps SMPTE liegt im Bereich ~600 Hz – 2,4 kHz. Das Spektrogramm zeigt sofort, ob das Signal im richtigen Frequenzband liegt
+- Rauschen (breitbandig), Netzbrumm (50/100 Hz-Peaks), oder falsche Pegel sind direkt sichtbar
+- **WAV-Download**: Die aufgenommene Audiodatei kann heruntergeladen und mit Audacity oder anderen Werkzeugen nachanalysiert werden
+- Typische Befunde: Kabeldefekt (Rauschteppich), Pegelregler falsch (zu leise → Dekodierungsfehler), Erder-Schleife (50-Hz-Brumm)
+
+### PTP Capture (`/tcpdump`) — Protokollanalyse
+
+Echtzeit-Erfassung und Analyse von PTP-Paketen direkt im Browser:
+
+**Erfasste Pakete:**
+- UDP Port 319 (Event Messages: Sync, Delay_Req, Pdelay_Req/Resp)
+- UDP Port 320 (General Messages: Announce, Follow_Up, Delay_Resp)
+- EtherType 0x88F7 (PTP over Ethernet Layer 2, Multicast)
+
+**Darstellung:**
+- Live-Terminal mit farblicher Hervorhebung nach Nachrichtentyp
+- Ring-Buffer 500 Zeilen
+- PCAP-Download für Analyse mit Wireshark
+
+**Lehrwert und Analysenutzen:**
+- **Protokollverständnis ohne Spezialhardware**: Sichtbar, welche Nachrichtentypen ausgetauscht werden (Sync/Follow_Up für Two-Step-Clocks, Delay_Req/Resp für Path-Delay-Messung, Announce für GM-Election)
+- **Alle aktiven PTP-Domains**: Pakete aus verschiedenen Domains sind sichtbar — nützlich in Broadcast-Umgebungen mit mehreren parallelen PTP-Domains (AES67, ST 2110, DANTE)
+- **Grandmaster-Identität**: Announce-Pakete enthalten Clock Identity, Priority1/2, Clock Class — erkennbar ohne pmc
+- **Asymmetrische Pfade erkennen**: Delay_Req/Resp-Verhältnis gibt Hinweise auf asymmetrische Switch-Latenz
+- **Multicast-Gruppen**: 224.0.1.129 (PTP v2 General), 224.0.0.107 (Peer Delay), 01:1b:19 (L2 Multicast)
+
+### Einstellungen (`/settings`)
+
+Die Einstellungsseite bündelt alle Konfigurationsoptionen, die zur Laufzeit geändert werden können:
+
+| Karte | Funktion |
+|-------|----------|
+| **Netzwerk** | DHCP / statische IP, Subnetzmaske, Gateway, DNS |
+| **NTP-Server** | Primären NTP-Server zur Laufzeit ändern |
+| **WLAN** | SSID und Passwort konfigurieren |
+| **PTP Domain** | PTP-Domain scannen und zur Laufzeit wechseln (siehe unten) |
+| **PTP-Simulation** | Synthetische PTP-Fehler erzeugen (GM-Flap, Dropout, Offset-Sprung, Wander, Drift) |
+| **NTP-Simulation** | Synthetischen NTP-Ausfall oder -Sprung simulieren |
+
+#### PTP-Simulation (Mock-Modus)
+
+Im Mock-Modus (`--source mock`) können synthetische Fehler gezielt ausgelöst werden — nützlich für:
+- Training von Alarm-Schwellwerten ohne echte Fehler
+- Test von Monitoring-Setups (reagiert das Alerting korrekt?)
+- Dokumentation von Fehlerbildern
+
+Verfügbare Fault-Typen: **Dropout** (PTP-Signal fällt weg), **GM-Flap** (Grandmaster wechselt), **Step Jump** (Offset-Sprung), **Wander** (langsames Offset-Driften), **Drift** (kontinuierliches Wegdriften).
+
+### PTP-Domain-Scanner
+
+Der Domain-Scanner in `Einstellungen > PTP Domain` ermittelt automatisch alle aktiven PTP-Domains im Netzwerk:
+
+**Funktionsweise:**
+1. `tcpdump` erfasst 500 PTP-Pakete (L2 EtherType 0x88F7, UDP 319/320)
+2. Ein reiner Python-PCAP-Parser extrahiert das Feld `domainNumber` (Byte 4 des PTP-Headers) — ohne externe Abhängigkeiten
+3. Unterstützt L2 (Ethernet), IPv4, IPv6 und VLAN-getaggte Frames
+4. Ergebnis: Liste aller gefundenen Domain-Nummern mit Vorkommen-Zähler
+
+**Domain zur Laufzeit wechseln:**
+
+| Aktion | Wirkung |
+|--------|---------|
+| **Aktiv (bis Reboot)** | Wechselt die Domain sofort für die aktuelle Sitzung; kein Schreibzugriff |
+| **Aktiv & Speichern** | Wechselt die Domain und schreibt sie in die Persistenz-Datei |
+
+**Persistenz:** `/var/lib/time-reference-monitor/ptp_domain`
+- Beim Dienststart wird diese Datei gelesen und überschreibt den `--domain`-CLI-Parameter
+- Damit sind Domain-Änderungen über Neustarts hinweg wirksam, ohne die systemd-Unit-Datei zu editieren
+
+**pmc-Aufruf:** Der Monitor ruft `pmc` mit `-d N` auf (Domain-Nummer), **nicht** `-b N` (Boundary Hops — ein anderer Parameter, der die Hop-Tiefe bei pmc-Abfragen steuert).
+
+#### Δ-Berechnungen — Zeitquellen in Relation
+
+Die drei Δ-Werte zeigen die tatsächlichen Beziehungen zwischen den Zeitquellen in einer Broadcast-Umgebung:
+
+| Delta | Formel | Bedeutung |
+|-------|--------|-----------|
+| **Δ(NTP–PTP)** | `chrony_offset_ms + ptp_offset_ms` | Differenz zwischen NTP-Referenzzeit und PTP-Grandmaster |
+| **Δ(LTC–PTP)** | `ltc_s − ptp_s − alsa_delay_ms/1000` | LTC-Generator vs. PTP-Grandmaster, Capture-Delay kompensiert |
+| **Δ(LTC–NTP)** | `ltc_s − ntp_s − alsa_delay_ms/1000` | LTC-Generator vs. NTP-Referenz, Capture-Delay kompensiert |
+
+Die ALSA-Capture-Latenz (`alsa_delay_ms`) wird automatisch beim ersten LTC-Frame gemessen (`period_size / sample_rate`) und von allen LTC-Deltas subtrahiert.
+
+---
+
 ## Voraussetzungen
 
 ### Hardware-Kompatibilität (Raspberry Pi + PTP)
@@ -237,7 +360,7 @@ sudo systemctl restart time-reference-monitor
 |-----------|---------|-----------|
 | `--source` | `real` | `mock` nur für Tests ohne PTP-Hardware |
 | `--iface` | `${PTP_IFACE:-eth0}` | Wird aus `/etc/time-reference-monitor.conf` gelesen |
-| `--domain` | `0` | PTP-Domain-Nummer |
+| `--domain` | `0` | PTP-Domain-Nummer; kann zur Laufzeit über `Einstellungen > PTP Domain` geändert und in `/var/lib/time-reference-monitor/ptp_domain` gespeichert werden |
 | `--poll` | `0.25` s | PTP-Abfrageintervall |
 | `--http-host` | `0.0.0.0` | von allen Interfaces erreichbar |
 | `--http-port` | `8088` | |
