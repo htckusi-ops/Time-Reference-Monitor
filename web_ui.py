@@ -250,19 +250,19 @@ def ui_html() -> str:
         </div>
       </div>
 
-      <div class="kv" style="margin-top:8px;">
-        <div class="kv-k">Errors (rolling)</div><div class="kv-v" id="errRoll">—</div>
-        <div class="kv-k">Warnings (rolling)</div><div class="kv-v" id="warnRoll">—</div>
-        <div class="kv-k">Alarms (rolling)</div><div class="kv-v" id="alarmRoll">—</div>
-        <div class="kv-k">PTP losses (rolling)</div><div class="kv-v" id="ptpLossRoll">—</div>
-        <div class="kv-k">NTP flaps (rolling)</div><div class="kv-v" id="ntpFlapRoll">—</div>
-        <div class="kv-k">LTC losses (rolling)</div><div class="kv-v" id="ltcLossRoll">—</div>
-        <div class="kv-k">LTC decode errs (rolling)</div><div class="kv-v" id="ltcDecRoll">—</div>
-        <div class="kv-k">GM changes (rolling)</div><div class="kv-v" id="gmChgRoll">—</div>
-
-        <div class="kv-k">Errors (total)</div><div class="kv-v" id="errTot">—</div>
-        <div class="kv-k">Warnings (total)</div><div class="kv-v" id="warnTot">—</div>
-        <div class="kv-k">Alarms (total)</div><div class="kv-v" id="alarmTot">—</div>
+      <div class="kv2" style="margin-top:8px;">
+        <div class="kv">
+          <div class="kv-k">Alarms</div><div class="kv-v" id="alarmRoll">—</div>
+          <div class="kv-k">Warnings</div><div class="kv-v" id="warnRoll">—</div>
+          <div class="kv-k">Errors</div><div class="kv-v" id="errRoll">—</div>
+          <div class="kv-k">PTP losses</div><div class="kv-v" id="ptpLossRoll">—</div>
+        </div>
+        <div class="kv">
+          <div class="kv-k">NTP flaps</div><div class="kv-v" id="ntpFlapRoll">—</div>
+          <div class="kv-k">LTC losses</div><div class="kv-v" id="ltcLossRoll">—</div>
+          <div class="kv-k">LTC decode errs</div><div class="kv-v" id="ltcDecRoll">—</div>
+          <div class="kv-k">GM changes</div><div class="kv-v" id="gmChgRoll">—</div>
+        </div>
       </div>
 
       <div class="hr"></div>
@@ -538,18 +538,14 @@ function renderLedMeter(ledPeak){{
     els('errSummary').textContent = `roll err=${{eR}} warn=${{wR}} alarm=${{aR}}`;
     setDot(els('dotErr'), (aR>0)?'ALARM':(wR>0||eR>0)?'WARN':'OK');
 
-    els('errRoll').textContent = String(roll.errors_rolling ?? '—');
-    els('warnRoll').textContent = String(roll.warnings_rolling ?? '—');
     els('alarmRoll').textContent = String(roll.alarms_rolling ?? '—');
+    els('warnRoll').textContent = String(roll.warnings_rolling ?? '—');
+    els('errRoll').textContent = String(roll.errors_rolling ?? '—');
     els('ptpLossRoll').textContent = String(roll.ptp_loss_rolling ?? '—');
     els('ntpFlapRoll').textContent = String(roll.ntp_flaps_rolling ?? '—');
     els('ltcLossRoll').textContent = String(roll.ltc_loss_rolling ?? '—');
     els('ltcDecRoll').textContent = String(roll.ltc_decode_errors_rolling ?? '—');
     els('gmChgRoll').textContent = String(roll.gm_changes_rolling ?? '—');
-
-    els('errTot').textContent = String(tot.errors_total ?? '—');
-    els('warnTot').textContent = String(tot.warnings_total ?? '—');
-    els('alarmTot').textContent = String(tot.alarms_total ?? '—');
 
     // Decide if PTP should tick: only if valid AND not stale AND not paused
     const staleTh = meta.stale_threshold_ms ?? 2000;

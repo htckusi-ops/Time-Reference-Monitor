@@ -90,28 +90,28 @@ class StatusBus:
             return True
         return False
 
+    def _append_event_locked(self, ev: Event) -> None:
+        """Append event and update all counters. Must be called with _lock already held."""
+        self._events.appendleft(ev)
+        if self._db:
+            self._db.insert_event(ev.ts_utc, ev.severity, ev.type, ev.message, ev.suppressed)
+        if ev.suppressed:
+            return
+        if ev.severity in ("WARN", "ALARM"):
+            self._sum.errors_total += 1
+            self._roll_err.add()
+        if ev.severity == "WARN":
+            self._sum.warnings_total += 1
+            self._roll_warn.add()
+        if ev.severity == "ALARM":
+            self._sum.alarms_total += 1
+            self._roll_alarm.add()
+
     def add_event(self, severity: str, type_: str, message: str) -> None:
         suppressed = self._should_suppress_for_state(severity)
         ev = Event(ts_utc=utc_iso_ms(), severity=severity, type=type_, message=message, suppressed=suppressed)
-
         with self._lock:
-            self._events.appendleft(ev)
-
-            if self._db:
-                self._db.insert_event(ev.ts_utc, ev.severity, ev.type, ev.message, ev.suppressed)
-
-            if suppressed:
-                return
-
-            if severity in ("WARN", "ALARM"):
-                self._sum.errors_total += 1
-                self._roll_err.add()
-            if severity == "WARN":
-                self._sum.warnings_total += 1
-                self._roll_warn.add()
-            if severity == "ALARM":
-                self._sum.alarms_total += 1
-                self._roll_alarm.add()
+            self._append_event_locked(ev)
 
     def update_ptp(self, ptp: PTPStatus) -> None:
         with self._lock:
@@ -122,7 +122,7 @@ class StatusBus:
             if ptp.gm_identity and self._last_gm and ptp.gm_identity != self._last_gm:
                 self._sum.gm_changes_total += 1
                 self._roll_gm.add()
-                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="WARN", type="PTP_GM_CHANGED",
+                self._append_event_locked(Event(ts_utc=utc_iso_ms(), severity="WARN", type="PTP_GM_CHANGED",
                                               message=f"Grandmaster changed: {self._last_gm} -> {ptp.gm_identity}",
                                               suppressed=self._should_suppress_for_state("WARN")))
             if ptp.gm_identity:
@@ -133,11 +133,11 @@ class StatusBus:
                 self._sum.ptp_loss_total += 1
                 self._roll_ptp_loss.add()
                 self._ptp_drift_history.clear()
-                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="ALARM", type="PTP_LOST",
+                self._append_event_locked(Event(ts_utc=utc_iso_ms(), severity="ALARM", type="PTP_LOST",
                                               message="PTP sync lost.",
                                               suppressed=self._should_suppress_for_state("ALARM")))
             elif self._last_ptp_valid is not None and (not self._last_ptp_valid) and ptp.ptp_valid:
-                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="INFO", type="PTP_RECOVERED",
+                self._append_event_locked(Event(ts_utc=utc_iso_ms(), severity="INFO", type="PTP_RECOVERED",
                                               message=f"PTP sync recovered. GM={ptp.gm_identity or '—'} state={ptp.port_state or '—'}",
                                               suppressed=False))
             self._last_ptp_valid = ptp.ptp_valid
@@ -145,7 +145,7 @@ class StatusBus:
             # ── port state change ─────────────────────────────────────────────
             if ptp.port_state and self._last_port_state and ptp.port_state != self._last_port_state:
                 sev = "INFO" if ptp.port_state in ("SLAVE", "MASTER") else "WARN"
-                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity=sev, type="PTP_PORT_STATE_CHANGED",
+                self._append_event_locked(Event(ts_utc=utc_iso_ms(), severity=sev, type="PTP_PORT_STATE_CHANGED",
                                               message=f"PTP port state: {self._last_port_state} -> {ptp.port_state}",
                                               suppressed=self._should_suppress_for_state(sev)))
             if ptp.port_state:
@@ -156,7 +156,7 @@ class StatusBus:
                 if (self._last_ptp_offset_ns is not None
                         and abs(ptp.offset_ns - self._last_ptp_offset_ns) > self._ptp_offset_jump_threshold_ns):
                     delta_us = (ptp.offset_ns - self._last_ptp_offset_ns) / 1000.0
-                    self._events.appendleft(Event(
+                    self._append_event_locked(Event(
                         ts_utc=utc_iso_ms(), severity="WARN", type="PTP_OFFSET_JUMP",
                         message=f"PTP offset jump: {delta_us:+.1f} µs (now {ptp.offset_ns / 1000:.1f} µs)",
                         suppressed=self._should_suppress_for_state("WARN"),
@@ -187,7 +187,7 @@ class StatusBus:
                             self._last_ptp_drift_event_mono = mono_now
                             self._ptp_drift_history.clear()
                             sev = "ALARM" if abs(drift_ppb) > self._ptp_drift_warn_ppb * 5 else "WARN"
-                            self._events.appendleft(Event(
+                            self._append_event_locked(Event(
                                 ts_utc=utc_iso_ms(), severity=sev, type="PTP_DRIFT_DETECTED",
                                 message=f"PTP drift: {drift_ppb:+.0f} ppb over {dt_span:.0f} s",
                                 suppressed=self._should_suppress_for_state(sev),
@@ -204,19 +204,19 @@ class StatusBus:
                 self._sum.ntp_flaps_total += 1
                 self._roll_ntp_flap.add()
                 if ntp.status == "unsynced":
-                    self._events.appendleft(Event(
+                    self._append_event_locked(Event(
                         ts_utc=utc_iso_ms(), severity="ALARM", type="NTP_LOST",
                         message="NTP sync lost (unsynced).",
                         suppressed=self._should_suppress_for_state("ALARM"),
                     ))
                 elif ntp.status == "synced":
-                    self._events.appendleft(Event(
+                    self._append_event_locked(Event(
                         ts_utc=utc_iso_ms(), severity="INFO", type="NTP_RECOVERED",
                         message=f"NTP sync recovered. ref={ntp.ref or '—'} stratum={ntp.stratum or '—'}",
                         suppressed=False,
                     ))
                 else:
-                    self._events.appendleft(Event(
+                    self._append_event_locked(Event(
                         ts_utc=utc_iso_ms(), severity="WARN", type="NTP_STATUS_CHANGED",
                         message=f"NTP status changed: {self._last_ntp_status} -> {ntp.status}",
                         suppressed=self._should_suppress_for_state("WARN"),
@@ -225,7 +225,7 @@ class StatusBus:
 
             # ── reference server change ───────────────────────────────────────
             if ntp.ref and self._last_ntp_ref and ntp.ref != self._last_ntp_ref:
-                self._events.appendleft(Event(
+                self._append_event_locked(Event(
                     ts_utc=utc_iso_ms(), severity="WARN", type="NTP_REF_CHANGED",
                     message=f"NTP reference changed: {self._last_ntp_ref} -> {ntp.ref} (stratum={ntp.stratum or '—'})",
                     suppressed=self._should_suppress_for_state("WARN"),
@@ -238,7 +238,7 @@ class StatusBus:
                     and self._last_ntp_offset_s is not None
                     and abs(ntp.system_offset_s - self._last_ntp_offset_s) > self._ntp_offset_jump_threshold_s):
                 delta_ms = (ntp.system_offset_s - self._last_ntp_offset_s) * 1000.0
-                self._events.appendleft(Event(
+                self._append_event_locked(Event(
                     ts_utc=utc_iso_ms(), severity="WARN", type="NTP_OFFSET_JUMP",
                     message=f"NTP offset jump: {delta_ms:+.1f} ms (now {ntp.system_offset_s * 1000:.1f} ms)",
                     suppressed=self._should_suppress_for_state("WARN"),
@@ -254,11 +254,11 @@ class StatusBus:
             if self._last_ltc_present is not None and self._last_ltc_present and (not ltc.present):
                 self._sum.ltc_loss_total += 1
                 self._roll_ltc_loss.add()
-                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="WARN", type="LTC_LOST",
+                self._append_event_locked(Event(ts_utc=utc_iso_ms(), severity="WARN", type="LTC_LOST",
                                               message="LTC signal lost.",
                                               suppressed=self._should_suppress_for_state("WARN")))
             elif self._last_ltc_present is not None and (not self._last_ltc_present) and ltc.present:
-                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="INFO", type="LTC_RECOVERED",
+                self._append_event_locked(Event(ts_utc=utc_iso_ms(), severity="INFO", type="LTC_RECOVERED",
                                               message=f"LTC signal recovered. tc={ltc.timecode or '—'} fps={ltc.fps or '—'}",
                                               suppressed=False))
             self._last_ltc_present = ltc.present
@@ -270,7 +270,7 @@ class StatusBus:
                 for _ in range(delta):
                     self._roll_ltc_decode.add()
                 # one event per burst
-                self._events.appendleft(Event(ts_utc=utc_iso_ms(), severity="WARN", type="LTC_DECODE_ERROR",
+                self._append_event_locked(Event(ts_utc=utc_iso_ms(), severity="WARN", type="LTC_DECODE_ERROR",
                                               message=f"LTC decode errors increased by {delta} (total={ltc.decode_errors_total}).",
                                               suppressed=self._should_suppress_for_state("WARN")))
             # jumps (time discontinuities)
@@ -279,7 +279,7 @@ class StatusBus:
                 self._sum.ltc_jumps_total = int(getattr(ltc, "jumps_total", 0))
                 for _ in range(delta):
                     self._roll_ltc_jump.add()
-                self._events.appendleft(Event(
+                self._append_event_locked(Event(
                     ts_utc=utc_iso_ms(),
                     severity="WARN",
                     type="LTC_JUMP",
