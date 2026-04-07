@@ -63,9 +63,10 @@ def ui_html() -> str:
               color:var(--text); border-radius:12px; padding:8px 14px; font-family:var(--mono); font-size:12px;
               display:flex; align-items:center; gap:8px; white-space:nowrap;}}
     .nav-btn:hover{{background:rgba(255,255,255,.07);}}
-    .nav-drop{{display:none; position:absolute; top:calc(100% + 6px); right:0; min-width:180px;
-               background:#111826; border:1px solid var(--line); border-radius:14px;
-               box-shadow:0 12px 32px rgba(0,0,0,.45); padding:6px; z-index:999;}}
+    .nav-drop{{display:none; position:absolute; top:100%; right:0; min-width:180px;
+               padding-top:8px; z-index:999;}}
+    .nav-drop-inner{{background:#111826; border:1px solid var(--line); border-radius:14px;
+                     box-shadow:0 12px 32px rgba(0,0,0,.45); padding:6px;}}
     .nav-wrap:hover .nav-drop{{display:block;}}
     .nav-item{{display:block; width:100%; text-align:left; padding:9px 14px; border-radius:10px;
                font-family:var(--mono); font-size:12px; color:var(--text); text-decoration:none;
@@ -126,14 +127,16 @@ def ui_html() -> str:
       <div class="nav-wrap">
         <div class="nav-btn">&#9776; Menu</div>
         <div class="nav-drop">
-          <button class="nav-item" id="btnReload">&#8635; Reload</button>
-          <a class="nav-item" href="/ltc-clock" target="_blank" rel="noopener">&#9654; Screen Clock…</a>
-          <a class="nav-item" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">&#126;&#126; LTC Spectrum…</a>
-          <a class="nav-item" href="/tcpdump" target="_blank" rel="noopener">&#128268; PTP Capture…</a>
-          <a class="nav-item" href="/settings">&#9881; Settings</a>
-          <div class="nav-sep"></div>
-          <button class="nav-item danger" id="btnReboot">&#9210; Reboot</button>
-          <button class="nav-item danger" id="btnShutdown">&#9209; Shutdown</button>
+          <div class="nav-drop-inner">
+            <button class="nav-item" id="btnReload">&#8635; Reload</button>
+            <a class="nav-item" href="/ltc-clock" target="_blank" rel="noopener">&#9654; Screen Clock…</a>
+            <a class="nav-item" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">&#126;&#126; LTC Spectrum…</a>
+            <a class="nav-item" href="/tcpdump" target="_blank" rel="noopener">&#128268; PTP Capture…</a>
+            <a class="nav-item" href="/settings">&#9881; Settings</a>
+            <div class="nav-sep"></div>
+            <button class="nav-item danger" id="btnReboot">&#9210; Reboot</button>
+            <button class="nav-item danger" id="btnShutdown">&#9209; Shutdown</button>
+          </div>
         </div>
       </div>
     </div>
