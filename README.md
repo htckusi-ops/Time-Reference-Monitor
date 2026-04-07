@@ -53,14 +53,43 @@ Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fü
 
 ### Haupt-Dashboard (`/`)
 
-Das Dashboard zeigt alle drei Zeitquellen gleichzeitig in Echtzeit:
-- **PTP-Status**: Grandmaster-Identität, Offset, Delay, Port-State (SLAVE/MASTER/UNCALIBRATED)
-- **NTP-Status**: Referenzserver, Stratum, System-Offset, Synchronisationszustand
-- **LTC-Status**: Timecode HH:MM:SS:FF, Präsenz, Dekodierqualität
-- **7-Segment-Zeitanzeige**: PTP-Zeit wird client-seitig monoton interpoliert (kein Rückläufer, stabile Breite durch Platzhalter `00:00:00.00`)
-- **Rollende Fehlerzähler**: Fehler im konfigurierbaren Zeitfenster (Standard 1 h), GM-Wechsel im 48-h-Fenster
-- **Δ-Werte**: Δ(NTP–PTP), Δ(LTC–PTP), Δ(LTC–NTP) mit ALSA-Capture-Delay-Kompensation
-- **Ereignisprotokoll**: Alle Statusübergänge mit UTC-Timestamp, Schweregrad und Typ
+Das Dashboard zeigt alle drei Zeitquellen gleichzeitig in Echtzeit.
+
+**Header-Navigation:** Ein `☰ Menu`-Button in der Kopfzeile öffnet beim Hover ein Dropdown mit allen Navigationslinks (Screen Clock, LTC Spektrum, PTP Capture, Einstellungen) sowie den Systemaktionen Reload, Reboot und Shutdown. Die Zeitanzeige-Karte wird dadurch von Buttons freigehalten.
+
+**7-Segment-Zeitanzeige:** PTP-, NTP- und LTC-Zeit in Echtzeit, client-seitig monoton interpoliert:
+- Kein Rückläufer bei Netzwerk-Jitter (neue Serverzeit wird nur übernommen wenn ≥ aktuelle interpolierte Zeit)
+- Stabile Spaltenbreite durch Platzhalter `00:00:00.00` (Seg7-Schrift hat gleiche Zeichenbreite für Ziffern und `0`)
+- Status-Spalte mit fixer Breite (140 px); lange Texte wie `present 25fps` oder `stale 200s` umbrechen innerhalb der Spalte ohne Layout-Verschiebung
+
+**PTP-Status** (zweispaltig):
+
+| Linke Spalte | Rechte Spalte |
+|---|---|
+| State, Port state, PTP valid, GM present | Source (real/mock), Time source (GPS/NTP/…) |
+| Interface, Domain, PTP version | UTC offset, Time/Freq traceable, PTP timescale |
+| Offset (ns), Path delay (ns), Poll age (ms) | GM identity, Parent port |
+| GM changes, NO PTP since | GM priority1/2, GM clock class/accuracy |
+
+Zusätzliche PTP-Felder werden aus `GET TIME_PROPERTIES_DATA_SET` (via `pmc`) gewonnen: Time Source (dekodiert, z.B. `GPS`, `NTP`, `ATOMIC_CLOCK`), Traceability-Flags, UTC-Offset, PTP-Timescale. `PTP version` zeigt nur `v2` wenn PTP tatsächlich aktiv ist.
+
+**NTP-Status** (zweispaltig, getrennt von PTP durch horizontale Linie):
+
+| Linke Spalte | Rechte Spalte |
+|---|---|
+| Status, Stratum, Reference | System offset (ms) |
+| Last update (Ref time UTC), Update age | RMS offset (ms) |
+| | Frequency (ppm) |
+
+**NTP-Staleness-Erkennung:** Wenn `Ref time (UTC)` länger als `--ntp-stale-threshold-s` (Standard 180 s) nicht aktualisiert wurde, wird der Status auf `stale` gesetzt — auch wenn chrony intern noch `synced` meldet. Dies erkennt Netzwerkunterbrechungen schneller als chrony selbst (chrony hat einen eigenen langen Timeout). Die NTP 7-Seg-Anzeige graut bei `stale` oder `unsynced` aus. Status-Werte: `synced` (grün) / `stale <Ns>` (gelb) / `unsynced` (rot) / `unknown` (grau).
+
+**LTC-Pegel:** Kompakter LED-Bargraph (30 Segmente, −60 dBFS bis 0 dBFS) mit inline dBFS-Textanzeige rechts daneben. Farbbereiche: grün (< −18 dBFS), orange (−18 bis −6 dBFS), rot (> −6 dBFS). Peak-Hold 800 ms.
+
+**Rollende Fehlerzähler:** Alle Ereignisse (PTP_LOST, NTP_STALE, NTP_LOST, LTC_LOST, GM_CHANGED, Offset-Sprünge, Drift) fliessen in das Rolling-Error-Summary ein. Ein **Reset-Button** setzt alle Zähler sofort auf 0 zurück. Fehlerfenster konfigurierbar via `--error-window-s` (Standard 1 h).
+
+**Δ-Werte:** Δ(NTP–PTP), Δ(LTC–PTP), Δ(LTC–NTP) mit ALSA-Capture-Delay-Kompensation.
+
+**Ereignisprotokoll:** Alle Statusübergänge mit UTC-Timestamp, Schweregrad (INFO/WARN/ALARM) und Typ.
 
 ### Screen Clock (`/ltc-clock`)
 
@@ -220,6 +249,19 @@ Der vorkompilierte `alsaltc`-Binary im Repository-Root ist für **x86_64**. Auf 
 Die LTC-Capture-Latenz (`alsa_delay_ms`) wird beim ersten LTC-Frame automatisch via `arecord --verbose` gemessen. Basis ist `period_size / sample_rate` (= ein ALSA-Interrupt-Periode = tatsächliche Capture-Latenz). Der Wert wird von allen Δ(LTC-*)-Berechnungen abgezogen.
 
 Falls der Wert beim Start `—` zeigt (Gerät war beim Booten noch nicht bereit), wird beim nächsten empfangenen LTC-Frame automatisch nachgemessen.
+
+### Wichtige Startparameter
+
+| Parameter | Standard | Bedeutung |
+|-----------|----------|-----------|
+| `--poll` | 0.5 s | PTP-Abfrageintervall (`pmc`) |
+| `--ntp-refresh-s` | 0.25 s | Wie oft `chronyc tracking` gelesen wird (unabhängig von chrony's eigenem NTP-Poll-Zyklus von 64–1024 s) |
+| `--ntp-stale-threshold-s` | 180 s | Ab welchem Alter von `Ref time (UTC)` NTP als `stale` gilt. Niedrigerer Wert = schnellere Netzwerkausfall-Erkennung |
+| `--error-window-s` | 3600 s | Zeitfenster für rollende Fehlerzähler |
+| `--gm-window-s` | 172800 s | Zeitfenster für GM-Wechsel-Zähler (48 h) |
+| `--stale-threshold-ms` | 2000 ms | Wie lange ohne frische API-Antwort bis Dashboard-Status auf ALARM wechselt |
+| `--startup-grace-s` | 6 s | Startphase: WARN/ALARM-Events werden als `suppressed` markiert bis erster PTP-Lock |
+| `--domain` | 0 | PTP-Domain-Nummer; überschrieben durch Persistenz-Datei falls vorhanden |
 
 ---
 

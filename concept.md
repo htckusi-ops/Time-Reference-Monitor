@@ -153,6 +153,105 @@ Verfügbare Seiten:
 
 ---
 
+## 4c. Web-UI: Layout- und Design-Details
+
+### Seitenstruktur / Header
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ APP_TITLE          APP_SUBTITLE                             │
+│                              [Pill] [Badge] [☰ Menu ▾]     │
+├─────────────────────────────────────────────────────────────┤
+│  .grid (1.1fr / 0.9fr)                                      │
+│  ┌──────────────────────────┐  ┌────────────────────────┐   │
+│  │ .card  Reference Time    │  │ .card  Error Summary   │   │
+│  └──────────────────────────┘  └────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Navigation Dropdown (`.nav-wrap`):**
+- Trigger: `<div class="nav-btn">☰ Menu</div>` — immer sichtbar im Header
+- Öffnen: **reines CSS** über `.nav-wrap:hover .nav-drop { display:block }` — kein JavaScript
+- Gap-Problem gelöst: `.nav-drop` hat `top:100%; padding-top:8px` (kein `margin-top`); das transparente Padding überbrückt den visuellen Abstand, ohne den Hover-Bereich zu unterbrechen
+- Panel (`.nav-drop-inner`): Hintergrund, Border, Box-Shadow — getrennt vom äusseren Hover-Bereich
+
+### bigtime-Zeitraster (`.bigtime`)
+
+```css
+.bigtime {
+  display: grid;
+  grid-template-columns: 76px 140px 1fr;
+  /* Label | Status (fix) | 7-Seg (rest) */
+  row-gap: 16px;
+  column-gap: 10px;
+}
+```
+
+| Spalte | Breite | Inhalt |
+|--------|--------|--------|
+| Label | 76 px (fix) | „PTP" / „NTP" / „LTC" — `font-size:30px; font-weight:700` |
+| Status | 140 px (fix) | `.timeStatus` — `font-family:mono; font-size:17px; font-weight:600` |
+| Zeit | `1fr` (Rest) | `.seg-wrap` — Segment7-Font, `font-size:48px; white-space:nowrap` |
+
+**Warum fixe 140 px für den Status?**
+Früher war die Statusspalte `minmax(110px,1fr)` und die Zeit `auto`. Wechselte der Text von `synced` zu `present 25fps` oder `stale 200s`, änderte sich die Spaltenbreite und das gesamte Raster verschob sich. Mit fixer Statusbreite und `1fr` für die Zeitanzeige ist die Gesamtbreite konstant.
+
+**Zeilenumbruch in der Statusspalte:**
+```css
+.timeStatus { white-space: normal; word-break: break-word; line-height: 1.3; }
+```
+Lange Texte umbrechen innerhalb der 140 px, ohne die Spalte zu verbreitern.
+
+**Platzhalter-Trick für die 7-Seg-Anzeige:**
+Der Seg7-Font hat für das Zeichen `-` eine deutlich schmalere Glyphe als für Ziffern `0–9`. Früher verwendeter Platzhalter `--:--:--.--` war schmaler als ein Live-Timecode → Layoutsprung beim ersten Frame. Lösung: Platzhalter `00:00:00.00` mit `opacity:0.18`; gleiche Zeichenbreite, kein Reflow.
+
+### Zweispaltige Status-Blöcke (`.kv2`)
+
+```css
+.kv2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
+.kv2 .kv { grid-template-columns: 130px 1fr; }
+.kv  { display: grid; grid-template-columns: 170px 1fr; gap: 6px 10px; font-size: 13px; }
+```
+
+PTP- und NTP-Status werden jeweils in einem `.kv2`-Block mit je zwei `.kv`-Hälften dargestellt. Beide Blöcke sind durch `<hr>` und `<h3>`-Überschriften voneinander getrennt.
+
+Zeilenabstand: `gap: 6px 10px` — 6 px zwischen Zeilen, 10 px zwischen Schlüssel und Wert. Gleicher Wert in beiden Hälften für optische Konsistenz.
+
+### LED-Pegel (`.ledMeter`)
+
+```css
+.ledMeter { display: inline-flex; gap: 2px; padding: 5px 6px; border-radius: 8px; }
+.led      { width: 5px; height: 9px; border-radius: 2px; }
+```
+
+**Wichtige Designentscheidung `inline-flex`:** Mit `display:flex` dehnt sich der Container auf die volle Kartenbreite aus — der Rahmen ist dann viel breiter als die LEDs. `inline-flex` lässt den Container auf die tatsächliche LED-Fläche schrumpfen.
+
+**dBFS-Text inline:** Ein äusseres `.ledWrap { display:flex; align-items:center; gap:8px }` hält Meter und Textlabel (`#ltcLevelText`) auf einer Linie nebeneinander statt übereinander.
+
+LED-Grösse bewusst klein (5×9 px, halbe ursprüngliche Grösse): Der Pegel ist eine Zusatzinformation — die 7-Seg-Zeitanzeigen sind das primäre visuelle Element.
+
+### Rollende Fehlerzähler — Bug-Fix
+
+**Problem:** `update_ptp()`, `update_ntp()`, `update_ltc()` erzeugten Events direkt mit `self._events.appendleft(Event(...))` — dies umging `add_event()`, die einzige Stelle wo `_roll_err`, `_roll_warn`, `_roll_alarm` inkrementiert wurden. Alle realen Zustandsänderungs-Events (PTP_LOST, NTP_LOST, LTC_LOST, GM_CHANGED, Offset-Sprünge) flossen nicht in die Zähler ein.
+
+**Fix:** Private Methode `_append_event_locked(ev)` — führt `appendleft` und alle Counter-Updates aus und setzt voraus, dass der Lock bereits gehalten wird. `add_event()` (externe API) und alle `update_*`-Methoden rufen nur noch `_append_event_locked()` auf.
+
+### NTP-Staleness
+
+`chronyc tracking` liefert weiterhin `synced` + validen Stratum, nachdem das Netzwerk getrennt wurde — bis chrony intern entscheidet, dass es keine valide Quelle mehr hat (kann viele Minuten dauern). Lösung:
+
+```
+last_update_age_s = now − Ref_time_UTC
+if status == "synced" and last_update_age_s > ntp_stale_threshold_s:
+    status = "stale"
+```
+
+`Ref time (UTC)` aus `chronyc tracking` ist der Zeitstempel der letzten erfolgreichen NTP-Referenzmessung (nicht das Abfragezeitpunkt — diese Verwechslung war ein früherer Bug, der `Update age` immer 0.0 zeigte).
+
+Status-Werte NTP: `synced` → `stale` → `unsynced` → `unknown`. Bei `stale` und `unsynced` graut die NTP-7-Seg-Anzeige aus (`ntpNow = null`).
+
+---
+
 ## 4b. Analyse- und Diagnosewerkzeuge
 
 ### `tcpdump_mgr.py` — PTP Capture (`/tcpdump`)

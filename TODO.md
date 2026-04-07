@@ -12,6 +12,14 @@ Die folgenden Features wurden seit Erstellung dieses TODO-Dokuments implementier
 - **Monotone Zeitinterpolation**: PTP-Zeit wird client-seitig über `performance.now()` hochgerechnet; Monoton-Korrektur verhindert Rückläufer bei Netzwerk-Jitter
 - **7-Seg-Breitenstabilisierung**: Platzhalter `00:00:00.00` verhindert Layoutsprünge beim Wechsel zwischen Ziffernbreiten
 - **Kiosk-Close-Buttons**: Alle Unterseiten (`/ltc-clock`, `/spectrum`, `/tcpdump`) haben einen Close-Button, der zum Dashboard zurückführt
+- **Header-Navigation-Dropdown**: `☰ Menu`-Button im Header, reines CSS-Hover; alle Seitenlinks und Systemaktionen (Reload, Reboot, Shutdown) darin; Dashboard-Karte von Buttons freigehalten
+- **Zweispaltige PTP/NTP-Statusblöcke**: PTP und NTP in getrennten, je zweispaltigen `.kv2`-Blöcken mit `<h3>`/`<hr>`-Trennung; PTP erweitert um GM-Priorität, Clock-Klasse/-Genauigkeit, Parent-Port, Time Source (dekodiert), Traceability, UTC-Offset, PTP-Timescale (via `GET TIME_PROPERTIES_DATA_SET`)
+- **Stabile Status-Spaltenbreite**: Fixe 140 px für Status-Spalte im bigtime-Grid; `white-space:normal; word-break:break-word` für Zeilenumbruch ohne Layout-Verschiebung
+- **NTP-Staleness-Erkennung**: Status `stale` wenn `Ref time (UTC)` älter als `--ntp-stale-threshold-s` (Standard 180 s); NTP-7-Seg graut aus; Event `NTP_STALE` (WARN); `ptp_versions` zeigt nur `v2` wenn PTP aktiv
+- **NTP Update-age-Fix**: `last_update_utc` war `utc_iso_ms()` (Abfragezeitpunkt) → immer 0.0; jetzt `Ref time (UTC)` aus `chronyc tracking` geparst
+- **Rolling-Counter-Bug-Fix**: `update_ptp/ntp/ltc` erzeugten Events direkt mit `appendleft()` an `add_event()` vorbei → Zähler immer 0; Fix: `_append_event_locked()` zentralisiert Append + Counter-Update
+- **Reset-Button Rolling Error Summary**: `POST /api/reset-summaries` → alle Rolling-Counter und Summaries auf 0
+- **LED-Pegel halbiert + inline**: LED-Grösse 10×18 → 5×9 px; `inline-flex` statt `flex` (Container schrumpft auf LED-Breite); dBFS-Text rechts neben dem Meter auf einer Linie
 
 ---
 
