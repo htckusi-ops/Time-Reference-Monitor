@@ -289,6 +289,15 @@ class StatusBus:
 
             self._ltc = ltc
 
+    def reset_summaries(self) -> None:
+        """Reset all rolling counters and cumulative totals to zero."""
+        with self._lock:
+            for rc in (self._roll_err, self._roll_warn, self._roll_alarm,
+                       self._roll_gm, self._roll_ptp_loss, self._roll_ntp_flap,
+                       self._roll_ltc_loss, self._roll_ltc_decode, self._roll_ltc_jump):
+                rc._q.clear()
+            self._sum = Summaries()
+
     def snapshot(self, meta: Dict[str, Any]) -> Dict[str, Any]:
         with self._lock:
             roll = dataclasses.replace(self._sum)

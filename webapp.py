@@ -91,6 +91,11 @@ def create_app(
         meta = meta_provider() if callable(meta_provider) else {}
         return jsonify(bus.snapshot(meta))
 
+    @app.post("/api/reset-summaries")
+    def api_reset_summaries() -> Response:
+        bus.reset_summaries()
+        return jsonify({"ok": True, "ts_utc": _utc_iso_ms()})
+
     @app.post("/api/pause")
     def api_pause() -> Response:
         bus.set_paused(True)

@@ -246,6 +246,7 @@ def ui_html() -> str:
         <h3>Rolling Error Summary</h3>
         <div class="row">
           <span class="badge"><span class="dot" id="dotErr"></span><span class="mono" id="errSummary">—</span></span>
+          <button class="btn" id="btnResetSummaries">Reset</button>
         </div>
       </div>
 
@@ -725,6 +726,10 @@ function renderLedMeter(ledPeak){{
   }}
 
   els('btnReload').addEventListener('click', () => {{ window.location.reload(); }});
+
+  els('btnResetSummaries').addEventListener('click', async () => {{
+    await fetch('/api/reset-summaries', {{method:'POST'}});
+  }});
 
   els('btnReboot').addEventListener('click', async () => {{
     if (!confirm('System jetzt neu starten?')) return;
