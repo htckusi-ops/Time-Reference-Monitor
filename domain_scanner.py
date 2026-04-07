@@ -182,13 +182,9 @@ class DomainScanner:
     def _run(self) -> None:
         """Background thread: capture + parse."""
         try:
-            # Remove any leftover PCAP from a previous scan.
-            # The file may be root-owned (created by sudo tcpdump) – catch
-            # PermissionError and skip; tcpdump will overwrite it anyway.
-            try:
-                os.remove(_SCAN_PCAP)
-            except (FileNotFoundError, PermissionError):
-                pass
+            # Remove any leftover PCAP via sudo so root-owned files are handled.
+            subprocess.run(["sudo", "rm", "-f", _SCAN_PCAP],
+                           capture_output=True, timeout=5)
 
             with self._lock:
                 iface      = self._iface
@@ -205,7 +201,7 @@ class DomainScanner:
                     _PTP_FILTER,
                 ],
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,         # capture for diagnostics
             )
             with self._lock:
                 self._proc = proc
@@ -224,12 +220,28 @@ class DomainScanner:
                     break
                 time.sleep(0.25)
 
+            rc = proc.poll()
+            try:
+                stderr_out = proc.stderr.read().decode(errors="replace").strip()
+            except Exception:
+                stderr_out = ""
+
+            # Non-zero exit before timeout → tcpdump reported an error
+            if rc is not None and rc != 0:
+                raise RuntimeError(
+                    f"tcpdump exit {rc}" +
+                    (f": {stderr_out[:300]}" if stderr_out else "")
+                )
+
             domains = _parse_pcap_for_domains(_SCAN_PCAP)
 
             with self._lock:
                 self._domains = domains
                 self._state   = "done"
                 self._proc    = None
+                # Surface tcpdump stderr as a non-fatal diagnostic when 0 domains found
+                if not domains and stderr_out:
+                    self._error = stderr_out[:300]
 
         except Exception as exc:
             with self._lock:
