@@ -29,9 +29,9 @@ def ui_html() -> str:
     .card{{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow: 0 10px 24px rgba(0,0,0,.25);}}
     .card h3{{margin:0 0 10px 0; font-size:13px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
     @font-face{{font-family:'Seg7';src:url('/font/Segment7Standard.otf') format('opentype');font-weight:400;font-style:normal;}}
-    .bigtime{{padding:14px 16px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:76px minmax(110px,1fr) auto; align-items:center; row-gap:16px; column-gap:10px;}}
+    .bigtime{{padding:14px 16px; border-radius:14px; border:1px solid var(--line); background:rgba(0,0,0,.25); display:grid; grid-template-columns:76px 140px 1fr; align-items:center; row-gap:16px; column-gap:10px;}}
     .timeLabel{{font-size:30px; font-weight:700;}}
-    .timeStatus{{font-family:var(--mono); font-size:17px; font-weight:600;}}
+    .timeStatus{{font-family:var(--mono); font-size:17px; font-weight:600; white-space:normal; word-break:break-word; line-height:1.3;}}
     .timeStatus.ok{{color:var(--ok);}} .timeStatus.warn{{color:var(--warn);}} .timeStatus.alarm{{color:var(--alarm);}} .timeStatus.muted{{color:var(--muted);}}
     .seg-wrap{{font-family:'Seg7',var(--mono); font-size:48px; line-height:1; letter-spacing:0.05em; color:var(--text); white-space:nowrap;}}
     .smalltime{{font-family:var(--mono); font-size:13px; color:var(--muted); margin-top:8px;}}
@@ -79,41 +79,13 @@ def ui_html() -> str:
     .nav-sep{{height:1px; background:var(--line); margin:4px 0;}}
     .hr{{height:1px; background:rgba(38,50,71,.7); margin:12px 0;}}
     .evtBox{{max-height: 440px; overflow:auto; border:1px solid rgba(38,50,71,.65); border-radius:12px;}}
-        .ledMeter{{
-  display:flex; gap:3px; align-items:flex-end;
-  padding:8px; border-radius:14px;
-  border:1px solid rgba(38,50,71,.65);
-  background:rgba(0,0,0,.22);
-}}
-.led{{
-  width:10px; height:18px; border-radius:3px;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.35);
-  opacity: .18;                 /* off = sehr schwach */
-  filter: saturate(1.2);
-}}
-
-/* Grundfarbe immer setzen (auch wenn off) */
-.led.g{{ background: var(--ok); }}
-.led.o{{ background: var(--warn); }}
-.led.r{{ background: var(--alarm); }}
-
-/* Peak-Layer: heller */
-.led.peak{{
-  opacity: .55;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25), 0 0 10px rgba(255,255,255,.06);
-}}
-
-/* RMS-Layer: ganz hell */
-.led.rms{{
-  opacity: 1;
-  box-shadow: inset 0 0 0 1px rgba(0,0,0,.15), 0 0 18px rgba(255,255,255,.10);
-}}
-
-
-.ledText{{
-  margin-top:6px; font-size:12px; color:var(--muted); text-align:center;
-  font-family: var(--mono);
-}}
+    .ledWrap{{display:flex; align-items:center; gap:8px; margin:6px 0 8px 0;}}
+    .ledMeter{{display:inline-flex; gap:2px; align-items:flex-end; padding:5px 6px; border-radius:8px; border:1px solid rgba(38,50,71,.65); background:rgba(0,0,0,.22);}}
+    .led{{width:5px; height:9px; border-radius:2px; box-shadow:inset 0 0 0 1px rgba(0,0,0,.35); opacity:.18; filter:saturate(1.2);}}
+    .led.g{{background:var(--ok);}} .led.o{{background:var(--warn);}} .led.r{{background:var(--alarm);}}
+    .led.peak{{opacity:.55; box-shadow:inset 0 0 0 1px rgba(0,0,0,.25), 0 0 6px rgba(255,255,255,.06);}}
+    .led.rms{{opacity:1; box-shadow:inset 0 0 0 1px rgba(0,0,0,.15), 0 0 10px rgba(255,255,255,.10);}}
+    .ledText{{font-size:12px; color:var(--muted); font-family:var(--mono); white-space:nowrap;}}
   </style>
 </head>
 <body>
@@ -182,9 +154,9 @@ def ui_html() -> str:
       <div class="smalltime">
       LTC Audio Level ({config.LTC_ALSA_DEVICE})
         </div>
-        <div style="margin: 8px 12px 12px 12px;">
-            <div id="ltcLedMeter" class="ledMeter"></div>
-            <div id="ltcLevelText" class="ledText">—</div>
+        <div class="ledWrap">
+          <div id="ltcLedMeter" class="ledMeter"></div>
+          <div id="ltcLevelText" class="ledText">—</div>
         </div>
       <div class="hr"></div>
       <h3 style="margin-bottom:8px;">PTP</h3>
