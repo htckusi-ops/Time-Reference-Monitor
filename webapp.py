@@ -23,6 +23,7 @@ from web_clock_ui import ltc_clock_html
 from web_settings import settings_html
 from web_tcpdump import tcpdump_html
 from tcpdump_mgr import TcpdumpCapture
+from domain_scanner import DomainScanner
 from ltc_level import read_ltc_level
 from network_mgr import (
     get_network_status, apply_static, apply_dhcp,
@@ -35,7 +36,8 @@ def _utc_iso_ms() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
-_tcpdump = TcpdumpCapture()
+_tcpdump        = TcpdumpCapture()
+_domain_scanner = DomainScanner()
 
 
 def create_app(
@@ -49,6 +51,8 @@ def create_app(
     set_ptp_source: Callable = None,
     mock_presets: Dict = None,
     ptp_domain: int = 0,
+    get_ptp_domain: Callable = None,
+    set_ptp_domain: Callable = None,
     get_ntp_source: Callable = None,
     set_ntp_source: Callable = None,
     ntp_mock_presets: Dict = None,
@@ -403,5 +407,49 @@ def create_app(
             as_attachment=True,
             download_name="ptp_capture.pcap",
         )
+
+    # ---------------------------
+    # PTP Domain scan + apply
+    # ---------------------------
+
+    @app.post("/api/domain-scan/start")
+    def api_domain_scan_start() -> Response:
+        body  = request.get_json(silent=True) or {}
+        iface = str(body.get("iface", "eth0")).strip() or "eth0"
+        try:
+            duration_s = int(body.get("duration_s", 10))
+        except (TypeError, ValueError):
+            duration_s = 10
+        ok, msg = _domain_scanner.start(iface=iface, duration_s=duration_s)
+        return jsonify({"ok": ok, "message": msg})
+
+    @app.get("/api/domain-scan/status")
+    def api_domain_scan_status() -> Response:
+        return jsonify(_domain_scanner.status())
+
+    @app.post("/api/domain-scan/stop")
+    def api_domain_scan_stop() -> Response:
+        _domain_scanner.stop()
+        return jsonify({"ok": True})
+
+    @app.get("/api/domain/current")
+    def api_domain_current() -> Response:
+        domain = get_ptp_domain() if callable(get_ptp_domain) else ptp_domain
+        return jsonify({"domain": domain})
+
+    @app.post("/api/domain/apply")
+    def api_domain_apply() -> Response:
+        if not callable(set_ptp_domain):
+            return jsonify({"ok": False, "message": "Domain switching not available."}), 400
+        body = request.get_json(silent=True) or {}
+        try:
+            domain = int(body.get("domain", 0))
+        except (TypeError, ValueError):
+            return jsonify({"ok": False, "message": "Ungültige Domain-Nummer."}), 400
+        if not (0 <= domain <= 127):
+            return jsonify({"ok": False, "message": "Domain muss zwischen 0 und 127 liegen."}), 400
+        persist = bool(body.get("persist", False))
+        ok, msg = set_ptp_domain(domain, persist=persist)
+        return jsonify({"ok": ok, "message": msg})
 
     return app

@@ -63,6 +63,18 @@ h1 { font-size: 20px; margin: 0 0 4px; }
 .warn-box { background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.3);
              border-radius: 10px; padding: 10px 14px; font-size: 12px; color: var(--warn);
              margin-top: 10px; }
+.hr { height: 1px; background: rgba(38,50,71,.7); margin: 14px 0; }
+.domain-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+              padding: 7px 10px; border-radius: 10px; margin-bottom: 6px;
+              background: rgba(0,0,0,0.25); border: 1px solid var(--border); }
+.domain-num { font-size: 14px; min-width: 80px; }
+.domain-cnt { font-size: 12px; color: var(--muted); min-width: 70px; }
+.domain-row .btn { padding: 6px 12px; font-size: 12px; }
+.scan-progress { font-size: 12px; color: var(--muted); }
+.scan-bar-wrap { height: 4px; background: rgba(255,255,255,0.08); border-radius: 4px;
+                 margin: 8px 0 12px; overflow: hidden; }
+.scan-bar { height: 4px; background: var(--accent); border-radius: 4px;
+            transition: width 0.4s linear; width: 0%; }
 """
 
 _HTML = """<!doctype html>
@@ -77,7 +89,66 @@ _HTML = """<!doctype html>
 <div class="wrap">
   <a class="back" href="/">&#8592; Zurück zum Monitor</a>
   <h1>Settings</h1>
-  <p class="sub">Netzwerk · NTP · WiFi</p>
+  <p class="sub">PTP Domain · Netzwerk · NTP · WiFi</p>
+
+  <!-- ── PTP Domain ── -->
+  <div class="card">
+    <h2>PTP Domain</h2>
+    <div class="current" id="domainCurrent">Lade…</div>
+
+    <!-- Scan controls -->
+    <div class="row-fields" style="margin-bottom:10px;">
+      <div class="field">
+        <label>Interface</label>
+        <input id="scanIface" type="text" placeholder="eth0" value="eth0"/>
+      </div>
+      <div class="field">
+        <label>Scan-Dauer</label>
+        <select id="scanDuration">
+          <option value="5">5 s</option>
+          <option value="10" selected>10 s</option>
+          <option value="15">15 s</option>
+          <option value="20">20 s</option>
+          <option value="30">30 s</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:6px;flex-wrap:wrap;">
+      <button class="btn btn-primary" id="btnScan">&#x25BA; Domain-Scan</button>
+      <button class="btn" id="btnScanStop" style="display:none;">&#x25A0; Abbrechen</button>
+      <span class="scan-progress" id="scanProgress">—</span>
+    </div>
+    <div class="scan-bar-wrap" id="scanBarWrap" style="display:none;">
+      <div class="scan-bar" id="scanBar"></div>
+    </div>
+
+    <!-- Scan results -->
+    <div id="scanResults" style="display:none;">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Gefundene Domains:</div>
+      <div id="domainList"></div>
+    </div>
+
+    <div class="hr"></div>
+
+    <!-- Manual entry -->
+    <div class="row-fields" style="align-items:flex-end;">
+      <div class="field">
+        <label>Domain manuell eingeben (0–127)</label>
+        <input id="domainManual" type="number" min="0" max="127" placeholder="0"/>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+      <button class="btn" id="btnApplyTemp">Aktiv (bis Reboot)</button>
+      <button class="btn btn-primary" id="btnApplySave">Aktiv &amp; Speichern</button>
+    </div>
+    <div class="msg" id="msgDomain"></div>
+    <p class="hint">
+      Beide Buttons aktivieren die Domain <strong>sofort</strong>.<br>
+      <strong>Aktiv &amp; Speichern</strong> schreibt die Domain zusätzlich nach
+      <code>/var/lib/time-reference-monitor/ptp_domain</code> und lädt sie bei jedem Start.
+    </p>
+  </div>
 
   <!-- ── Network ── -->
   <div class="card">
@@ -592,12 +663,148 @@ _HTML = """<!doctype html>
     }}
   }});
 
+  // ── PTP Domain ───────────────────────────────────────────────────────────
+  async function loadDomainCurrent() {{
+    try {{
+      const r = await fetch('/api/domain/current', {{cache:'no-store'}});
+      const d = await r.json();
+      $('domainCurrent').textContent = 'Aktive Domain: ' + d.domain;
+      $('domainManual').value = d.domain;
+    }} catch(e) {{ $('domainCurrent').textContent = 'Fehler beim Laden.'; }}
+  }}
+
+  async function applyDomain(domain, persist) {{
+    try {{
+      const r = await fetch('/api/domain/apply', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{domain, persist}}),
+      }});
+      const d = await r.json();
+      showMsg('msgDomain', d.ok, d.message || (d.ok ? 'OK' : 'Fehler'));
+      if (d.ok) {{ loadDomainCurrent(); $('domainManual').value = domain; }}
+    }} catch(e) {{
+      showMsg('msgDomain', false, 'Fehler: ' + e.message);
+    }}
+  }}
+
+  function renderDomainList(domains) {{
+    const entries = Object.entries(domains);
+    const list = $('domainList');
+    if (entries.length === 0) {{
+      list.innerHTML = '<div style="color:var(--muted);font-size:12px;">Keine PTP-Pakete gefunden. Interface korrekt?</div>';
+    }} else {{
+      list.innerHTML = entries.map(([dom, cnt]) =>
+        `<div class="domain-row">
+          <span class="domain-num">Domain ${{dom}}</span>
+          <span class="domain-cnt">${{cnt}}&nbsp;Pkts</span>
+          <button class="btn" data-domain="${{dom}}" data-persist="false">Aktiv (bis Reboot)</button>
+          <button class="btn btn-primary" data-domain="${{dom}}" data-persist="true">Aktiv &amp; Speichern</button>
+        </div>`
+      ).join('');
+    }}
+    $('scanResults').style.display = 'block';
+  }}
+
+  // Event delegation for dynamically rendered domain-list buttons
+  $('domainList').addEventListener('click', (e) => {{
+    const btn = e.target.closest('button[data-domain]');
+    if (!btn) return;
+    const domain  = parseInt(btn.dataset.domain, 10);
+    const persist = btn.dataset.persist === 'true';
+    applyDomain(domain, persist);
+  }});
+
+  let _scanTimer = null;
+
+  function _stopScanPoll() {{
+    if (_scanTimer) {{ clearInterval(_scanTimer); _scanTimer = null; }}
+    $('btnScan').disabled = false;
+    $('btnScanStop').style.display = 'none';
+    $('scanBarWrap').style.display = 'none';
+  }}
+
+  async function _pollScan() {{
+    try {{
+      const r = await fetch('/api/domain-scan/status', {{cache:'no-store'}});
+      const d = await r.json();
+      const pct = d.duration_s > 0 ? Math.round(d.elapsed_s / d.duration_s * 100) : 0;
+      $('scanBar').style.width = pct + '%';
+
+      if (d.state === 'scanning') {{
+        $('scanProgress').textContent = `Scanne… ${{d.elapsed_s}} / ${{d.duration_s}} s`;
+      }} else if (d.state === 'done') {{
+        _stopScanPoll();
+        const n = Object.keys(d.domains).length;
+        $('scanProgress').textContent = `Fertig – ${{n}} Domain(s) gefunden.`;
+        renderDomainList(d.domains);
+      }} else if (d.state === 'error') {{
+        _stopScanPoll();
+        $('scanProgress').textContent = 'Fehler: ' + (d.error || '?');
+      }}
+    }} catch(e) {{}}
+  }}
+
+  $('btnScan').addEventListener('click', async () => {{
+    const iface = $('scanIface').value.trim() || 'eth0';
+    const duration_s = parseInt($('scanDuration').value) || 10;
+    $('btnScan').disabled = true;
+    $('btnScanStop').style.display = '';
+    $('scanResults').style.display = 'none';
+    $('scanProgress').textContent = 'Starte…';
+    $('scanBar').style.width = '0%';
+    $('scanBarWrap').style.display = 'block';
+    try {{
+      const r = await fetch('/api/domain-scan/start', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{iface, duration_s}}),
+      }});
+      const d = await r.json();
+      if (!d.ok) {{
+        $('scanProgress').textContent = d.message || 'Fehler';
+        _stopScanPoll();
+        return;
+      }}
+      if (_scanTimer) clearInterval(_scanTimer);
+      _scanTimer = setInterval(_pollScan, 500);
+    }} catch(e) {{
+      $('scanProgress').textContent = 'Fehler: ' + e.message;
+      _stopScanPoll();
+    }}
+  }});
+
+  $('btnScanStop').addEventListener('click', async () => {{
+    await fetch('/api/domain-scan/stop', {{method:'POST'}});
+    _stopScanPoll();
+    $('scanProgress').textContent = 'Abgebrochen.';
+  }});
+
+  $('btnApplyTemp').addEventListener('click', () => {{
+    const v = parseInt($('domainManual').value);
+    if (isNaN(v) || v < 0 || v > 127) {{
+      showMsg('msgDomain', false, 'Domain muss zwischen 0 und 127 liegen.');
+      return;
+    }}
+    applyDomain(v, false);
+  }});
+
+  $('btnApplySave').addEventListener('click', () => {{
+    const v = parseInt($('domainManual').value);
+    if (isNaN(v) || v < 0 || v > 127) {{
+      showMsg('msgDomain', false, 'Domain muss zwischen 0 und 127 liegen.');
+      return;
+    }}
+    applyDomain(v, true);
+  }});
+
   // ── init ─────────────────────────────────────────────────────────────────
   loadNet();
   loadNtp();
   loadWifi();
   loadPtpSource();
   loadNtpSource();
+  loadDomainCurrent();
 }})();
 </script>
 </body>
