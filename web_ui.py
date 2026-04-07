@@ -231,7 +231,6 @@ def ui_html() -> str:
           <div class="kv-k">Reference</div><div class="kv-v" id="ntpRefLine">—</div>
           <div class="kv-k">Last update</div><div class="kv-v" id="ntpLastUpdateLine">—</div>
           <div class="kv-k">Update age</div><div class="kv-v" id="ntpAgeLine">—</div>
-          <div class="kv-k">NTP flaps</div><div class="kv-v" id="ntpFlapLine">—</div>
         </div>
         <!-- Right: quality metrics -->
         <div class="kv">
@@ -498,7 +497,6 @@ function renderLedMeter(ledPeak){{
     els('ntpRefLine').textContent     = ntp.ref || '—';
     els('ntpLastUpdateLine').textContent = ntp.last_update_utc || '—';
     els('ntpAgeLine').textContent     = (ntp.last_update_age_s != null) ? ntp.last_update_age_s.toFixed(1)+' s' : '—';
-    els('ntpFlapLine').textContent    = String(roll.ntp_flaps_rolling ?? '—');
     els('ntpSysOffLine').textContent  = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpRmsOffLine').textContent  = (ntp.rms_offset_s != null) ? (ntp.rms_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpFreqLine').textContent    = (ntp.frequency_ppm != null) ? ntp.frequency_ppm.toFixed(3)+' ppm' : '—';
