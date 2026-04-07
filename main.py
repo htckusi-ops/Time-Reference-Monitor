@@ -66,7 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--startup-grace-s", type=float, default=6.0, help="Startup grace before WARN/ALARM are counted (until first PTP OK).")
     ap.add_argument("--trace", action="store_true", help="Enable verbose diagnostics (kept for compat)")
 
-    ap.add_argument("--ntp-refresh-s", type=float, default=config.DEFAULT_NTP_REFRESH_S, help="NTP refresh interval (seconds)")
+    ap.add_argument("--ntp-refresh-s", type=float, default=config.DEFAULT_NTP_REFRESH_S,
+                    help="How often to read chronyc tracking (seconds, default 0.25)")
+    ap.add_argument("--ntp-stale-threshold-s", type=float, default=config.DEFAULT_NTP_STALE_THRESHOLD_S,
+                    help="Mark NTP as stale if Ref time (UTC) is older than this many seconds (default 180)")
 
     ap.add_argument("--ltc", action="store_true", help="Enable LTC monitoring")
     ap.add_argument("--ltc-device", default="default", help="ALSA device for LTC input, e.g. hw:1,0")
@@ -277,6 +280,11 @@ def main() -> None:
                         st.last_update_age_s = max(0.0, (utc_now() - t).total_seconds())
                     except Exception:
                         st.last_update_age_s = None
+                # Override status if ref time is older than the stale threshold
+                if (st.status == "synced"
+                        and st.last_update_age_s is not None
+                        and st.last_update_age_s > float(args.ntp_stale_threshold_s)):
+                    st.status = "stale"
                 bus.update_ntp(st)
             except Exception as e:
                 bus.add_event("WARN", "NTP_READ_ERROR", f"NTP read failed: {e!r}")

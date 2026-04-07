@@ -507,6 +507,11 @@ function renderLedMeter(ledPeak){{
     const ns = ntp.status || 'unknown';
     if(ns === 'synced') {{ ntpStat.className = 'timeStatus ok'; ntpStat.textContent = 'synced'; }}
     else if(ns === 'unknown') {{ ntpStat.className = 'timeStatus muted'; ntpStat.textContent = 'no data'; }}
+    else if(ns === 'unsynced') {{ ntpStat.className = 'timeStatus alarm'; ntpStat.textContent = 'unsynced'; }}
+    else if(ns === 'stale') {{
+      const ageStr = (ntp.last_update_age_s != null) ? ' ' + Math.round(ntp.last_update_age_s) + 's' : '';
+      ntpStat.className = 'timeStatus warn'; ntpStat.textContent = 'stale' + ageStr;
+    }}
     else {{ ntpStat.className = 'timeStatus warn'; ntpStat.textContent = ns; }}
 
     const pres = (ltc.enabled && ltc.present) ? 'present' : (ltc.enabled ? 'absent' : 'disabled');
@@ -607,8 +612,10 @@ function renderLedMeter(ledPeak){{
     // ── NTP time ─────────────────────────────────────────────────────────────
     // NTP_time = system_clock + chrony system_offset_s
     // system_offset_s > 0: system is slow (NTP is ahead); < 0: system is fast.
-    const ntpOffsetMs = (srvNow && ntp.system_offset_s != null) ? ntp.system_offset_s * 1000 : 0;
-    const ntpNow = srvNow ? new Date(srvNow.getTime() + ntpOffsetMs) : null;
+    // Grey out display when NTP is stale or unsynced.
+    const ntpLive = (ntp.status === 'synced');
+    const ntpOffsetMs = (srvNow && ntpLive && ntp.system_offset_s != null) ? ntp.system_offset_s * 1000 : 0;
+    const ntpNow = (srvNow && ntpLive) ? new Date(srvNow.getTime() + ntpOffsetMs) : null;
 
     if(ntpNow) {{
       const nh = ntpNow.getUTCHours(), nm = ntpNow.getUTCMinutes(), ns2 = ntpNow.getUTCSeconds();

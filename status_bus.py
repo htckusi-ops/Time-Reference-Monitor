@@ -209,6 +209,13 @@ class StatusBus:
                         message="NTP sync lost (unsynced).",
                         suppressed=self._should_suppress_for_state("ALARM"),
                     ))
+                elif ntp.status == "stale":
+                    age = f" ({ntp.last_update_age_s:.0f} s ago)" if ntp.last_update_age_s is not None else ""
+                    self._append_event_locked(Event(
+                        ts_utc=utc_iso_ms(), severity="WARN", type="NTP_STALE",
+                        message=f"NTP reference time stale{age} — server unreachable?",
+                        suppressed=self._should_suppress_for_state("WARN"),
+                    ))
                 elif ntp.status == "synced":
                     self._append_event_locked(Event(
                         ts_utc=utc_iso_ms(), severity="INFO", type="NTP_RECOVERED",
