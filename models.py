@@ -17,7 +17,7 @@ class PTPStatus:
     ptp_valid: bool = False
     gm_present: bool = False
     port_state: str = "UNKNOWN"
-    ptp_versions: str = "v2"
+    ptp_versions: Optional[str] = None
     gm_identity: Optional[str] = None
     offset_ns: Optional[int] = None
     mean_path_delay_ns: Optional[int] = None
@@ -26,6 +26,18 @@ class PTPStatus:
     no_ptp_since_utc: Optional[str] = None
     last_ok_utc: Optional[str] = None
     raw: Optional[str] = None
+    # GM / clock quality
+    gm_priority1: Optional[int] = None
+    gm_priority2: Optional[int] = None
+    gm_clock_class: Optional[int] = None
+    gm_clock_accuracy: Optional[str] = None
+    parent_port_identity: Optional[str] = None
+    # time properties
+    time_source: Optional[str] = None
+    time_traceable: Optional[bool] = None
+    frequency_traceable: Optional[bool] = None
+    utc_offset: Optional[int] = None
+    ptp_timescale: Optional[bool] = None
 
 
 @dataclass

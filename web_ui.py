@@ -40,6 +40,8 @@ def ui_html() -> str:
     .kv{{display:grid; grid-template-columns: 170px 1fr; gap:6px 10px; font-size:13px;}}
     .kv-k{{color:var(--muted);}}
     .kv-v{{font-family:var(--mono);}}
+    .kv2{{display:grid; grid-template-columns:1fr 1fr; gap:0 20px;}}
+    .kv2 .kv{{grid-template-columns:130px 1fr;}}
     .badge{{display:inline-flex; align-items:center; gap:8px; padding:6px 10px; border-radius:12px; border:1px solid var(--line); background:rgba(0,0,0,.2); font-family:var(--mono); font-size:12px;}}
     .dot{{width:10px; height:10px; border-radius:999px; background:var(--muted);}}
     .dot.ok{{background:var(--ok);}} .dot.warn{{background:var(--warn);}} .dot.alarm{{background:var(--alarm);}}
@@ -186,27 +188,39 @@ def ui_html() -> str:
         </div>
       <div class="hr"></div>
 
-      <div class="kv" style="margin-top:8px;">
-        <div class="kv-k">State</div><div class="kv-v" id="stateLine">—</div>
-        <div class="kv-k">PTP source</div><div class="kv-v" id="sourceLine">—</div>
-        <div class="kv-k">Interface</div><div class="kv-v" id="ifaceLine">—</div>
-        <div class="kv-k">Domain</div><div class="kv-v" id="domainLine">—</div>
-
-        <div class="kv-k">PTP valid</div><div class="kv-v" id="ptpValidLine">—</div>
-        <div class="kv-k">GM present</div><div class="kv-v" id="gmPresentLine">—</div>
-        <div class="kv-k">Port state</div><div class="kv-v" id="portStateLine">—</div>
-        <div class="kv-k">PTP versions</div><div class="kv-v" id="ptpVerLine">—</div>
-
-        <div class="kv-k">GM identity</div><div class="kv-v" id="gmLine">—</div>
-        <div class="kv-k">Offset (ns)</div><div class="kv-v" id="offLine">—</div>
-        <div class="kv-k">Mean path delay (ns)</div><div class="kv-v" id="delayLine">—</div>
-        <div class="kv-k">Poll age (ms)</div><div class="kv-v" id="ageLine">—</div>
-
-        <div class="kv-k">GM changes (rolling)</div><div class="kv-v" id="gmChgLine">—</div>
-        <div class="kv-k">NO PTP since</div><div class="kv-v" id="noPtpLine">—</div>
-
-        <div class="kv-k">NTP status</div><div class="kv-v" id="ntpLine">—</div>
-        <div class="kv-k">LTC status</div><div class="kv-v" id="ltcLine">—</div>
+      <div class="kv2" style="margin-top:8px;">
+        <!-- Left column: connection & timing -->
+        <div class="kv">
+          <div class="kv-k">State</div><div class="kv-v" id="stateLine">—</div>
+          <div class="kv-k">Port state</div><div class="kv-v" id="portStateLine">—</div>
+          <div class="kv-k">PTP valid</div><div class="kv-v" id="ptpValidLine">—</div>
+          <div class="kv-k">GM present</div><div class="kv-v" id="gmPresentLine">—</div>
+          <div class="kv-k">Interface</div><div class="kv-v" id="ifaceLine">—</div>
+          <div class="kv-k">Domain</div><div class="kv-v" id="domainLine">—</div>
+          <div class="kv-k">PTP version</div><div class="kv-v" id="ptpVerLine">—</div>
+          <div class="kv-k">Offset (ns)</div><div class="kv-v" id="offLine">—</div>
+          <div class="kv-k">Path delay (ns)</div><div class="kv-v" id="delayLine">—</div>
+          <div class="kv-k">Poll age (ms)</div><div class="kv-v" id="ageLine">—</div>
+          <div class="kv-k">GM changes</div><div class="kv-v" id="gmChgLine">—</div>
+          <div class="kv-k">NO PTP since</div><div class="kv-v" id="noPtpLine">—</div>
+          <div class="kv-k">NTP status</div><div class="kv-v" id="ntpLine">—</div>
+          <div class="kv-k">LTC status</div><div class="kv-v" id="ltcLine">—</div>
+        </div>
+        <!-- Right column: GM / source info -->
+        <div class="kv">
+          <div class="kv-k">Source</div><div class="kv-v" id="sourceLine">—</div>
+          <div class="kv-k">Time source</div><div class="kv-v" id="timeSourceLine">—</div>
+          <div class="kv-k">UTC offset</div><div class="kv-v" id="utcOffsetLine">—</div>
+          <div class="kv-k">Time traceable</div><div class="kv-v" id="timeTraceLine">—</div>
+          <div class="kv-k">Freq traceable</div><div class="kv-v" id="freqTraceLine">—</div>
+          <div class="kv-k">PTP timescale</div><div class="kv-v" id="ptpTimescaleLine">—</div>
+          <div class="kv-k">GM identity</div><div class="kv-v" id="gmLine">—</div>
+          <div class="kv-k">Parent port</div><div class="kv-v" id="parentPortLine">—</div>
+          <div class="kv-k">GM priority1</div><div class="kv-v" id="gmPrio1Line">—</div>
+          <div class="kv-k">GM priority2</div><div class="kv-v" id="gmPrio2Line">—</div>
+          <div class="kv-k">GM clock class</div><div class="kv-v" id="gmClockClassLine">—</div>
+          <div class="kv-k">GM clock acc.</div><div class="kv-v" id="gmClockAccLine">—</div>
+        </div>
       </div>
     </div>
 
@@ -442,12 +456,23 @@ function renderLedMeter(ledPeak){{
     els('gmPresentLine').textContent = String(!!st.gm_present);
     els('portStateLine').textContent = st.port_state || '—';
     els('ptpVerLine').textContent = st.ptp_versions || '—';
-    els('gmLine').textContent = st.gm_identity || '—';
     els('offLine').textContent = (st.offset_ns != null) ? String(st.offset_ns) : '—';
     els('delayLine').textContent = (st.mean_path_delay_ns != null) ? String(st.mean_path_delay_ns) : '—';
     els('ageLine').textContent = (st.poll_age_ms != null) ? String(st.poll_age_ms) : '—';
     els('noPtpLine').textContent = st.no_ptp_since_utc || '—';
     els('gmChgLine').textContent = String(roll.gm_changes_rolling ?? '—');
+    // GM / source info
+    els('gmLine').textContent = st.gm_identity || '—';
+    els('parentPortLine').textContent = st.parent_port_identity || '—';
+    els('gmPrio1Line').textContent = (st.gm_priority1 != null) ? String(st.gm_priority1) : '—';
+    els('gmPrio2Line').textContent = (st.gm_priority2 != null) ? String(st.gm_priority2) : '—';
+    els('gmClockClassLine').textContent = (st.gm_clock_class != null) ? String(st.gm_clock_class) : '—';
+    els('gmClockAccLine').textContent = st.gm_clock_accuracy || '—';
+    els('timeSourceLine').textContent = st.time_source || '—';
+    els('utcOffsetLine').textContent = (st.utc_offset != null) ? `${{st.utc_offset}}s` : '—';
+    els('timeTraceLine').textContent = (st.time_traceable != null) ? (st.time_traceable ? 'yes' : 'no') : '—';
+    els('freqTraceLine').textContent = (st.frequency_traceable != null) ? (st.frequency_traceable ? 'yes' : 'no') : '—';
+    els('ptpTimescaleLine').textContent = (st.ptp_timescale != null) ? (st.ptp_timescale ? 'PTP' : 'ARB') : '—';
 
     const ntpOffsetDisp = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
     const ntpParts = [
