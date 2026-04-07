@@ -1,5 +1,20 @@
 # TODO
 
+## Implementiert (Referenz)
+
+Die folgenden Features wurden seit Erstellung dieses TODO-Dokuments implementiert und sind im aktuellen Codestand enthalten:
+
+- **PTP Domain Scanner** (`domain_scanner.py`): Settings-Seite > PTP Domain-Karte; tcpdump erfasst 500 PTP-Pakete, Python-PCAP-Parser extrahiert `domainNumber` (Byte 4 des PTP-Headers) ohne externe Abhängigkeiten; Domain zur Laufzeit wechseln ("Aktiv bis Reboot" / "Aktiv & Speichern"); Persistenz in `/var/lib/time-reference-monitor/ptp_domain` (überlagert `--domain`-CLI-Argument beim Start)
+- **PTP Capture** (`tcpdump_mgr.py`, `/tcpdump`): Live-Terminal mit farblicher Hervorhebung nach Nachrichtentyp, Ring-Buffer 500 Zeilen, PCAP-Download für Wireshark; erfasst UDP 319/320 + EtherType 0x88F7 (L2 PTP)
+- **LTC Spektrum** (`spectrum.py`, `/spectrum`): On-Demand-WAV-Aufnahme via `arecord` + FFT-Spektrogramm via `sox`, PNG- und WAV-Download; läuft vollständig in `/dev/shm` (keine SD-Karten-Schreibzugriffe)
+- **Screen Clock** (`/ltc-clock`): Vollbild-Uhr, Zeitquelle wählbar (LTC/PTP/Local), Schriftgrösse/Farbe/Breite konfigurierbar und im Browser-Localstorage persistent; Close-Button für Kiosk-Betrieb
+- **Einstellungsseite** (`/settings`): Netzwerk (DHCP/statisch), NTP-Server, WLAN, PTP Domain (Scanner + Laufzeitwechsel), PTP-Simulation (Dropout/GM-Flap/Step/Wander/Drift), NTP-Simulation
+- **Monotone Zeitinterpolation**: PTP-Zeit wird client-seitig über `performance.now()` hochgerechnet; Monoton-Korrektur verhindert Rückläufer bei Netzwerk-Jitter
+- **7-Seg-Breitenstabilisierung**: Platzhalter `00:00:00.00` verhindert Layoutsprünge beim Wechsel zwischen Ziffernbreiten
+- **Kiosk-Close-Buttons**: Alle Unterseiten (`/ltc-clock`, `/spectrum`, `/tcpdump`) haben einen Close-Button, der zum Dashboard zurückführt
+
+---
+
 ## Ebene 1: Monitor-Parameter zur Laufzeit ändern
 
 Ziel: Ausgewählte Monitor-interne Parameter ohne Neustart des Prozesses über das Webinterface anpassen.
