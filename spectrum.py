@@ -134,6 +134,7 @@ class SpectrumManager:
                 with self._lock:
                     self._wav = wav_data
                     self._status.has_audio = True
+                    self._status.last_generated_utc = _utc_iso_ms()
 
                 # 2) render spectrogram (PNG)
                 sox_cmd = [

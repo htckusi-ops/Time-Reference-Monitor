@@ -946,16 +946,14 @@ def spectrum_html() -> str:
       el('audioPlayer').src = url;
       const ad = el('audioDownload');
       ad.href = url;
-      if(j.last_generated_utc) {{
-        const d = new Date(j.last_generated_utc);
-        ad.download = d.getUTCFullYear().toString()
-          + String(d.getUTCMonth()+1).padStart(2,'0')
-          + String(d.getUTCDate()).padStart(2,'0') + '-'
-          + String(d.getUTCHours()).padStart(2,'0') + '_'
-          + String(d.getUTCMinutes()).padStart(2,'0') + '_'
-          + String(d.getUTCSeconds()).padStart(2,'0')
-          + '_UTC-LTC_Capture.wav';
-      }}
+      const d = j.last_generated_utc ? new Date(j.last_generated_utc) : new Date(ts);
+      ad.download = d.getUTCFullYear().toString()
+        + String(d.getUTCMonth()+1).padStart(2,'0')
+        + String(d.getUTCDate()).padStart(2,'0') + '-'
+        + String(d.getUTCHours()).padStart(2,'0') + '_'
+        + String(d.getUTCMinutes()).padStart(2,'0') + '_'
+        + String(d.getUTCSeconds()).padStart(2,'0')
+        + '_UTC-LTC_Capture.wav';
       el('audioWrap').style.display='block';
     }}
     return j;
