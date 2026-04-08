@@ -29,6 +29,7 @@ from network_mgr import (
     get_network_status, apply_static, apply_dhcp,
     get_wifi_status, set_wifi,
     get_ntp_server, set_ntp_server,
+    get_device_location, set_device_location,
 )
 from config import LTC_ALSA_DEVICE
 
@@ -168,6 +169,17 @@ def create_app(
         if not server:
             return jsonify({"ok": False, "message": "Kein Server angegeben."}), 400
         ok, msg = set_ntp_server(server)
+        return jsonify({"ok": ok, "message": msg})
+
+    @app.get("/api/settings/location")
+    def api_settings_location_get() -> Response:
+        return jsonify({"location": get_device_location()})
+
+    @app.post("/api/settings/location")
+    def api_settings_location_post() -> Response:
+        body = request.get_json(silent=True) or {}
+        location = str(body.get("location", "")).strip()
+        ok, msg = set_device_location(location)
         return jsonify({"ok": ok, "message": msg})
 
     # ---------------------------

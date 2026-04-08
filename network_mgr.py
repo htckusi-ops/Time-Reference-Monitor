@@ -5,9 +5,12 @@ Uses NetworkManager (nmcli) for network config — standard on Bookworm.
 All write operations require sudo (configured via sudoers in setup.sh).
 """
 from __future__ import annotations
+import os
 import re
 import subprocess
 from typing import Optional, Dict, Any, Tuple
+
+_LOCATION_PATH = "/var/lib/time-reference-monitor/device_location"
 
 
 def _run(*args: str, timeout: int = 10) -> subprocess.CompletedProcess:
@@ -232,5 +235,28 @@ def set_wifi(enabled: bool) -> Tuple[bool, str]:
     if r.returncode != 0:
         return False, (r.stderr or r.stdout).strip()
     return True, f"WiFi {'aktiviert' if enabled else 'deaktiviert'}."
+
+
+# ── Device location ──────────────────────────────────────────────────────────
+
+def get_device_location() -> str:
+    """Return the stored device location string, or empty string if not set."""
+    try:
+        with open(_LOCATION_PATH) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def set_device_location(location: str) -> Tuple[bool, str]:
+    """Persist device location (max 500 chars)."""
+    location = str(location).strip()[:500]
+    try:
+        os.makedirs(os.path.dirname(_LOCATION_PATH), exist_ok=True)
+        with open(_LOCATION_PATH, "w") as f:
+            f.write(location + "\n")
+        return True, "Standort gespeichert."
+    except Exception as exc:
+        return False, f"Fehler beim Speichern: {exc}"
 
 

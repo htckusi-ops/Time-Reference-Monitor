@@ -260,6 +260,12 @@ def ui_html() -> str:
           <tbody></tbody>
         </table>
       </div>
+
+      <div id="locationBox" style="display:none; margin-top:12px; padding:8px 12px;
+           background:rgba(0,0,0,.2); border:1px solid rgba(38,50,71,.7); border-radius:10px;
+           font-size:12px; color:var(--muted);">
+        <span style="color:var(--text);">Standort</span>&nbsp;&nbsp;<span id="locationText"></span>
+      </div>
     </div>
   </div>
 
@@ -464,6 +470,12 @@ function renderLedMeter(ledPeak){{
 
     els('pillMeta').textContent = `${{meta.source || '—'}} | ${{meta.iface || '—'}} | domain=${{meta.domain ?? '—'}} | poll=${{meta.poll_s ?? '—'}}s`;
     els('footMeta').textContent = `API: ${{meta.ts_utc || '—'}}`;
+
+    // Location box
+    const loc = (meta.device_location || '').trim();
+    const locBox = els('locationBox');
+    if (loc) {{ els('locationText').textContent = loc; locBox.style.display = ''; }}
+    else {{ locBox.style.display = 'none'; }}
 
     // Source: "mock", "real / local (MASTER)", "real / remote (SLAVE)", "real"
     (function() {{
@@ -773,7 +785,10 @@ function renderLedMeter(ledPeak){{
   els('btnReload').addEventListener('click', () => {{ window.location.reload(); }});
 
   els('btnResetSummaries').addEventListener('click', async () => {{
-    await fetch('/api/reset-summaries', {{method:'POST'}});
+    try {{
+      const r = await fetch('/api/reset-summaries', {{method:'POST'}});
+      if (r.ok) await pollApi();
+    }} catch(e) {{}}
   }});
 
   els('btnReboot').addEventListener('click', async () => {{

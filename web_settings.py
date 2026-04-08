@@ -91,6 +91,23 @@ _HTML = """<!doctype html>
   <h1>Settings</h1>
   <p class="sub">PTP Domain · Netzwerk · NTP · WiFi</p>
 
+  <!-- ── Gerät / Standort ── -->
+  <div class="card">
+    <h2>Gerät / Standort</h2>
+    <p class="hint" style="margin-bottom:14px;">
+      Wo ist dieser Raspberry Pi installiert? Die Angabe wird im Dashboard als Referenz angezeigt
+      und hilft bei der Identifikation — Raspberrys sind oft schwer zu finden.
+    </p>
+    <div class="field">
+      <label>Standort / Beschreibung</label>
+      <input id="deviceLocation" type="text"
+             placeholder="z.B. Regie Studio 3, Rack B, Position 4"
+             maxlength="500"/>
+    </div>
+    <button class="btn btn-primary" id="btnSaveLocation">Speichern</button>
+    <div class="msg" id="msgLocation"></div>
+  </div>
+
   <!-- ── PTP Domain ── -->
   <div class="card">
     <h2>PTP Domain</h2>
@@ -381,6 +398,32 @@ _HTML = """<!doctype html>
     el.textContent = text;
     setTimeout(() => {{ el.className = 'msg'; }}, 6000);
   }}
+
+  // ── Location ─────────────────────────────────────────────────────────────
+  async function loadLocation() {{
+    try {{
+      const r = await fetch('/api/settings/location', {{cache:'no-store'}});
+      const d = await r.json();
+      $('deviceLocation').value = d.location || '';
+    }} catch(e) {{}}
+  }}
+
+  $('btnSaveLocation').addEventListener('click', async () => {{
+    const location = $('deviceLocation').value.trim();
+    $('btnSaveLocation').disabled = true;
+    try {{
+      const r = await fetch('/api/settings/location', {{
+        method: 'POST', headers: {{'Content-Type':'application/json'}},
+        body: JSON.stringify({{ location }}),
+      }});
+      const d = await r.json();
+      showMsg('msgLocation', d.ok, d.message);
+    }} catch(e) {{
+      showMsg('msgLocation', false, 'Fehler: ' + e.message);
+    }} finally {{
+      $('btnSaveLocation').disabled = false;
+    }}
+  }});
 
   // ── Network ──────────────────────────────────────────────────────────────
   let origIp = '';
@@ -799,6 +842,7 @@ _HTML = """<!doctype html>
   }});
 
   // ── init ─────────────────────────────────────────────────────────────────
+  loadLocation();
   loadNet();
   loadNtp();
   loadWifi();
