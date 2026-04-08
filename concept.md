@@ -84,7 +84,7 @@ Das Backend betreibt vier dauerlaufende Threads neben dem Flask-HTTP-Server:
 | `ptp_loop` | `pmc`-Abfragen, PTP-Status in `status_bus` schreiben | `--poll` (250 ms) |
 | `ntp_loop` | `chronyc tracking` parsen, NTP-Status schreiben | `--ntp-refresh-s` (250 ms) |
 | `ltc_snapshot_loop` | Snapshot von `sources_ltc` holen, in `status_bus` schreiben | `--ltc-refresh-s` (250 ms) |
-| `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` HH:MM:SS:FF | kontinuierlich |
+| `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` `HH:MM:SS:FF [YYYY-MM-DD]` \| `NO_LTC` | kontinuierlich |
 
 Alle Zugriffe auf gemeinsamen Zustand laufen über `threading.Lock()`.
 
@@ -118,10 +118,10 @@ ALSA hw:X,0
     ▼ (dsnoop_ltc – shared capture)
     ├── alsaltc (subprocess)
     │       libltc decoder
-    │       stdout: "HH:MM:SS:FF" | "NO_LTC"
+    │       stdout: "HH:MM:SS:FF [YYYY-MM-DD]" | "NO_LTC"
     │            │
     │            ▼
-    │       sources_ltc.py (Regex-Parser)
+    │       sources_ltc.py (Regex-Parser, _DATE_RE)
     │       Jump-Detektion (Frame-Count-Vergleich)
     │            │
     │            ▼
@@ -132,6 +132,12 @@ ALSA hw:X,0
 ```
 
 `alsaltc` wurde entwickelt, weil `ltcdump` und ähnliche Tools kein zuverlässiges Dropout-Signaling über `stdout` bieten. Die C-Implementierung verwendet direkt ALSA-`snd_pcm_readi` und libltc ohne zusätzliche Latenz-Schichten.
+
+**Datum-Dekodierung (alsaltc):** `alsaltc` liest `tc.years/months/days` aus libltc's `SMPTETimecode`-Struct (befüllt durch `ltc_frame_to_time()`). Wenn User Bits ein gültiges Datum tragen (Monat 1–12, Tag 1–31), gibt `alsaltc` `HH:MM:SS:FF YYYY-MM-DD` aus. Jahrhundert-Heuristik: Jahre < 70 → 2000+, ≥ 70 → 1900+. **Neubauen auf dem RPi erforderlich** (`cd alsaltc-v02 && make && sudo make install`) — der vorkompilierte Binary im Repository-Root gibt kein Datum aus.
+
+**Datum-Parsing in `sources_ltc.py`:** `_DATE_RE` parst `YYYY-MM-DD` direkt aus der `alsaltc`-Ausgabezeile. Fallback: nibble-basierter SMPTE-309M-Decode für `ltcdump`-Nibble-Format `| n1..n8` (vanilla `ltcdump` ohne `-d`).
+
+**ltcdump 0.7.0 Bug:** In `ltcdump` 0.7.0 bedeutet `-d` `--date` (nicht Device). Das ALSA-Device wird mit `-a` angegeben. Der Default-Befehl lautet daher `ltcdump -a <device> -f <fps> -d`. Benutzerdefinierter `--ltc-cmd` (alsaltc) ist davon nicht betroffen.
 
 ### `webapp.py` / `web_ui.py` — Web-Frontend
 
