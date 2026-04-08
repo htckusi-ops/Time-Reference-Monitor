@@ -168,6 +168,11 @@ def set_ntp_server(server: str) -> Tuple[bool, str]:
         return True, f"NTP-Server auf {server} gesetzt (chronyc reload sources: {(r.stderr or r.stdout).strip()})"
 
     return True, f"NTP-Server auf {server} gesetzt."
+
+
+# ── write ────────────────────────────────────────────────────────────────────
+
+def apply_static(
     iface: str, ip: str, prefix: str, gateway: str, dns: str
 ) -> Tuple[bool, str]:
     """Apply static IP configuration via nmcli."""
