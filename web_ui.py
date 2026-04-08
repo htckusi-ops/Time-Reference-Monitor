@@ -270,7 +270,8 @@ def ui_html() -> str:
   // This ensures both displays freeze when the RPi goes offline, and reflect RPi time
   // (not the browser's local clock) when accessed from a remote computer.
   let srvBaseMs  = null;   // RPi UTC ms at last API receipt
-  let srvLocalMs = null;   // browser Date.now() when API was received
+  let srvLocalMs = null;   // browser Date.now() when API was received (monotonic guard)
+  let lastApiMs  = null;   // browser Date.now() on every successful API response
   let ptpCanTick = false;
 
   const els = (id) => document.getElementById(id);
@@ -423,6 +424,7 @@ function renderLedMeter(ledPeak){{
 
   function applyApi(data){{
     lastApi = data;
+    lastApiMs = Date.now();
     const meta = data.meta || {{}};
     const st = data.status || {{}};
     const ntp = data.ntp || {{}};
@@ -588,8 +590,8 @@ function renderLedMeter(ledPeak){{
     // If the backend has been unreachable longer than the stale threshold,
     // treat srvNow as null so all time displays grey out (not just PTP badge).
     const staleTh = (lastApi?.meta?.stale_threshold_ms ?? 2000);
-    const apiAgeMs = srvLocalMs != null ? (Date.now() - srvLocalMs) : Infinity;
-    const srvNow = (srvBaseMs != null && srvLocalMs != null && apiAgeMs <= staleTh + 500)
+    const apiAgeMs = lastApiMs != null ? (Date.now() - lastApiMs) : Infinity;
+    const srvNow = (srvBaseMs != null && srvLocalMs != null && apiAgeMs <= staleTh + 1000)
       ? new Date(srvBaseMs + (Date.now() - srvLocalMs))
       : null;
 
