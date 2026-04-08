@@ -274,8 +274,8 @@ def ui_html() -> str:
   let lastApiMs  = null;   // browser Date.now() on every successful API response
   let ptpCanTick = false;
 
-  // EMA smoothing for rapidly-changing display values (α=0.15 ≈ 6-sample window)
-  const EMA_A = 0.15;
+  // EMA smoothing for rapidly-changing display values (α=0.05 ≈ 20-sample window)
+  const EMA_A = 0.05;
   function _ema(prev, v) {{ return prev == null ? v : EMA_A * v + (1 - EMA_A) * prev; }}
   let _emaPtpOffNs    = null;
   let _emaPtpDelayNs  = null;
@@ -944,7 +944,18 @@ def spectrum_html() -> str:
       const ts = Date.now();
       const url = '/api/spectrum/audio?ts=' + ts;
       el('audioPlayer').src = url;
-      el('audioDownload').href = url;
+      const ad = el('audioDownload');
+      ad.href = url;
+      if(j.last_generated_utc) {{
+        const d = new Date(j.last_generated_utc);
+        ad.download = d.getUTCFullYear().toString()
+          + String(d.getUTCMonth()+1).padStart(2,'0')
+          + String(d.getUTCDate()).padStart(2,'0') + '-'
+          + String(d.getUTCHours()).padStart(2,'0') + '_'
+          + String(d.getUTCMinutes()).padStart(2,'0') + '_'
+          + String(d.getUTCSeconds()).padStart(2,'0')
+          + '_UTC-LTC_Capture.wav';
+      }}
       el('audioWrap').style.display='block';
     }}
     return j;
