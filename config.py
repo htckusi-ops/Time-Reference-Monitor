@@ -26,9 +26,9 @@ DEFAULT_STALE_THRESHOLD_MS = 2000
 DEFAULT_NTP_REFRESH_S = 0.25
 DEFAULT_LTC_REFRESH_S = 0.25
 # NTP staleness: if Ref time (UTC) is older than this, status → "stale"
-# Chrony polls NTP servers every 64–1024 s; 3× max interval = ~50 min.
-# 180 s gives a reasonable balance between fast detection and false triggers.
-DEFAULT_NTP_STALE_THRESHOLD_S = 180
+# Chrony maxpoll=10 → poll interval up to 2^10 = 1024 s (~17 min) when stable.
+# Use 1200 s (20 min) so normal long-poll cycles don't trigger false stale alarms.
+DEFAULT_NTP_STALE_THRESHOLD_S = 1200
 
 # pmc timeout
 PMC_TIMEOUT_S = 1.5

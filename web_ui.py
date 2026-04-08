@@ -274,6 +274,16 @@ def ui_html() -> str:
   let lastApiMs  = null;   // browser Date.now() on every successful API response
   let ptpCanTick = false;
 
+  // EMA smoothing for rapidly-changing display values (α=0.15 ≈ 6-sample window)
+  const EMA_A = 0.15;
+  function _ema(prev, v) {{ return prev == null ? v : EMA_A * v + (1 - EMA_A) * prev; }}
+  let _emaPtpOffNs    = null;
+  let _emaPtpDelayNs  = null;
+  let _emaDeltaNtpPtp = null;
+  let _emaDeltaLtcNtp = null;
+  let _emaDeltaLtcAdj = null;
+  let _emaDeltaLtcRaw = null;
+
   const els = (id) => document.getElementById(id);
 
   // --- LED meter setup ---
@@ -461,8 +471,10 @@ function renderLedMeter(ledPeak){{
     els('gmPresentLine').textContent = String(!!st.gm_present);
     els('portStateLine').textContent = st.port_state || '—';
     els('ptpVerLine').textContent = st.ptp_versions || '—';
-    els('offLine').textContent = (st.offset_ns != null) ? String(st.offset_ns) : '—';
-    els('delayLine').textContent = (st.mean_path_delay_ns != null) ? String(st.mean_path_delay_ns) : '—';
+    _emaPtpOffNs   = (st.offset_ns           != null) ? _ema(_emaPtpOffNs,   st.offset_ns)           : null;
+    _emaPtpDelayNs = (st.mean_path_delay_ns  != null) ? _ema(_emaPtpDelayNs, st.mean_path_delay_ns)  : null;
+    els('offLine').textContent   = (_emaPtpOffNs   != null) ? _emaPtpOffNs.toFixed(0)   + ' ns' : '—';
+    els('delayLine').textContent = (_emaPtpDelayNs != null) ? _emaPtpDelayNs.toFixed(0) + ' ns' : '—';
     els('ageLine').textContent = (st.poll_age_ms != null) ? String(st.poll_age_ms) : '—';
     els('noPtpLine').textContent = st.no_ptp_since_utc || '—';
     els('gmChgLine').textContent = String(roll.gm_changes_rolling ?? '—');
@@ -638,11 +650,14 @@ function renderLedMeter(ledPeak){{
       if(ltcTod != null) {{
         const ltcCorr = ltcTod - alsaDelayMs;
         const ntpTod = todMsFromUtcDate(ntpNow);
-        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): ' + wrapDeltaMs(ltcCorr - ntpTod).toFixed(3) + ' ms';
+        _emaDeltaLtcNtp = _ema(_emaDeltaLtcNtp, wrapDeltaMs(ltcCorr - ntpTod));
+        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): ' + _emaDeltaLtcNtp.toFixed(3) + ' ms';
       }} else {{
+        _emaDeltaLtcNtp = null;
         els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
       }}
     }} else {{
+      _emaDeltaLtcNtp = null;
       els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
     }}
 
@@ -681,12 +696,14 @@ function renderLedMeter(ledPeak){{
       // Fallback: offset_ns/1e6 from ptp4l alone (= Δ(system - PTP_master)).
       const offNs = st.offset_ns;
       if(ntp.system_offset_s != null && offNs != null) {{
-        els('deltaLine').textContent = 'Δ(NTP-PTP): ' + (ntpOffsetMs - ptpDeltaMs).toFixed(3) + ' ms';
+        _emaDeltaNtpPtp = _ema(_emaDeltaNtpPtp, ntpOffsetMs - ptpDeltaMs);
       }} else if(offNs != null) {{
-        els('deltaLine').textContent = 'Δ(NTP-PTP): ' + (offNs / 1e6).toFixed(3) + ' ms';
+        _emaDeltaNtpPtp = _ema(_emaDeltaNtpPtp, offNs / 1e6);
       }} else {{
-        els('deltaLine').textContent = 'Δ(NTP-PTP): —';
+        _emaDeltaNtpPtp = null;
       }}
+      els('deltaLine').textContent = _emaDeltaNtpPtp != null
+        ? 'Δ(NTP-PTP): ' + _emaDeltaNtpPtp.toFixed(3) + ' ms' : 'Δ(NTP-PTP): —';
 
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
@@ -700,20 +717,25 @@ function renderLedMeter(ledPeak){{
         const ptpTodLocal = ptpTodUtc + srvTzMs;
         if(ltcTod != null) {{
           const ltcCorr = ltcTod - alsaDelayMs;
-          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + wrapDeltaMs(ltcCorr - ptpTodLocal).toFixed(3) + ' ms';
-          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + wrapDeltaMs(ltcCorr - ptpTodUtc).toFixed(3) + ' ms';
+          _emaDeltaLtcAdj = _ema(_emaDeltaLtcAdj, wrapDeltaMs(ltcCorr - ptpTodLocal));
+          _emaDeltaLtcRaw = _ema(_emaDeltaLtcRaw, wrapDeltaMs(ltcCorr - ptpTodUtc));
+          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + _emaDeltaLtcAdj.toFixed(3) + ' ms';
+          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + _emaDeltaLtcRaw.toFixed(3) + ' ms';
           els('ltcTzLine').textContent = 'System TZ (PTP): ' + (srvTzMs/1000).toFixed(0) + ' s (' + srvTzMs.toFixed(0) + ' ms)';
         }} else {{
+          _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
           els('ltcTzLine').textContent = 'System TZ (PTP): —';
         }}
       }} else {{
+        _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
         els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
         els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
         els('ltcTzLine').textContent = 'System TZ (PTP): —';
       }}
     }} else {{
+      _emaDeltaNtpPtp = null; _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
       renderSevenSeg(els('ptpTimeSegs'), null);
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
