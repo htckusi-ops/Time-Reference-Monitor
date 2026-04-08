@@ -264,7 +264,8 @@ def ui_html() -> str:
       <div id="locationBox" style="display:none; margin-top:12px; padding:8px 12px;
            background:rgba(0,0,0,.2); border:1px solid rgba(38,50,71,.7); border-radius:10px;
            font-size:12px; color:var(--muted);">
-        <span style="color:var(--text);">Standort</span>&nbsp;&nbsp;<span id="locationText"></span>
+        <span style="color:var(--text);">Standort</span>&nbsp;&nbsp;<span id="locationText"
+          style="white-space:pre-wrap;"></span>
       </div>
     </div>
   </div>

@@ -27,13 +27,14 @@ h1 { font-size: 20px; margin: 0 0 4px; }
            letter-spacing: 0.08em; margin: 0 0 16px; }
 .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
 .field label { font-size: 12px; color: var(--muted); }
-.field input, .field select {
+.field input, .field select, .field textarea {
   background: rgba(0,0,0,0.4); color: var(--text); border: 1px solid var(--border);
   border-radius: 10px; padding: 9px 12px; font-family: var(--mono); font-size: 14px;
   width: 100%;
 }
+.field textarea { resize: vertical; min-height: 44px; max-height: 84px; line-height: 1.5; }
 .field input:disabled { opacity: 0.4; cursor: not-allowed; }
-.field input:focus { outline: none; border-color: var(--accent); }
+.field input:focus, .field textarea:focus { outline: none; border-color: var(--accent); }
 .row-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .btn { display: inline-flex; align-items: center; justify-content: center;
        padding: 10px 20px; border-radius: 12px; border: 1px solid var(--border);
@@ -100,9 +101,9 @@ _HTML = """<!doctype html>
     </p>
     <div class="field">
       <label>Standort / Beschreibung</label>
-      <input id="deviceLocation" type="text"
-             placeholder="z.B. Regie Studio 3, Rack B, Position 4"
-             maxlength="500"/>
+      <textarea id="deviceLocation" rows="3"
+                placeholder="z.B. Regie Studio 3, Rack B, Position 4"
+                maxlength="500"></textarea>
     </div>
     <button class="btn btn-primary" id="btnSaveLocation">Speichern</button>
     <div class="msg" id="msgLocation"></div>
