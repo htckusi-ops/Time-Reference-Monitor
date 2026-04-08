@@ -211,6 +211,21 @@ def ui_html() -> str:
           <div class="kv-k">Frequency</div><div class="kv-v" id="ntpFreqLine">—</div>
         </div>
       </div>
+
+      <div class="hr"></div>
+      <h3 style="margin-bottom:8px;">LTC</h3>
+      <div class="kv2">
+        <div class="kv">
+          <div class="kv-k">Timecode</div><div class="kv-v" id="ltcTcLine">—</div>
+          <div class="kv-k">Frame rate</div><div class="kv-v" id="ltcFpsLine">—</div>
+          <div class="kv-k">ALSA delay</div><div class="kv-v" id="ltcAlsaLine">—</div>
+          <div class="kv-k">Update age</div><div class="kv-v" id="ltcAgeLine">—</div>
+        </div>
+        <div class="kv">
+          <div class="kv-k">User bits</div><div class="kv-v" id="ltcUbLine">—</div>
+          <div class="kv-k">LTC date</div><div class="kv-v" id="ltcDateLine">—</div>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -523,6 +538,14 @@ function renderLedMeter(ledPeak){{
     if(!ltc.enabled) {{ ltcStat.className = 'timeStatus muted'; ltcStat.textContent = 'disabled'; }}
     else if(ltc.present) {{ ltcStat.className = 'timeStatus ok'; ltcStat.textContent = 'present' + (ltc.fps ? ' '+ltc.fps+'fps' : ''); }}
     else {{ ltcStat.className = 'timeStatus warn'; ltcStat.textContent = 'absent'; }}
+
+    // LTC status section
+    els('ltcTcLine').textContent    = tc;
+    els('ltcFpsLine').textContent   = fps;
+    els('ltcAlsaLine').textContent  = (ltc.alsa_delay_ms != null) ? ltc.alsa_delay_ms.toFixed(1) + ' ms' : '—';
+    els('ltcAgeLine').textContent   = age;
+    els('ltcUbLine').textContent    = ltc.user_bits  || '—';
+    els('ltcDateLine').textContent  = ltc.ltc_date   || '—';
 
     // LTC 7-segment time (convert HH:MM:SS:FF → HH:MM:SS.CC)
     if(ltc.enabled && ltc.present && tc && tc !== '—') {{

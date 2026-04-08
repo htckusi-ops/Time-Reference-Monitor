@@ -15,6 +15,43 @@ from rolling import RollingCounter
 
 _TC_RE = re.compile(r"(?P<hh>\d{2}):(?P<mm>\d{2}):(?P<ss>\d{2}):(?P<ff>\d{2})")
 
+# ltcdump output: "HH:MM:SS:FF | n1 n2 n3 n4 n5 n6 n7 n8"  (8 nibbles 0-15)
+_UB_RE = re.compile(r"\|\s*(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})")
+
+
+def _nibbles_to_ub(n: list) -> str:
+    """Format 8 nibbles as 4 hex bytes: 'AB CD EF GH'."""
+    return " ".join(f"{(n[i] << 4 | n[i + 1]):02X}" for i in range(0, 8, 2))
+
+
+def _decode_ltc_date(nibbles: list) -> Optional[str]:
+    """
+    Try SMPTE 309M date decode from 8 user-bit nibbles (UG1..UG8).
+    UG2=year-units, UG3=year-tens, UG5=day-units, UG6=day-tens,
+    UG7=month-units, UG8[2:0]=month-tens, UG8[3]=21st-century flag.
+    Returns 'YYYY-MM-DD' or None if the nibbles don't form a valid date.
+    """
+    if len(nibbles) != 8:
+        return None
+    year_u  = nibbles[1] & 0xF
+    year_t  = nibbles[2] & 0xF
+    day_u   = nibbles[4] & 0xF
+    day_t   = nibbles[5] & 0xF
+    mon_u   = nibbles[6] & 0xF
+    mon_t   = nibbles[7] & 0x7
+    century = 2000 if (nibbles[7] >> 3) & 1 else 1900
+    year  = century + year_t * 10 + year_u
+    month = mon_t  * 10 + mon_u
+    day   = day_t  * 10 + day_u
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    try:
+        from datetime import date as _date
+        _date(year, month, day)
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    except ValueError:
+        return None
+
 
 def utc_iso_ms() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
@@ -211,11 +248,21 @@ class LTCMonitor:
                 self._alsa_probed = True
                 with self._lock:
                     self._status.alsa_delay_ms = delay
+        # Parse user bits from ltcdump line: "HH:MM:SS:FF | n1 n2 n3 n4 n5 n6 n7 n8"
+        user_bits: Optional[str] = None
+        ltc_date: Optional[str] = None
+        ub_m = _UB_RE.search(raw)
+        if ub_m:
+            nibbles = [int(ub_m.group(i)) for i in range(1, 9)]
+            user_bits = _nibbles_to_ub(nibbles)
+            ltc_date = _decode_ltc_date(nibbles)
         with self._lock:
             self._status.present = True
             self._status.timecode = tc
             self._status.last_update_utc = utc_iso_ms()
             self._status.no_ltc_since_utc = None
+            self._status.user_bits = user_bits
+            self._status.ltc_date = ltc_date
             self._status.raw = raw if self.trace else None
 
     def _run(self) -> None:
