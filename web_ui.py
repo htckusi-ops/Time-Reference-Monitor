@@ -585,8 +585,11 @@ function renderLedMeter(ledPeak){{
 
   function uiTick(){{
     // RPi system clock interpolated from last API response.
-    // Freezes when RPi goes offline; used as base for NTP and PTP corrections.
-    const srvNow = (srvBaseMs != null && srvLocalMs != null)
+    // If the backend has been unreachable longer than the stale threshold,
+    // treat srvNow as null so all time displays grey out (not just PTP badge).
+    const staleTh = (lastApi?.meta?.stale_threshold_ms ?? 2000);
+    const apiAgeMs = srvLocalMs != null ? (Date.now() - srvLocalMs) : Infinity;
+    const srvNow = (srvBaseMs != null && srvLocalMs != null && apiAgeMs <= staleTh + 500)
       ? new Date(srvBaseMs + (Date.now() - srvLocalMs))
       : null;
 
