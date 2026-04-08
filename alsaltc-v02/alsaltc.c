@@ -277,7 +277,19 @@ int main(int argc, char** argv) {
             int ff = tc.frame;
 
             if (hh != last_h || mm != last_m || ss != last_s || ff != last_f) {
-                printf("%02d:%02d:%02d:%02d\n", hh, mm, ss, ff);
+                /* Decode date from user bits (SMPTE 309M via libltc). */
+                int year_2d = (int)tc.years;
+                int month   = (int)tc.months;
+                int day     = (int)tc.days;
+                int year    = (year_2d < 70) ? 2000 + year_2d : 1900 + year_2d;
+                bool has_date = (month >= 1 && month <= 12 && day >= 1 && day <= 31);
+
+                if (has_date) {
+                    printf("%02d:%02d:%02d:%02d %04d-%02d-%02d\n",
+                           hh, mm, ss, ff, year, month, day);
+                } else {
+                    printf("%02d:%02d:%02d:%02d\n", hh, mm, ss, ff);
+                }
                 fflush(stdout);
 
                 last_h = hh; last_m = mm; last_s = ss; last_f = ff;

@@ -143,12 +143,9 @@ def ui_html() -> str:
         <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
 
         <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
-        <div class="smalltime" id="alsaDelayLine">ALSA cap. delay: —</div>
-
         <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
-        <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
 
-        <div class="smalltime muted"></div>
+        <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
         <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
       </div>
       <div class="smalltime">
@@ -298,6 +295,11 @@ def ui_html() -> str:
   let _emaDeltaLtcNtp = null;
   let _emaDeltaLtcAdj = null;
   let _emaDeltaLtcRaw = null;
+
+  // Very light EMA on 7-seg display timestamps to damp second-boundary flicker.
+  // α=0.25 at 20 ms refresh → time constant ≈ 60 ms; visually imperceptible lag.
+  let _smPtpMs = null;
+  let _smNtpMs = null;
 
   const els = (id) => document.getElementById(id);
 
@@ -643,8 +645,10 @@ function renderLedMeter(ledPeak){{
     const ntpNow = (srvNow && ntpLive) ? new Date(srvNow.getTime() + ntpOffsetMs) : null;
 
     if(ntpNow) {{
-      const nh = ntpNow.getUTCHours(), nm = ntpNow.getUTCMinutes(), ns2 = ntpNow.getUTCSeconds();
-      const ncs = Math.floor(ntpNow.getUTCMilliseconds() / 10);
+      _smNtpMs = _smNtpMs == null ? ntpNow.getTime() : 0.25 * ntpNow.getTime() + 0.75 * _smNtpMs;
+      const dispNtp = new Date(_smNtpMs);
+      const nh = dispNtp.getUTCHours(), nm = dispNtp.getUTCMinutes(), ns2 = dispNtp.getUTCSeconds();
+      const ncs = Math.floor(dispNtp.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
       els('ntpDateLine').textContent = 'NTP Date: ' + ntpNow.toISOString().slice(0,10);
       // TZ offset from RPi server (meta.tz_offset_s); falls back to browser TZ if unavailable
@@ -653,6 +657,7 @@ function renderLedMeter(ledPeak){{
       const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
       els('ntpTzLine').textContent = 'NTP TZ: UTC' + (tzOffMin>=0?'+':'-') + pad2(tzH)+':'+pad2(tzM);
     }} else {{
+      _smNtpMs = null;
       renderSevenSeg(els('ntpTimeSegs'), null);
       els('ntpDateLine').textContent = 'NTP Date: —';
       els('ntpTzLine').textContent = 'NTP TZ: —';
@@ -660,11 +665,6 @@ function renderLedMeter(ledPeak){{
 
     const ltc = lastApi ? (lastApi.ltc || {{}}) : {{}};
     const alsaDelayMs = (ltc.alsa_delay_ms != null) ? Number(ltc.alsa_delay_ms) : 0;
-
-    // ALSA delay display
-    els('alsaDelayLine').textContent = (ltc.alsa_delay_ms != null)
-      ? 'ALSA cap. delay: ' + alsaDelayMs.toFixed(1) + ' ms'
-      : 'ALSA cap. delay: —';
 
     // Δ(LTC-NTP): LTC corrected for ALSA delay vs pure NTP time
     if(ntpNow && ltc.enabled && ltc.present && ltc.timecode) {{
@@ -708,9 +708,10 @@ function renderLedMeter(ledPeak){{
       : 'PTP Date: —';
 
     if(ptpCanTick && ptpNow) {{
-      // PTP 7-segment: pure PTP grandmaster time
-      const ph = ptpNow.getUTCHours(), pm = ptpNow.getUTCMinutes(), ps = ptpNow.getUTCSeconds();
-      const pcs = Math.floor(ptpNow.getUTCMilliseconds() / 10);
+      _smPtpMs = _smPtpMs == null ? ptpNow.getTime() : 0.25 * ptpNow.getTime() + 0.75 * _smPtpMs;
+      const dispPtp = new Date(_smPtpMs);
+      const ph = dispPtp.getUTCHours(), pm = dispPtp.getUTCMinutes(), ps = dispPtp.getUTCSeconds();
+      const pcs = Math.floor(dispPtp.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
 
       // Δ(NTP-PTP) = NTP_time - PTP_time
@@ -758,6 +759,7 @@ function renderLedMeter(ledPeak){{
         els('ltcTzLine').textContent = 'System TZ (PTP): —';
       }}
     }} else {{
+      _smPtpMs = null;
       _emaDeltaNtpPtp = null; _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
       renderSevenSeg(els('ptpTimeSegs'), null);
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';

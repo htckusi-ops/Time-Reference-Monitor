@@ -15,7 +15,11 @@ from rolling import RollingCounter
 
 _TC_RE = re.compile(r"(?P<hh>\d{2}):(?P<mm>\d{2}):(?P<ss>\d{2}):(?P<ff>\d{2})")
 
-# ltcdump output: "HH:MM:SS:FF | n1 n2 n3 n4 n5 n6 n7 n8"  (8 nibbles 0-15)
+# ltcdump 0.7.0 output with -d: "HH:MM:SS:FF YYYY-MM-DD"
+# alsaltc output with date:     "HH:MM:SS:FF YYYY-MM-DD"
+_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+
+# ltcdump output without -d: "HH:MM:SS:FF | n1 n2 n3 n4 n5 n6 n7 n8"  (8 nibbles 0-15)
 _UB_RE = re.compile(r"\|\s*(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})")
 
 
@@ -179,7 +183,8 @@ class LTCMonitor:
         self.enabled = bool(enabled)
         self.device = device or "default"
         self.fps = fps or "25"
-        self.cmd = cmd or f"ltcdump -d {shlex.quote(self.device)} -f {shlex.quote(self.fps)}"
+        # ltcdump 0.7.0: -a for ALSA device, -d to decode date from user bits
+        self.cmd = cmd or f"ltcdump -a {shlex.quote(self.device)} -f {shlex.quote(self.fps)} -d"
         self.trace = bool(trace)
 
         self.dropout_timeout_ms = max(0, int(dropout_timeout_ms or 0))
@@ -248,14 +253,19 @@ class LTCMonitor:
                 self._alsa_probed = True
                 with self._lock:
                     self._status.alsa_delay_ms = delay
-        # Parse user bits from ltcdump line: "HH:MM:SS:FF | n1 n2 n3 n4 n5 n6 n7 n8"
+        # Parse date: prefer "YYYY-MM-DD" (ltcdump -d / alsaltc with date output),
+        # fall back to SMPTE 309M nibble decode from "HH:MM:SS:FF | n1..n8".
         user_bits: Optional[str] = None
         ltc_date: Optional[str] = None
-        ub_m = _UB_RE.search(raw)
-        if ub_m:
-            nibbles = [int(ub_m.group(i)) for i in range(1, 9)]
-            user_bits = _nibbles_to_ub(nibbles)
-            ltc_date = _decode_ltc_date(nibbles)
+        d_m = _DATE_RE.search(raw)
+        if d_m:
+            ltc_date = d_m.group(0)   # already "YYYY-MM-DD"
+        else:
+            ub_m = _UB_RE.search(raw)
+            if ub_m:
+                nibbles = [int(ub_m.group(i)) for i in range(1, 9)]
+                user_bits = _nibbles_to_ub(nibbles)
+                ltc_date = _decode_ltc_date(nibbles)
         with self._lock:
             self._status.present = True
             self._status.timecode = tc
