@@ -217,6 +217,41 @@ PTP- und NTP-Status werden jeweils in einem `.kv2`-Block mit je zwei `.kv`-Hälf
 
 Zeilenabstand: `gap: 6px 10px` — 6 px zwischen Zeilen, 10 px zwischen Schlüssel und Wert. Gleicher Wert in beiden Hälften für optische Konsistenz.
 
+### LTC-Status-Block
+
+Nach NTP gibt es einen dritten `kv2`-Block für den LTC-Status (gleiche Struktur wie PTP/NTP):
+
+- Linke `.kv`-Hälfte: Timecode (HH:MM:SS:FF), Frame rate, ALSA delay (ms), Update age (s)
+- Rechte `.kv`-Hälfte: User bits (rohe Hex-Bytes, z.B. `AB CD EF GH`), LTC date (`YYYY-MM-DD`, SMPTE 309M-dekodiert)
+
+**ALSA delay** wurde zuvor im Delta-Raster neben Δ(NTP-PTP) angezeigt. Es wurde in den LTC-Status-Block verschoben, wo es inhaltlich hingehört (es ist eine Eigenschaft der LTC-Capture-Pipeline, kein Zeitquellen-Delta).
+
+### Delta-Raster
+
+Das Delta-Raster zeigt vier Zeilenpaare ohne ALSA delay:
+
+| Linke Spalte | Rechte Spalte |
+|---|---|
+| NTP Date | PTP Date |
+| NTP TZ | System TZ (PTP) |
+| Δ(NTP-PTP) | Δ(LTC-NTP) |
+| Δ(LTC-PTP) adj | Δ(LTC-PTP) raw |
+
+`adj` = ALSA-Capture-Delay kompensiert; `raw` = ohne Kompensation.
+
+### EMA-Glättung
+
+Zwei EMA-Stufen verhindern nervöse Anzeigen bei schnellen Jitter-Peaks:
+
+| Ziel | α | τ bei 20 ms Refresh | Zweck |
+|------|---|---------------------|-------|
+| Delta-Werte (PTP Offset, Path Delay, Δ-Linien) | 0.05 | ~400 ms | Schnelle PTP-Jitter-Peaks mitteln ohne die Langzeit-Genauigkeit zu beeinflussen |
+| 7-Seg-Zeitstempel (PTP, NTP) | 0.25 | ~60 ms | Flackern beim Sekundenwechsel dämpfen, praktisch kein sichtbarer Lag |
+
+Die **Rohwerte** werden weiterhin unverändert für Zeitberechnungen (`ptpNow`, `ntpNow`, Δ-Formeln) verwendet. Nur die angezeigten Pixelwerte (Zahlentext in den Seg7- und Delta-Feldern) werden geglättet.
+
+Hintergrund: PTP-Offset bei kurzen Polling-Intervallen (250 ms) zeigt starke Burst-Varianz durch Netzwerk-Jitter. Ohne EMA springen die Anzeigen ständig und sind schwer lesbar. α=0.05 entspricht einem ~20-Sample-Fenster (≈ 5 s bei 250 ms Poll), was Kurzzeit-Peaks effektiv dämpft, ohne Langzeittrends zu verschleppen.
+
 ### LED-Pegel (`.ledMeter`)
 
 ```css
@@ -247,6 +282,8 @@ if status == "synced" and last_update_age_s > ntp_stale_threshold_s:
 ```
 
 `Ref time (UTC)` aus `chronyc tracking` ist der Zeitstempel der letzten erfolgreichen NTP-Referenzmessung (nicht das Abfragezeitpunkt — diese Verwechslung war ein früherer Bug, der `Update age` immer 0.0 zeigte).
+
+**Threshold-Wahl:** Chrony's adaptives Polling steigert das Poll-Intervall bei stabilem Systemclock bis auf `maxpoll=10` (= 2^10 = 1024 s ≈ 17 min). Ein Threshold unterhalb dieses Werts löst im Normalbetrieb fälschlich `stale`-Alarme aus. Der Standard-Threshold von **1200 s** liegt ca. 3 min über dem maximalen Poll-Intervall und gibt damit ausreichend Puffer, ohne Netzwerkausfälle zu spät zu erkennen.
 
 Status-Werte NTP: `synced` → `stale` → `unsynced` → `unknown`. Bei `stale` und `unsynced` graut die NTP-7-Seg-Anzeige aus (`ntpNow = null`).
 

@@ -11,7 +11,7 @@ Monitoring-Tool für Zeitreferenzen in professionellen Broadcast-Umgebungen.
 |--------|--------|---------|
 | PTP | `pmc` (linuxptp) → `offsetFromMaster` | PTP-Grandmaster-Zeit, Offset, Delay, Port-State, GM-Identity |
 | NTP | `chronyc tracking` → `System time: X slow/fast` | NTP-Referenzzeit, Synchronisationsstatus, Stratum |
-| LTC | `alsaltc` (ALSA + libltc) | Timecode HH:MM:SS:FF, Präsenz, Decode-Fehler, Sprünge, Delta zu PTP/NTP |
+| LTC | `alsaltc` (ALSA + libltc) | Timecode HH:MM:SS:FF, Präsenz, Decode-Fehler, Sprünge, Delta zu PTP/NTP, Datum (User Bits) |
 
 Alle Werte werden nur **angezeigt und bewertet** — keine Zeitdisziplinierung, kein Eingriff in laufende Dienste.
 
@@ -81,13 +81,21 @@ Zusätzliche PTP-Felder werden aus `GET TIME_PROPERTIES_DATA_SET` (via `pmc`) ge
 | Last update (Ref time UTC), Update age | RMS offset (ms) |
 | | Frequency (ppm) |
 
-**NTP-Staleness-Erkennung:** Wenn `Ref time (UTC)` länger als `--ntp-stale-threshold-s` (Standard 180 s) nicht aktualisiert wurde, wird der Status auf `stale` gesetzt — auch wenn chrony intern noch `synced` meldet. Dies erkennt Netzwerkunterbrechungen schneller als chrony selbst (chrony hat einen eigenen langen Timeout). Die NTP 7-Seg-Anzeige graut bei `stale` oder `unsynced` aus. Status-Werte: `synced` (grün) / `stale <Ns>` (gelb) / `unsynced` (rot) / `unknown` (grau).
+**NTP-Staleness-Erkennung:** Wenn `Ref time (UTC)` länger als `--ntp-stale-threshold-s` (Standard 1200 s) nicht aktualisiert wurde, wird der Status auf `stale` gesetzt — auch wenn chrony intern noch `synced` meldet. Hintergrund: chrony's adaptives Polling kann bei stabilem Systemclock bis auf `maxpoll=10` (= 2^10 = 1024 s ≈ 17 min) ansteigen. Ein Threshold unterhalb dieses Werts löst Fehlalarme während normaler Langpoll-Zyklen aus. Der Standard von 1200 s liegt ~3 min über dem maximalen Poll-Intervall. Die NTP 7-Seg-Anzeige graut bei `stale` oder `unsynced` aus. Status-Werte: `synced` (grün) / `stale <Ns>` (gelb) / `unsynced` (rot) / `unknown` (grau).
+
+**LTC-Status** (zweispaltig, nach NTP):
+
+| Linke Spalte | Rechte Spalte |
+|---|---|
+| Timecode (HH:MM:SS:FF), Frame rate, ALSA delay, Update age | User bits (Hex, z.B. `06 23 80 48`), LTC date (SMPTE 309M, z.B. `2026-04-08`) |
+
+`alsaltc` liest Datum aus libltc-`SMPTETimecode.years/months/days` (befüllt durch `ltc_frame_to_time()`) und gibt es als `HH:MM:SS:FF YYYY-MM-DD` aus — direkt verwendbar ohne weiteres Decodieren. Fallback für `ltcdump`-Nibble-Format vorhanden.
 
 **LTC-Pegel:** Kompakter LED-Bargraph (30 Segmente, −60 dBFS bis 0 dBFS) mit inline dBFS-Textanzeige rechts daneben. Farbbereiche: grün (< −18 dBFS), orange (−18 bis −6 dBFS), rot (> −6 dBFS). Peak-Hold 800 ms.
 
 **Rollende Fehlerzähler:** Alle Ereignisse (PTP_LOST, NTP_STALE, NTP_LOST, LTC_LOST, GM_CHANGED, Offset-Sprünge, Drift) fliessen in das Rolling-Error-Summary ein. Ein **Reset-Button** setzt alle Zähler sofort auf 0 zurück. Fehlerfenster konfigurierbar via `--error-window-s` (Standard 1 h).
 
-**Δ-Werte:** Δ(NTP–PTP), Δ(LTC–PTP), Δ(LTC–NTP) mit ALSA-Capture-Delay-Kompensation.
+**Δ-Werte:** Vier Paare im Delta-Raster: NTP Date / PTP Date, NTP TZ / System TZ (PTP), Δ(NTP-PTP) / Δ(LTC-NTP), Δ(LTC-PTP) adj / Δ(LTC-PTP) raw. ALSA delay wird im LTC-Status-Block angezeigt (nicht im Delta-Raster).
 
 **Ereignisprotokoll:** Alle Statusübergänge mit UTC-Timestamp, Schweregrad (INFO/WARN/ALARM) und Typ.
 
@@ -108,7 +116,7 @@ On-Demand-Werkzeug zur Diagnose des LTC-Audiosignals:
 **Analysenutzen:**
 - LTC-Signal bei 25 fps SMPTE liegt im Bereich ~600 Hz – 2,4 kHz. Das Spektrogramm zeigt sofort, ob das Signal im richtigen Frequenzband liegt
 - Rauschen (breitbandig), Netzbrumm (50/100 Hz-Peaks), oder falsche Pegel sind direkt sichtbar
-- **WAV-Download**: Die aufgenommene Audiodatei kann heruntergeladen und mit Audacity oder anderen Werkzeugen nachanalysiert werden
+- **WAV-Download und PNG-Download**: Beide Dateien werden mit Zeitstempel im Format `YYYYMMDD-HH_MM_SS_UTC-LTC_Capture.{wav,png}` benannt — so können mehrere Aufnahmen unterschieden werden, ohne Überschreiben
 - Typische Befunde: Kabeldefekt (Rauschteppich), Pegelregler falsch (zu leise → Dekodierungsfehler), Erder-Schleife (50-Hz-Brumm)
 
 ### PTP Capture (`/tcpdump`) — Protokollanalyse
@@ -184,10 +192,11 @@ Die drei Δ-Werte zeigen die tatsächlichen Beziehungen zwischen den Zeitquellen
 | Delta | Formel | Bedeutung |
 |-------|--------|-----------|
 | **Δ(NTP–PTP)** | `chrony_offset_ms + ptp_offset_ms` | Differenz zwischen NTP-Referenzzeit und PTP-Grandmaster |
-| **Δ(LTC–PTP)** | `ltc_s − ptp_s − alsa_delay_ms/1000` | LTC-Generator vs. PTP-Grandmaster, Capture-Delay kompensiert |
+| **Δ(LTC–PTP) adj** | `ltc_s − ptp_s − alsa_delay_ms/1000` | LTC-Generator vs. PTP-Grandmaster, Capture-Delay kompensiert |
+| **Δ(LTC–PTP) raw** | `ltc_s − ptp_s` | LTC vs. PTP ohne Delay-Kompensation |
 | **Δ(LTC–NTP)** | `ltc_s − ntp_s − alsa_delay_ms/1000` | LTC-Generator vs. NTP-Referenz, Capture-Delay kompensiert |
 
-Die ALSA-Capture-Latenz (`alsa_delay_ms`) wird automatisch beim ersten LTC-Frame gemessen (`period_size / sample_rate`) und von allen LTC-Deltas subtrahiert.
+Die ALSA-Capture-Latenz (`alsa_delay_ms`) wird automatisch beim ersten LTC-Frame gemessen (`period_size / sample_rate`) und von den kompensierten LTC-Deltas subtrahiert. Der Wert wird im LTC-Status-Block angezeigt (nicht mehr im Delta-Raster).
 
 ---
 
@@ -242,7 +251,13 @@ apt install libasound2-dev libltc-dev gcc make pkg-config
 cd alsaltc-v02 && make && sudo make install
 ```
 
-Der vorkompilierte `alsaltc`-Binary im Repository-Root ist für **x86_64**. Auf dem Raspberry Pi immer aus den Quellen kompilieren.
+Der vorkompilierte `alsaltc`-Binary im Repository-Root ist für **x86_64** und gibt **kein Datum** aus (veralteter Build). Für die Datum-Dekodierung aus User Bits (SMPTE 309M) muss `alsaltc` auf dem RPi neu kompiliert werden:
+
+```bash
+cd alsaltc-v02 && make && sudo make install
+```
+
+`setup.sh` kompiliert `alsaltc` automatisch beim Deployment — manuelles Neubauen ist nur nötig, wenn `alsaltc` nach einem Update des Source-Codes aktualisiert werden soll.
 
 ### ALSA-Capture-Delay
 
@@ -256,7 +271,7 @@ Falls der Wert beim Start `—` zeigt (Gerät war beim Booten noch nicht bereit)
 |-----------|----------|-----------|
 | `--poll` | 0.5 s | PTP-Abfrageintervall (`pmc`) |
 | `--ntp-refresh-s` | 0.25 s | Wie oft `chronyc tracking` gelesen wird (unabhängig von chrony's eigenem NTP-Poll-Zyklus von 64–1024 s) |
-| `--ntp-stale-threshold-s` | 180 s | Ab welchem Alter von `Ref time (UTC)` NTP als `stale` gilt. Niedrigerer Wert = schnellere Netzwerkausfall-Erkennung |
+| `--ntp-stale-threshold-s` | 1200 s | Ab welchem Alter von `Ref time (UTC)` NTP als `stale` gilt. Chrony's adaptives Polling kann bis auf `maxpoll=10` (1024 s ≈ 17 min) ansteigen; der Threshold muss darüber liegen. 1200 s = ~3 min Puffer über dem maximalen Poll-Intervall |
 | `--error-window-s` | 3600 s | Zeitfenster für rollende Fehlerzähler |
 | `--gm-window-s` | 172800 s | Zeitfenster für GM-Wechsel-Zähler (48 h) |
 | `--stale-threshold-ms` | 2000 ms | Wie lange ohne frische API-Antwort bis Dashboard-Status auf ALARM wechselt |
