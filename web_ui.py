@@ -135,10 +135,7 @@ def ui_html() -> str:
       </div>
 
 <div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
-      <div class="delta-grid">
-        <div class="smalltime" id="ntpDateLine">NTP Date: —</div>
-        <div class="smalltime" id="ptpDateLine">PTP Date: —</div>
-      </div>
+      <div class="smalltime" id="dateLine" style="margin:4px 0 8px;">Date  NTP: — | PTP: — | LTC: —</div>
       <div class="hr"></div>
       <h3 style="margin-bottom:8px;">PTP</h3>
       <div class="kv2">
@@ -204,7 +201,6 @@ def ui_html() -> str:
         </div>
         <div class="kv">
           <div class="kv-k">User bits</div><div class="kv-v" id="ltcUbLine">—</div>
-          <div class="kv-k">LTC date</div><div class="kv-v" id="ltcDateLine">—</div>
         </div>
       </div>
     </div>
@@ -300,6 +296,13 @@ def ui_html() -> str:
   // α=0.25 at 20 ms refresh → time constant ≈ 60 ms; visually imperceptible lag.
   let _smPtpMs = null;
   let _smNtpMs = null;
+
+  // Combined date line state (NTP / PTP / LTC)
+  let _dateNtp = '—', _datePtp = '—', _dateLtc = '—';
+  function _updDate() {{
+    const d = els('dateLine');
+    if (d) d.textContent = 'Date  NTP: ' + _dateNtp + '  |  PTP: ' + _datePtp + '  |  LTC: ' + _dateLtc;
+  }}
 
   const els = (id) => document.getElementById(id);
 
@@ -546,8 +549,8 @@ function renderLedMeter(ledPeak){{
     els('ltcFpsLine').textContent   = fps;
     els('ltcAlsaLine').textContent  = (ltc.alsa_delay_ms != null) ? ltc.alsa_delay_ms.toFixed(1) + ' ms' : '—';
     els('ltcAgeLine').textContent   = age;
-    els('ltcUbLine').textContent    = ltc.user_bits  || '—';
-    els('ltcDateLine').textContent  = ltc.ltc_date   || '—';
+    els('ltcUbLine').textContent = ltc.user_bits || '—';
+    _dateLtc = ltc.ltc_date || '—'; _updDate();
 
     // LTC 7-segment time (convert HH:MM:SS:FF → HH:MM:SS.CC)
     if(ltc.enabled && ltc.present && tc && tc !== '—') {{
@@ -587,10 +590,9 @@ function renderLedMeter(ledPeak){{
     else if(ageMs > staleTh) {{ ptpStat.className = 'timeStatus alarm'; ptpStat.textContent = 'STALE DATA'; }}
     else {{ ptpStat.className = 'timeStatus ok'; ptpStat.textContent = 'SYNC OK'; }}
 
-    // PTP date
-    els('ptpDateLine').textContent = (st.ptp_valid && st.ptp_time_utc_iso)
-      ? 'PTP Date: ' + st.ptp_time_utc_iso.slice(0,10)
-      : 'PTP Date: —';
+    // PTP date (combined date line)
+    _datePtp = (st.ptp_valid && st.ptp_time_utc_iso) ? st.ptp_time_utc_iso.slice(0,10) : '—';
+    _updDate();
 
     ptpCanTick = canTick;
 
@@ -650,7 +652,7 @@ function renderLedMeter(ledPeak){{
       const nh = dispNtp.getUTCHours(), nm = dispNtp.getUTCMinutes(), ns2 = dispNtp.getUTCSeconds();
       const ncs = Math.floor(dispNtp.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
-      els('ntpDateLine').textContent = 'NTP Date: ' + ntpNow.toISOString().slice(0,10);
+      _dateNtp = ntpNow.toISOString().slice(0,10); _updDate();
       // TZ offset from RPi server (meta.tz_offset_s); falls back to browser TZ if unavailable
       const srvTzOffS = meta.tz_offset_s != null ? meta.tz_offset_s : null;
       const tzOffMin = srvTzOffS != null ? Math.round(srvTzOffS / 60) : -srvNow.getTimezoneOffset();
@@ -659,7 +661,7 @@ function renderLedMeter(ledPeak){{
     }} else {{
       _smNtpMs = null;
       renderSevenSeg(els('ntpTimeSegs'), null);
-      els('ntpDateLine').textContent = 'NTP Date: —';
+      _dateNtp = '—'; _updDate();
       els('ntpTzLine').textContent = 'NTP TZ: —';
     }}
 
@@ -686,7 +688,7 @@ function renderLedMeter(ledPeak){{
 
     if(!lastApi) {{
       renderSevenSeg(els('ptpTimeSegs'), null);
-      els('ptpDateLine').textContent = 'PTP Date: —';
+      _datePtp = '—'; _updDate();
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
@@ -703,9 +705,8 @@ function renderLedMeter(ledPeak){{
       : 0;
     const ptpNow = srvNow ? new Date(srvNow.getTime() + ptpDeltaMs) : null;
 
-    els('ptpDateLine').textContent = (st.ptp_valid && st.ptp_time_utc_iso)
-      ? 'PTP Date: ' + st.ptp_time_utc_iso.slice(0,10)
-      : 'PTP Date: —';
+    _datePtp = (st.ptp_valid && st.ptp_time_utc_iso) ? st.ptp_time_utc_iso.slice(0,10) : '—';
+    _updDate();
 
     if(ptpCanTick && ptpNow) {{
       _smPtpMs = _smPtpMs == null ? ptpNow.getTime() : 0.25 * ptpNow.getTime() + 0.75 * _smPtpMs;
