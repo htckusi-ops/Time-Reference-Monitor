@@ -138,23 +138,7 @@ def ui_html() -> str:
       <div class="delta-grid">
         <div class="smalltime" id="ntpDateLine">NTP Date: —</div>
         <div class="smalltime" id="ptpDateLine">PTP Date: —</div>
-
-        <div class="smalltime" id="ntpTzLine">NTP TZ: —</div>
-        <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
-
-        <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
-        <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
-
-        <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
-        <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
       </div>
-      <div class="smalltime">
-      LTC Audio Level ({config.LTC_ALSA_DEVICE})
-        </div>
-        <div class="ledWrap">
-          <div id="ltcLedMeter" class="ledMeter"></div>
-          <div id="ltcLevelText" class="ledText">—</div>
-        </div>
       <div class="hr"></div>
       <h3 style="margin-bottom:8px;">PTP</h3>
       <div class="kv2">
@@ -226,6 +210,22 @@ def ui_html() -> str:
     </div>
 
     <div class="card">
+      <div class="delta-grid" style="margin-bottom:6px;">
+        <div class="smalltime" id="ntpTzLine">NTP TZ: —</div>
+        <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
+
+        <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
+        <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
+
+        <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
+        <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
+      </div>
+      <div class="smalltime">LTC Audio Level ({config.LTC_ALSA_DEVICE})</div>
+      <div class="ledWrap">
+        <div id="ltcLedMeter" class="ledMeter"></div>
+        <div id="ltcLevelText" class="ledText">—</div>
+      </div>
+      <div class="hr"></div>
       <div class="split">
         <h3>Rolling Error Summary</h3>
         <div class="row">
