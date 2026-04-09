@@ -571,24 +571,33 @@ function renderLedMeter(ledPeak){{
     els('ltcDateLine').textContent = ltc.ltc_date || '—';
     _dateLtc = ltc.ltc_date || '—'; _updDate();
 
-    // Infer LTC timezone: ltc_date + timecode treated as UTC, minus PTP UTC → offset.
-    // Requires ltc_date (from alsaltc-v02 or ltcdump -d) AND valid PTP.
+    // LTC timezone: direct from ltcdump -F (±HHMM), or infer from date vs PTP UTC.
     _ltcInferredTzMs = null;
-    if (ltc.ltc_date && ltc.timecode && st.ptp_valid && st.ptp_time_utc_iso) {{
+    if (ltc.ltc_tz) {{
+      // ltcdump -F supplies timezone directly as "±HHMM", e.g. "+0100"
+      const tzSign = ltc.ltc_tz.charAt(0) === '+' ? 1 : -1;
+      const tzH = parseInt(ltc.ltc_tz.slice(1, 3), 10);
+      const tzM = parseInt(ltc.ltc_tz.slice(3, 5), 10);
+      _ltcInferredTzMs = tzSign * (tzH * 3600000 + tzM * 60000);
+      els('ltcInferredTzLine').textContent = 'UTC' + ltc.ltc_tz.charAt(0) + pad2(tzH) + ':' + pad2(tzM);
+    }} else if (ltc.ltc_date && ltc.timecode && st.ptp_valid && st.ptp_time_utc_iso) {{
+      // Fallback: infer offset by treating LTC date+time as UTC, subtract PTP UTC.
       const _tm = ltc.timecode.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}})/);
       if (_tm) {{
         const ltcAsUtcMs = new Date(ltc.ltc_date + 'T' + _tm[1] + ':' + _tm[2] + ':' + _tm[3] + '.000Z').getTime();
         const ptpUtcMs   = new Date(st.ptp_time_utc_iso).getTime();
-        let raw = ltcAsUtcMs - ptpUtcMs;
-        while (raw < -12 * 3600000) raw += 86400000;  // normalise to [-12h, +14h]
-        while (raw >  14 * 3600000) raw -= 86400000;
-        _ltcInferredTzMs = Math.round(raw / 900000) * 900000;  // round to 15 min
+        let diff = ltcAsUtcMs - ptpUtcMs;
+        while (diff < -12 * 3600000) diff += 86400000;
+        while (diff >  14 * 3600000) diff -= 86400000;
+        _ltcInferredTzMs = Math.round(diff / 900000) * 900000;
       }}
-    }}
-    if (_ltcInferredTzMs !== null) {{
-      const _s = _ltcInferredTzMs >= 0 ? '+' : '-';
-      const _a = Math.abs(_ltcInferredTzMs);
-      els('ltcInferredTzLine').textContent = 'UTC' + _s + pad2(Math.floor(_a/3600000)) + ':' + pad2(Math.floor((_a%3600000)/60000));
+      if (_ltcInferredTzMs !== null) {{
+        const _s = _ltcInferredTzMs >= 0 ? '+' : '-';
+        const _a = Math.abs(_ltcInferredTzMs);
+        els('ltcInferredTzLine').textContent = 'UTC' + _s + pad2(Math.floor(_a/3600000)) + ':' + pad2(Math.floor((_a%3600000)/60000));
+      }} else {{
+        els('ltcInferredTzLine').textContent = '—';
+      }}
     }} else {{
       els('ltcInferredTzLine').textContent = '—';
     }}

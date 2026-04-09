@@ -70,6 +70,7 @@ class LTCStatus:
     alsa_delay_ms: Optional[float] = None   # ALSA capture buffer latency (probed at startup)
     user_bits: Optional[str] = None         # raw user bits as "AB CD EF GH" (4 bytes hex)
     ltc_date: Optional[str] = None          # SMPTE 309M decoded date as "YYYY-MM-DD", or None
+    ltc_tz: Optional[str] = None            # timezone from ltcdump -F as "±HHMM", e.g. "+0100", or None
     raw: Optional[str] = None
 
 
