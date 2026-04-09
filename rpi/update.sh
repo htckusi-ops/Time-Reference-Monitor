@@ -56,17 +56,26 @@ info "Updating Python dependencies…"
 sudo -u "$APP_USER" "${INSTALL_DIR}/venv/bin/pip" install -q --upgrade pip
 sudo -u "$APP_USER" "${INSTALL_DIR}/venv/bin/pip" install -q -r "${INSTALL_DIR}/requirements.txt"
 
-# ── 4. Recompile alsaltc if source changed ────────────────────────────────────
+# ── 4. Recompile alsaltc if source changed (hash-based) ──────────────────────
+# Hash-based check: timestamp comparison is unreliable after git clone/pull.
+# The hash file records which source version is currently installed.
 ALSALTC_SRC="${REPO_DIR}/alsaltc-v02/alsaltc.c"
 ALSALTC_BIN="/usr/local/bin/alsaltc"
-if [ "$ALSALTC_SRC" -nt "$ALSALTC_BIN" ] 2>/dev/null || [ ! -f "$ALSALTC_BIN" ]; then
-    info "alsaltc source is newer than installed binary – recompiling…"
+ALSALTC_HASH_FILE="${DATA_DIR}/.alsaltc_src_hash"
+mkdir -p "$DATA_DIR"
+
+src_hash=$(sha256sum "$ALSALTC_SRC" | cut -d' ' -f1)
+inst_hash=$(cat "$ALSALTC_HASH_FILE" 2>/dev/null || echo "")
+
+if [ "$src_hash" != "$inst_hash" ] || [ ! -f "$ALSALTC_BIN" ]; then
+    info "alsaltc source changed or binary missing – recompiling…"
     make -C "${REPO_DIR}/alsaltc-v02" clean
     make -C "${REPO_DIR}/alsaltc-v02"
     install -m 0755 "${REPO_DIR}/alsaltc-v02/alsaltc" "$ALSALTC_BIN"
-    info "alsaltc reinstalled to ${ALSALTC_BIN}"
+    echo "$src_hash" > "$ALSALTC_HASH_FILE"
+    info "alsaltc installed to ${ALSALTC_BIN}"
 else
-    info "alsaltc is up to date – skipping recompile."
+    info "alsaltc unchanged (hash match) – skipping recompile."
 fi
 
 # ── 5. systemd service files ──────────────────────────────────────────────────

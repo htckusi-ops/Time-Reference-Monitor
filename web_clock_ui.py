@@ -148,6 +148,19 @@ def ltc_clock_html() -> str:
       pointer-events:none;
     }}
 
+    .clock.no-signal {{
+      color: rgba(159,176,200,.22);
+    }}
+    .status-msg {{
+      position: fixed;
+      bottom: 28px; left: 0; right: 0;
+      text-align: center;
+      color: rgba(159,176,200,.45);
+      font-family: var(--mono);
+      font-size: 13px;
+      pointer-events:none;
+    }}
+
     /* very subtle hover reveal if you want it “dezent” */
     body.hideMenus .menu {{ opacity: .25; }}
     body.hideMenus .menu:hover {{ opacity: 1; }}
@@ -201,12 +214,25 @@ def ltc_clock_html() -> str:
   </div>
 
   <div class="hint">LTC device: {config.LTC_ALSA_DEVICE}</div>
+  <div class="status-msg" id="statusMsg"></div>
 
 <script>
 (() => {{
   const el = (id)=>document.getElementById(id);
 
   const clk = el('clk');
+  const statusMsg = el('statusMsg');
+
+  function setNoSignal(msg) {{
+    clk.textContent = '--:--:--';
+    clk.classList.add('no-signal');
+    if (statusMsg) statusMsg.textContent = msg || '';
+  }}
+  function setSignal(text) {{
+    clk.textContent = text;
+    clk.classList.remove('no-signal');
+    if (statusMsg) statusMsg.textContent = '';
+  }}
   const box = el('box');
   const colorSel = el('colorSel');
   const widthSel = el('widthSel');
@@ -257,38 +283,39 @@ const FONT_MAP = {font_map_json};
 function tick(){{
   const src = srcSel ? srcSel.value : 'ltc';
 
-    if(src === 'ltc'){{
-      const present = lastApi?.ltc?.present;
-      const tc = lastApi?.ltc?.timecode;
-      if(!present || !tc){{
-        clk.textContent = 'NO LTC';
-        return;
-      }}
-      const hms = parseTcToHMS(tc);
-      clk.textContent = hms ? fmtHMS(hms.h, hms.m, hms.s) : 'NO LTC';
-      return;
-    }}
-
-  // 2) PTP (UTC ISO aus status)
-  if(src === 'ptp'){{
-    const iso = lastApi?.status?.ptp_time_utc_iso;
-    if(!iso){{
-      clk.textContent = '';
-      return;
-    }}
-    const d = new Date(iso);
-    clk.textContent = fmtHMS(d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+  if (!lastApi) {{
+    setNoSignal('Warte auf Daten…');
     return;
   }}
 
-  // 3) Local (Browser)
+  if(src === 'ltc'){{
+    const enabled = lastApi?.ltc?.enabled;
+    const present = lastApi?.ltc?.present;
+    const tc = lastApi?.ltc?.timecode;
+    if(!enabled) {{ setNoSignal('LTC nicht aktiv'); return; }}
+    if(!present || !tc) {{ setNoSignal('LTC kein Signal'); return; }}
+    const hms = parseTcToHMS(tc);
+    if(!hms) {{ setNoSignal('LTC kein Signal'); return; }}
+    setSignal(fmtHMS(hms.h, hms.m, hms.s));
+    return;
+  }}
+
+  if(src === 'ptp'){{
+    const valid = lastApi?.status?.ptp_valid;
+    const iso = lastApi?.status?.ptp_time_utc_iso;
+    if(!valid || !iso) {{ setNoSignal('Kein PTP-Sync'); return; }}
+    const d = new Date(iso);
+    setSignal(fmtHMS(d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()));
+    return;
+  }}
+
   if(src === 'local'){{
     const d = new Date();
-    clk.textContent = fmtHMS(d.getHours(), d.getMinutes(), d.getSeconds());
+    setSignal(fmtHMS(d.getHours(), d.getMinutes(), d.getSeconds()));
     return;
   }}
 
-  clk.textContent = '';
+  setNoSignal('');
 }}
 
 

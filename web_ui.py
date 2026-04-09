@@ -194,13 +194,14 @@ def ui_html() -> str:
       <h3 style="margin-bottom:8px;">LTC</h3>
       <div class="kv2">
         <div class="kv">
-          <div class="kv-k">Timecode</div><div class="kv-v" id="ltcTcLine">—</div>
+          <div class="kv-k">Timecode (raw)</div><div class="kv-v" id="ltcTcLine">—</div>
           <div class="kv-k">Frame rate</div><div class="kv-v" id="ltcFpsLine">—</div>
           <div class="kv-k">ALSA delay</div><div class="kv-v" id="ltcAlsaLine">—</div>
           <div class="kv-k">Update age</div><div class="kv-v" id="ltcAgeLine">—</div>
         </div>
         <div class="kv">
-          <div class="kv-k">User bits</div><div class="kv-v" id="ltcUbLine">—</div>
+          <div class="kv-k">Date</div><div class="kv-v" id="ltcDateLine">—</div>
+          <div class="kv-k">Timezone</div><div class="kv-v" id="ltcInferredTzLine">—</div>
         </div>
       </div>
     </div>
@@ -303,6 +304,10 @@ def ui_html() -> str:
   // α=0.25 at 20 ms refresh → time constant ≈ 60 ms; visually imperceptible lag.
   let _smPtpMs = null;
   let _smNtpMs = null;
+
+  // LTC timezone inferred from ltc_date vs PTP UTC (ms offset, null = unknown).
+  // Rounded to nearest 15 min. When set, 7-seg shows UTC = LTC_local - TZ.
+  let _ltcInferredTzMs = null;
 
   // Combined date line state (NTP / PTP / LTC)
   let _dateNtp = '—', _datePtp = '—', _dateLtc = '—';
@@ -558,20 +563,50 @@ function renderLedMeter(ledPeak){{
     else {{ ltcStat.className = 'timeStatus warn'; ltcStat.textContent = 'absent'; }}
 
     // LTC status section
-    els('ltcTcLine').textContent    = tc;
-    els('ltcFpsLine').textContent   = fps;
-    els('ltcAlsaLine').textContent  = (ltc.alsa_delay_ms != null) ? ltc.alsa_delay_ms.toFixed(1) + ' ms' : '—';
-    els('ltcAgeLine').textContent   = age;
-    els('ltcUbLine').textContent = ltc.user_bits || '—';
+    els('ltcTcLine').textContent   = tc;
+    els('ltcFpsLine').textContent  = fps;
+    els('ltcAlsaLine').textContent = (ltc.alsa_delay_ms != null) ? ltc.alsa_delay_ms.toFixed(1) + ' ms' : '—';
+    els('ltcAgeLine').textContent  = age;
+    els('ltcDateLine').textContent = ltc.ltc_date || '—';
     _dateLtc = ltc.ltc_date || '—'; _updDate();
 
-    // LTC 7-segment time (convert HH:MM:SS:FF → HH:MM:SS.CC)
+    // Infer LTC timezone: ltc_date + timecode treated as UTC, minus PTP UTC → offset.
+    // Requires ltc_date (from alsaltc-v02 or ltcdump -d) AND valid PTP.
+    _ltcInferredTzMs = null;
+    if (ltc.ltc_date && ltc.timecode && st.ptp_valid && st.ptp_time_utc_iso) {{
+      const _tm = ltc.timecode.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}})/);
+      if (_tm) {{
+        const ltcAsUtcMs = new Date(ltc.ltc_date + 'T' + _tm[1] + ':' + _tm[2] + ':' + _tm[3] + '.000Z').getTime();
+        const ptpUtcMs   = new Date(st.ptp_time_utc_iso).getTime();
+        let raw = ltcAsUtcMs - ptpUtcMs;
+        while (raw < -12 * 3600000) raw += 86400000;  // normalise to [-12h, +14h]
+        while (raw >  14 * 3600000) raw -= 86400000;
+        _ltcInferredTzMs = Math.round(raw / 900000) * 900000;  // round to 15 min
+      }}
+    }}
+    if (_ltcInferredTzMs !== null) {{
+      const _s = _ltcInferredTzMs >= 0 ? '+' : '-';
+      const _a = Math.abs(_ltcInferredTzMs);
+      els('ltcInferredTzLine').textContent = 'UTC' + _s + pad2(Math.floor(_a/3600000)) + ':' + pad2(Math.floor((_a%3600000)/60000));
+    }} else {{
+      els('ltcInferredTzLine').textContent = '—';
+    }}
+
+    // LTC 7-segment: if TZ known → show UTC equivalent; otherwise raw timecode.
     if(ltc.enabled && ltc.present && tc && tc !== '—') {{
       const tcm = tc.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}}):(\d{{2}})$/);
       if(tcm) {{
         const fpsN = Number(ltc.fps) || 25;
         const cs = Math.min(99, Math.round(Number(tcm[4]) / fpsN * 100));
-        renderSevenSeg(els('ltcTimeSegs'), tcm[1]+':'+tcm[2]+':'+tcm[3]+'.'+pad2(cs));
+        if (_ltcInferredTzMs !== null) {{
+          const lMs = parseInt(tcm[1])*3600000 + parseInt(tcm[2])*60000 + parseInt(tcm[3])*1000;
+          const uMs = ((lMs - _ltcInferredTzMs) % 86400000 + 86400000) % 86400000;
+          renderSevenSeg(els('ltcTimeSegs'),
+            pad2(Math.floor(uMs/3600000))+':'+pad2(Math.floor((uMs%3600000)/60000))+':'+
+            pad2(Math.floor((uMs%60000)/1000))+'.'+pad2(cs));
+        }} else {{
+          renderSevenSeg(els('ltcTimeSegs'), tcm[1]+':'+tcm[2]+':'+tcm[3]+'.'+pad2(cs));
+        }}
       }} else {{ renderSevenSeg(els('ltcTimeSegs'), null); }}
     }} else {{ renderSevenSeg(els('ltcTimeSegs'), null); }}
 
