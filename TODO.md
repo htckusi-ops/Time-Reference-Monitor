@@ -20,6 +20,9 @@ Die folgenden Features wurden seit Erstellung dieses TODO-Dokuments implementier
 - **Rolling-Counter-Bug-Fix**: `update_ptp/ntp/ltc` erzeugten Events direkt mit `appendleft()` an `add_event()` vorbei → Zähler immer 0; Fix: `_append_event_locked()` zentralisiert Append + Counter-Update
 - **Reset-Button Rolling Error Summary**: `POST /api/reset-summaries` → alle Rolling-Counter und Summaries auf 0
 - **LED-Pegel halbiert + inline**: LED-Grösse 10×18 → 5×9 px; `inline-flex` statt `flex` (Container schrumpft auf LED-Breite); dBFS-Text rechts neben dem Meter auf einer Linie
+- **LTC Raw Output** (`web_ltc_raw.py`, `/ltc-raw`): Live-Terminal für Decoder-Rohausgabe, Ring-Buffer 500 Zeilen, Pause/Resume (Zeilen gehen nicht verloren), Clear-Button; `/api/ltc/raw-lines?since=N` poll-basiertes Streaming; Timestamp + Farb-Highlighting (Timecode blau, Datum grün, NO_LTC rot)
+- **LTC Datum + Timezone + User Bits**: `alsaltc` dekodiert via `LTC_USE_DATE`; Ausgabeformat `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD`; `LTCStatus.ltc_tz` neu; Web-UI zeigt Timezone-Zeile (direkt aus User Bits); User-Bits-Zeile (`64 26 04 08`) in LTC-Statusblock
+- **4-stufige Parser-Kette** in `sources_ltc.py`: `_LTCDUMP_F_RE` (date+tz+optional UB) → `_LTCDUMP_F_UB_RE` (UB vor TC) → `_DATE_RE` → `_UB_RE` (Nibbles) → `_UB_TAIL_RE` (Fallback UB am Zeilenende)
 
 ---
 

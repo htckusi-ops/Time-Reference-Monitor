@@ -16,9 +16,11 @@ from rolling import RollingCounter
 
 _TC_RE = re.compile(r"(?P<hh>\d{2}):(?P<mm>\d{2}):(?P<ss>\d{2}):(?P<ff>\d{2})")
 
-# ltcdump -F output: "YYYY-MM-DD ±HHMM HH:MM:SS:FF | pos pos"
+# ltcdump -F -d output: "YYYY-MM-DD ±HHMM HH:MM:SS:FF | pos pos"
+# alsaltc output:       "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD"
 # This is the preferred format — includes date AND timezone directly.
-_LTCDUMP_F_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+([+-]\d{4})\s+(\d{2}:\d{2}:\d{2}:\d{2})")
+# Group 4 (optional): raw user bits as 8 hex nibbles (alsaltc only).
+_LTCDUMP_F_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+([+-]\d{4})\s+(\d{2}:\d{2}:\d{2}:\d{2})(?:\s+([0-9A-Fa-f]{8}))?")
 
 # ltcdump -F output WITHOUT -d: "AABBCCDD HH:MM:SS:FF | pos pos"
 # 8 hex nibbles (4 bytes) before the timecode — user bits in raw hex.
@@ -30,6 +32,10 @@ _DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 
 # ltcdump output without -d: "HH:MM:SS:FF | n1 n2 n3 n4 n5 n6 n7 n8"  (8 nibbles 0-15)
 _UB_RE = re.compile(r"\|\s*(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})")
+
+# alsaltc appends 8 hex nibbles at end of every line: "... AABBCCDD"
+# Used as fallback when no other pattern captured user bits.
+_UB_TAIL_RE = re.compile(r"\s([0-9A-Fa-f]{8})\s*$")
 
 
 def _nibbles_to_ub(n: list) -> str:
@@ -277,14 +283,18 @@ class LTCMonitor:
                 with self._lock:
                     self._status.alsa_delay_ms = delay
         # Parse date + timezone + raw user bits, tried in order:
-        # 1. ltcdump -d -F / fixed alsaltc: "YYYY-MM-DD ±HHMM HH:MM:SS:FF | ..."
-        #    → date + tz directly from decoded output
+        # 1. alsaltc (full):   "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD"
+        #    ltcdump -d -F:    "YYYY-MM-DD ±HHMM HH:MM:SS:FF | pos pos"
+        #    → date + tz; user bits from group 4 if present (alsaltc only)
         # 2. ltcdump -F (no -d):  "AABBCCDD HH:MM:SS:FF | pos pos"
         #    → raw hex user bits; decode date via SMPTE 309M nibble mapping
         # 3. ltcdump -d (no -F) / old alsaltc: "HH:MM:SS:FF YYYY-MM-DD"
-        #    → date only
+        #    alsaltc (date, no tz):             "HH:MM:SS:FF YYYY-MM-DD AABBCCDD"
+        #    → date; user bits from _UB_TAIL_RE fallback below
         # 4. old ltcdump (no -F, no -d): "HH:MM:SS:FF | n1 n2 ... n8"
         #    → 8 decimal nibbles; decode date via SMPTE 309M nibble mapping
+        # 5. alsaltc (no date): "HH:MM:SS:FF AABBCCDD"
+        #    → user bits from _UB_TAIL_RE fallback below
         user_bits: Optional[str] = None
         ltc_date: Optional[str] = None
         ltc_tz: Optional[str] = None
@@ -292,6 +302,9 @@ class LTCMonitor:
         if f_m:
             ltc_date = f_m.group(1)   # "YYYY-MM-DD"
             ltc_tz   = f_m.group(2)   # "±HHMM"
+            if f_m.group(4):          # user bits appended by alsaltc
+                hex_ub = f_m.group(4)
+                user_bits = " ".join(hex_ub[i:i+2].upper() for i in range(0, 8, 2))
         else:
             fub_m = _LTCDUMP_F_UB_RE.match(raw)
             if fub_m:
@@ -309,6 +322,13 @@ class LTCMonitor:
                         nibbles = [int(ub_m.group(i)) for i in range(1, 9)]
                         user_bits = _nibbles_to_ub(nibbles)
                         ltc_date = _decode_ltc_date(nibbles)
+        # Fallback: alsaltc appends user bits as trailing "AABBCCDD" on every line.
+        # Catches "HH:MM:SS:FF AABBCCDD" and "HH:MM:SS:FF YYYY-MM-DD AABBCCDD".
+        if user_bits is None:
+            tail_m = _UB_TAIL_RE.search(raw)
+            if tail_m:
+                hex_ub = tail_m.group(1)
+                user_bits = " ".join(hex_ub[i:i+2].upper() for i in range(0, 8, 2))
         with self._lock:
             self._status.present = True
             self._status.timecode = tc

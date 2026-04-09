@@ -11,7 +11,7 @@ Monitoring-Tool für Zeitreferenzen in professionellen Broadcast-Umgebungen.
 |--------|--------|---------|
 | PTP | `pmc` (linuxptp) → `offsetFromMaster` | PTP-Grandmaster-Zeit, Offset, Delay, Port-State, GM-Identity |
 | NTP | `chronyc tracking` → `System time: X slow/fast` | NTP-Referenzzeit, Synchronisationsstatus, Stratum |
-| LTC | `alsaltc` (ALSA + libltc) | Timecode HH:MM:SS:FF, Präsenz, Decode-Fehler, Sprünge, Delta zu PTP/NTP, Datum (User Bits) |
+| LTC | `alsaltc` / `ltcdump -d -F` (ALSA + libltc) | Timecode HH:MM:SS:FF, Präsenz, Decode-Fehler, Sprünge, Delta zu PTP/NTP, Datum + Timezone (SMPTE 309M User Bits), rohe User Bits |
 
 Alle Werte werden nur **angezeigt und bewertet** — keine Zeitdisziplinierung, kein Eingriff in laufende Dienste.
 
@@ -48,8 +48,9 @@ Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fü
 | **Haupt-Dashboard** | `/` | PTP/NTP/LTC-Status, 7-Seg-Zeitanzeige, rollende Fehlerzähler, Ereignisprotokoll |
 | **Screen Clock** | `/ltc-clock` | Vollbild-Uhr (LTC/PTP/Local), konfigurierbare Schrift/Farbe/Breite, Close-Button |
 | **LTC Spektrum** | `/spectrum` | On-Demand-WAV-Aufnahme (arecord) + FFT-Spektrogramm (sox), PNG- und WAV-Download |
+| **LTC Raw Output** | `/ltc-raw` | Live-Ausgabe des LTC-Decoder-Prozesses (`ltcdump`/`alsaltc`), Ring-Buffer 500 Zeilen, Pause-Button, Diagnosewerkzeug |
 | **PTP Capture** | `/tcpdump` | Echtzeit-tcpdump von PTP-Paketen (UDP 319/320 + EtherType 0x88F7), Live-Terminal mit Colorierung, PCAP-Download |
-| **Einstellungen** | `/settings` | Netzwerk (DHCP/statisch), NTP-Server, WLAN, PTP-Domain-Scanner, PTP/NTP-Simulation |
+| **Einstellungen** | `/settings` | Netzwerk (DHCP/statisch), NTP-Server, WLAN, PTP-Domain-Scanner, PTP/NTP-Simulation, Gerät/Standort |
 
 ### Haupt-Dashboard (`/`)
 
@@ -87,9 +88,11 @@ Zusätzliche PTP-Felder werden aus `GET TIME_PROPERTIES_DATA_SET` (via `pmc`) ge
 
 | Linke Spalte | Rechte Spalte |
 |---|---|
-| Timecode (HH:MM:SS:FF), Frame rate, ALSA delay, Update age | User bits (Hex, z.B. `06 23 80 48`), LTC date (SMPTE 309M, z.B. `2026-04-08`) |
+| Timecode (raw, HH:MM:SS:FF), Frame rate, ALSA delay, Update age | Date (YYYY-MM-DD), Timezone (UTC±HH:MM), User Bits (Hex, z.B. `64 26 04 08`) |
 
-`alsaltc` liest Datum aus libltc-`SMPTETimecode.years/months/days` (befüllt durch `ltc_frame_to_time()`) und gibt es als `HH:MM:SS:FF YYYY-MM-DD` aus — direkt verwendbar ohne weiteres Decodieren. Fallback für `ltcdump`-Nibble-Format vorhanden.
+Wenn Timezone bekannt (direkt aus LTC User Bits oder aus Datum-vs.-PTP-Inferenz), zeigt die LTC-7-Seg-Anzeige die **UTC-äquivalente Zeit** statt der lokalen LTC-Zeit. Die Screen Clock zeigt ebenfalls die UTC-Zeit, wenn ein Timezone-Offset bekannt ist.
+
+`alsaltc` dekodiert Datum und Timezone via `ltc_frame_to_time(..., LTC_USE_DATE)` (libltc SMPTE 309M) und gibt sie als `YYYY-MM-DD ±HHMM HH:MM:SS:FF` aus — dasselbe Format wie `ltcdump -d -F`. Fallback-Parser-Kette für alle ltcdump-Ausgabeformate vorhanden (siehe Konzept).
 
 **LTC-Pegel:** Kompakter LED-Bargraph (30 Segmente, −60 dBFS bis 0 dBFS) mit inline dBFS-Textanzeige rechts daneben. Farbbereiche: grün (< −18 dBFS), orange (−18 bis −6 dBFS), rot (> −6 dBFS). Peak-Hold 800 ms.
 
@@ -251,7 +254,15 @@ apt install libasound2-dev libltc-dev gcc make pkg-config
 cd alsaltc-v02 && make && sudo make install
 ```
 
-Der vorkompilierte `alsaltc`-Binary im Repository-Root ist für **x86_64** und gibt **kein Datum** aus (veralteter Build). Für die Datum-Dekodierung aus User Bits (SMPTE 309M) muss `alsaltc` auf dem RPi neu kompiliert werden:
+`alsaltc` muss auf dem Zielsystem (ARM) aus den Quellen kompiliert werden. Der Decoder gibt Datum, Timezone und User Bits direkt aus dem LTC-Frame aus (SMPTE 309M via `ltc_frame_to_time(..., LTC_USE_DATE)`):
+
+**Ausgabeformat:** `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD`
+- `YYYY-MM-DD` — Datum aus User Bits
+- `±HHMM` — Timezone aus User Bits
+- `HH:MM:SS:FF` — SMPTE-Timecode
+- `AABBCCDD` — rohe User Bits (8 Hex-Nibbles), für den Fall dass User Bits nicht für Datum/TZ genutzt werden
+
+Wenn Datum oder Timezone in den User Bits fehlt, werden die fehlenden Felder weggelassen.
 
 ```bash
 cd alsaltc-v02 && make && sudo make install

@@ -84,7 +84,7 @@ Das Backend betreibt vier dauerlaufende Threads neben dem Flask-HTTP-Server:
 | `ptp_loop` | `pmc`-Abfragen, PTP-Status in `status_bus` schreiben | `--poll` (250 ms) |
 | `ntp_loop` | `chronyc tracking` parsen, NTP-Status schreiben | `--ntp-refresh-s` (250 ms) |
 | `ltc_snapshot_loop` | Snapshot von `sources_ltc` holen, in `status_bus` schreiben | `--ltc-refresh-s` (250 ms) |
-| `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` `HH:MM:SS:FF [YYYY-MM-DD]` \| `NO_LTC` | kontinuierlich |
+| `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD` \| `NO_LTC` | kontinuierlich |
 
 Alle Zugriffe auf gemeinsamen Zustand laufen über `threading.Lock()`.
 
@@ -116,12 +116,13 @@ Zentrale State-Machine und Event-Bus. Hält den aktuellen Zustand aller drei Zei
 ALSA hw:X,0
     │
     ▼ (dsnoop_ltc – shared capture)
-    ├── alsaltc (subprocess)
-    │       libltc decoder
-    │       stdout: "HH:MM:SS:FF [YYYY-MM-DD]" | "NO_LTC"
+    ├── alsaltc (subprocess, LTC_USE_DATE)
+    │       libltc decoder (SMPTE 309M user bits)
+    │       stdout: "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD" | "NO_LTC"
     │            │
     │            ▼
-    │       sources_ltc.py (Regex-Parser, _DATE_RE)
+    │       sources_ltc.py (4-stufige Parser-Kette)
+    │       Ring-Buffer 500 Zeilen (_raw_lines)
     │       Jump-Detektion (Frame-Count-Vergleich)
     │            │
     │            ▼
@@ -133,9 +134,21 @@ ALSA hw:X,0
 
 `alsaltc` wurde entwickelt, weil `ltcdump` und ähnliche Tools kein zuverlässiges Dropout-Signaling über `stdout` bieten. Die C-Implementierung verwendet direkt ALSA-`snd_pcm_readi` und libltc ohne zusätzliche Latenz-Schichten.
 
-**Datum-Dekodierung (alsaltc):** `alsaltc` liest `tc.years/months/days` aus libltc's `SMPTETimecode`-Struct (befüllt durch `ltc_frame_to_time()`). Wenn User Bits ein gültiges Datum tragen (Monat 1–12, Tag 1–31), gibt `alsaltc` `HH:MM:SS:FF YYYY-MM-DD` aus. Jahrhundert-Heuristik: Jahre < 70 → 2000+, ≥ 70 → 1900+. **Neubauen auf dem RPi erforderlich** (`cd alsaltc-v02 && make && sudo make install`) — der vorkompilierte Binary im Repository-Root gibt kein Datum aus.
+**Ausgabeformat (alsaltc):** `ltc_frame_to_time(..., LTC_USE_DATE)` befüllt `SMPTETimecode.years/months/days/timezone` aus den LTC User Bits (SMPTE 309M). `alsaltc` gibt in einer Zeile aus:
+- `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD` — vollständig (Datum, TZ, User Bits)
+- `HH:MM:SS:FF YYYY-MM-DD AABBCCDD` — Datum ohne TZ
+- `HH:MM:SS:FF AABBCCDD` — nur User Bits (kein Datum)
 
-**Datum-Parsing in `sources_ltc.py`:** `_DATE_RE` parst `YYYY-MM-DD` direkt aus der `alsaltc`-Ausgabezeile. Fallback: nibble-basierter SMPTE-309M-Decode für `ltcdump`-Nibble-Format `| n1..n8` (vanilla `ltcdump` ohne `-d`).
+`AABBCCDD` sind die rohen 8 User-Bit-Nibbles als Hex-String (gleiche Reihenfolge wie `ltcdump -F` ohne `-d`).
+
+**Parser-Kette in `sources_ltc.py`:** 4-stufiger Fallback, um alle ltcdump/alsaltc-Ausgabeformate zu unterstützen:
+1. `_LTCDUMP_F_RE` → `YYYY-MM-DD ±HHMM HH:MM:SS:FF [AABBCCDD]` (alsaltc + ltcdump -d -F)
+2. `_LTCDUMP_F_UB_RE` → `AABBCCDD HH:MM:SS:FF` (ltcdump -F ohne -d)
+3. `_DATE_RE` → sucht `YYYY-MM-DD` im Zeilerest
+4. `_UB_RE` → `| n1 n2..n8` (ltcdump ohne -F/-d, dezimale Nibbles)
+5. Fallback `_UB_TAIL_RE` → `...AABBCCDD` am Zeilenende (alsaltc ohne Datum)
+
+**Ring-Buffer:** `_raw_lines` (deque, maxlen=500) + monotoner `_raw_seq`-Zähler. Die `/ltc-raw`-Seite liest via `get_raw_lines(since)` ohne eigenen Prozess — der Subprocess läuft nur einmal, alle Browser-Clients teilen denselben Buffer.
 
 **ltcdump 0.7.0 Bug:** In `ltcdump` 0.7.0 bedeutet `-d` `--date` (nicht Device). Das ALSA-Device wird mit `-a` angegeben. Der Default-Befehl lautet daher `ltcdump -a <device> -f <fps> -d`. Benutzerdefinierter `--ltc-cmd` (alsaltc) ist davon nicht betroffen.
 
@@ -153,6 +166,7 @@ Verfügbare Seiten:
 |-----|-------|
 | `/` | Haupt-Dashboard (PTP/NTP/LTC, 7-Seg, Fehlerzähler, Ereignislog) |
 | `/ltc-clock` | Screen Clock (Vollbild, LTC/PTP/Local, Schrift/Farbe/Breite konfigurierbar) |
+| `/ltc-raw` | LTC Raw Output (Live-Decoder-Ausgabe, Ring-Buffer 500 Zeilen, Pause/Clear) |
 | `/spectrum` | LTC Spektrum (On-Demand-Aufnahme + FFT-PNG + WAV-Download) |
 | `/tcpdump` | PTP Capture (Live-tcpdump, Ring-Buffer, PCAP-Download) |
 | `/settings` | Einstellungen (Netzwerk, NTP, WLAN, PTP Domain, Simulation) |
@@ -228,7 +242,7 @@ Zeilenabstand: `gap: 6px 10px` — 6 px zwischen Zeilen, 10 px zwischen Schlüss
 Nach NTP gibt es einen dritten `kv2`-Block für den LTC-Status (gleiche Struktur wie PTP/NTP):
 
 - Linke `.kv`-Hälfte: Timecode (HH:MM:SS:FF), Frame rate, ALSA delay (ms), Update age (s)
-- Rechte `.kv`-Hälfte: User bits (rohe Hex-Bytes, z.B. `AB CD EF GH`), LTC date (`YYYY-MM-DD`, SMPTE 309M-dekodiert)
+- Rechte `.kv`-Hälfte: Date (`YYYY-MM-DD`, SMPTE 309M-dekodiert), Timezone (`UTC±HH:MM`, direkt aus User Bits), User Bits (rohe Hex-Bytes, z.B. `64 26 04 08`)
 
 **ALSA delay** wurde zuvor im Delta-Raster neben Δ(NTP-PTP) angezeigt. Es wurde in den LTC-Status-Block verschoben, wo es inhaltlich hingehört (es ist eine Eigenschaft der LTC-Capture-Pipeline, kein Zeitquellen-Delta).
 

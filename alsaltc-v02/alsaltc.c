@@ -288,15 +288,25 @@ int main(int argc, char** argv) {
                 bool has_tz   = has_date &&
                                 (tc.timezone[0] == '+' || tc.timezone[0] == '-');
 
+                /* Raw user bits as 8 hex nibbles: "AABBCCDD"
+                 * user1..user8 are 4-bit fields in LTCFrame (same order as ltcdump -F). */
+                char ub[9];
+                snprintf(ub, sizeof(ub), "%X%X%X%X%X%X%X%X",
+                         frame.ltc.user1, frame.ltc.user2,
+                         frame.ltc.user3, frame.ltc.user4,
+                         frame.ltc.user5, frame.ltc.user6,
+                         frame.ltc.user7, frame.ltc.user8);
+
                 if (has_date && has_tz) {
-                    /* ltcdump -F compatible: "YYYY-MM-DD ±HHMM HH:MM:SS:FF" */
-                    printf("%04d-%02d-%02d %.5s %02d:%02d:%02d:%02d\n",
-                           year, month, day, tc.timezone, hh, mm, ss, ff);
+                    /* ltcdump -F -d compatible + user bits appended:
+                     * "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD" */
+                    printf("%04d-%02d-%02d %.5s %02d:%02d:%02d:%02d %s\n",
+                           year, month, day, tc.timezone, hh, mm, ss, ff, ub);
                 } else if (has_date) {
-                    printf("%02d:%02d:%02d:%02d %04d-%02d-%02d\n",
-                           hh, mm, ss, ff, year, month, day);
+                    printf("%02d:%02d:%02d:%02d %04d-%02d-%02d %s\n",
+                           hh, mm, ss, ff, year, month, day, ub);
                 } else {
-                    printf("%02d:%02d:%02d:%02d\n", hh, mm, ss, ff);
+                    printf("%02d:%02d:%02d:%02d %s\n", hh, mm, ss, ff, ub);
                 }
                 fflush(stdout);
 
