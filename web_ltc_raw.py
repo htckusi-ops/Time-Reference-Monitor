@@ -24,6 +24,7 @@ h1    { font-size: 19px; margin: 0 0 3px; }
        background: rgba(255,255,255,0.06); color: var(--text);
        font-family: var(--mono); font-size: 13px; cursor: pointer; user-select: none; }
 .btn:hover { background: rgba(255,255,255,0.11); }
+.btn.paused { background: rgba(251,191,36,0.15); border-color: var(--warn); color: var(--warn); }
 .stat { font-size: 12px; color: var(--muted); display: flex; gap: 18px; margin-bottom: 10px;
         flex-wrap: wrap; }
 .stat span { white-space: nowrap; }
@@ -66,6 +67,7 @@ _HTML = """<!doctype html>
   <div class="cmd-box">Befehl: <span id="cmdLine">—</span></div>
 
   <div class="toolbar">
+    <button class="btn" id="btnPause">&#9646;&#9646; Pause</button>
     <button class="btn" id="btnClear">&#10005; Clear</button>
   </div>
 
@@ -86,12 +88,12 @@ _HTML = """<!doctype html>
   let lineSeq = 0;
   let termLines = [];
   let totalReceived = 0;
+  let paused = false;
 
   // ── terminal rendering ────────────────────────────────────────────────────
   function appendLines(lines) {{
     for (const raw of lines) {{
       termLines.push(raw);
-      totalReceived++;
     }}
     if (termLines.length > MAX_DISPLAY) {{
       termLines = termLines.slice(termLines.length - MAX_DISPLAY);
@@ -149,7 +151,8 @@ _HTML = """<!doctype html>
       const d = await r.json();
       if (d.cmd) $('cmdLine').textContent = d.cmd;
       if (d.lines && d.lines.length) {{
-        appendLines(d.lines);
+        totalReceived += d.lines.length;
+        if (!paused) appendLines(d.lines);
       }}
       lineSeq = d.seq;
 
@@ -166,6 +169,12 @@ _HTML = """<!doctype html>
   }}
 
   // ── controls ──────────────────────────────────────────────────────────────
+  $('btnPause').addEventListener('click', () => {{
+    paused = !paused;
+    $('btnPause').textContent = paused ? '&#9654; Resume' : '&#9646;&#9646; Pause';
+    $('btnPause').className = 'btn' + (paused ? ' paused' : '');
+  }});
+
   $('btnClear').addEventListener('click', () => {{
     termLines = []; renderTerm();
   }});
