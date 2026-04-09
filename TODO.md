@@ -23,6 +23,7 @@ Die folgenden Features wurden seit Erstellung dieses TODO-Dokuments implementier
 - **LTC Raw Output** (`web_ltc_raw.py`, `/ltc-raw`): Live-Terminal für Decoder-Rohausgabe, Ring-Buffer 500 Zeilen, Pause/Resume (Zeilen gehen nicht verloren), Clear-Button; `/api/ltc/raw-lines?since=N` poll-basiertes Streaming; Timestamp + Farb-Highlighting (Timecode blau, Datum grün, NO_LTC rot)
 - **LTC Datum + Timezone + User Bits**: `alsaltc` dekodiert via `LTC_USE_DATE`; Ausgabeformat `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD`; `LTCStatus.ltc_tz` neu; Web-UI zeigt Timezone-Zeile (direkt aus User Bits); User-Bits-Zeile (`64 26 04 08`) in LTC-Statusblock
 - **4-stufige Parser-Kette** in `sources_ltc.py`: `_LTCDUMP_F_RE` (date+tz+optional UB) → `_LTCDUMP_F_UB_RE` (UB vor TC) → `_DATE_RE` → `_UB_RE` (Nibbles) → `_UB_TAIL_RE` (Fallback UB am Zeilenende)
+- **NTP-Server exklusiv setzen** (`network_mgr.py`): `set_ntp_server()` schreibt nicht mehr in `sources.d` (addiert nur), sondern schreibt `chrony.conf` direkt via `sudo tee` um — alle bestehenden `pool`/`server`-Zeilen werden auskommentiert, Custom-Server wird einmalig eingefügt. Persistenz in `/var/lib/time-reference-monitor/ntp_server`. `update.sh` wendet denselben Ersatz-Algorithmus (python3) nach jedem `git pull` wieder an.
 
 ---
 

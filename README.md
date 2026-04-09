@@ -150,7 +150,7 @@ Die Einstellungsseite bündelt alle Konfigurationsoptionen, die zur Laufzeit ge�
 | Karte | Funktion |
 |-------|----------|
 | **Netzwerk** | DHCP / statische IP, Subnetzmaske, Gateway, DNS |
-| **NTP-Server** | Primären NTP-Server zur Laufzeit ändern |
+| **NTP-Server** | Exklusiven NTP-Server zur Laufzeit setzen — ersetzt alle pool/server-Einträge in `chrony.conf`; persistiert in `/var/lib/time-reference-monitor/ntp_server` |
 | **WLAN** | SSID und Passwort konfigurieren |
 | **PTP Domain** | PTP-Domain scannen und zur Laufzeit wechseln (siehe unten) |
 | **PTP-Simulation** | Synthetische PTP-Fehler erzeugen (GM-Flap, Dropout, Offset-Sprung, Wander, Drift) |
@@ -618,7 +618,7 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 5. Systemd-Service-Dateien aktualisieren + `daemon-reload` (Kiosk-Restart nur bei Änderung)
 6. ptp4l Drop-Ins aktualisieren (`uds-permissions.conf`, `time-reference-monitor.conf`)
 7. `/etc/linuxptp/ptp4l.conf` aktualisieren — Monitor-Modus (`free_running 1`, `slaveOnly 1`); Backup nach `.bak`
-8. `/etc/chrony/chrony.conf` aktualisieren — NTP-only; Backup nach `.bak`; chrony neu starten
+8. `/etc/chrony/chrony.conf` aktualisieren — NTP-only; Backup nach `.bak`; anschliessend Custom-NTP-Server aus Persistenz-Datei wiederherstellen (alle pool/server-Einträge werden ersetzt); chrony neu starten
 9. ALSA-Konfiguration aktualisieren (Backup nach `/etc/asound.conf.bak`)
 10. `/etc/X11/Xwrapper.config` aktualisieren (idempotent — nur bei Abweichung)
 11. Kiosk-Konfigurationsdatei erstellen (nur wenn `/etc/time-reference-monitor.conf` fehlt)
