@@ -203,6 +203,7 @@ def ui_html() -> str:
         <div class="kv">
           <div class="kv-k">Date</div><div class="kv-v" id="ltcDateLine">—</div>
           <div class="kv-k">Timezone</div><div class="kv-v" id="ltcInferredTzLine">—</div>
+          <div class="kv-k">User Bits</div><div class="kv-v mono" id="ltcUbLine">—</div>
         </div>
       </div>
     </div>
@@ -569,6 +570,7 @@ function renderLedMeter(ledPeak){{
     els('ltcAlsaLine').textContent = (ltc.alsa_delay_ms != null) ? ltc.alsa_delay_ms.toFixed(1) + ' ms' : '—';
     els('ltcAgeLine').textContent  = age;
     els('ltcDateLine').textContent = ltc.ltc_date || '—';
+    els('ltcUbLine').textContent   = ltc.user_bits || '—';
     _dateLtc = ltc.ltc_date || '—'; _updDate();
 
     // LTC timezone: direct from ltcdump -F (±HHMM), or infer from date vs PTP UTC.

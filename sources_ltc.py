@@ -20,6 +20,10 @@ _TC_RE = re.compile(r"(?P<hh>\d{2}):(?P<mm>\d{2}):(?P<ss>\d{2}):(?P<ff>\d{2})")
 # This is the preferred format — includes date AND timezone directly.
 _LTCDUMP_F_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+([+-]\d{4})\s+(\d{2}:\d{2}:\d{2}:\d{2})")
 
+# ltcdump -F output WITHOUT -d: "AABBCCDD HH:MM:SS:FF | pos pos"
+# 8 hex nibbles (4 bytes) before the timecode — user bits in raw hex.
+_LTCDUMP_F_UB_RE = re.compile(r"^([0-9A-Fa-f]{8})\s+(\d{2}:\d{2}:\d{2}:\d{2})")
+
 # ltcdump 0.7.0 output with -d only: "HH:MM:SS:FF YYYY-MM-DD"
 # alsaltc output with date:          "HH:MM:SS:FF YYYY-MM-DD"
 _DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -272,10 +276,15 @@ class LTCMonitor:
                 self._alsa_probed = True
                 with self._lock:
                     self._status.alsa_delay_ms = delay
-        # Parse date + timezone:
-        # 1. ltcdump -F: "YYYY-MM-DD ±HHMM HH:MM:SS:FF | pos pos"  → date + tz directly
-        # 2. ltcdump -d only / alsaltc: "HH:MM:SS:FF YYYY-MM-DD"   → date only
-        # 3. ltcdump without -d: nibble user-bits decode            → date via SMPTE 309M
+        # Parse date + timezone + raw user bits, tried in order:
+        # 1. ltcdump -d -F / fixed alsaltc: "YYYY-MM-DD ±HHMM HH:MM:SS:FF | ..."
+        #    → date + tz directly from decoded output
+        # 2. ltcdump -F (no -d):  "AABBCCDD HH:MM:SS:FF | pos pos"
+        #    → raw hex user bits; decode date via SMPTE 309M nibble mapping
+        # 3. ltcdump -d (no -F) / old alsaltc: "HH:MM:SS:FF YYYY-MM-DD"
+        #    → date only
+        # 4. old ltcdump (no -F, no -d): "HH:MM:SS:FF | n1 n2 ... n8"
+        #    → 8 decimal nibbles; decode date via SMPTE 309M nibble mapping
         user_bits: Optional[str] = None
         ltc_date: Optional[str] = None
         ltc_tz: Optional[str] = None
@@ -284,15 +293,22 @@ class LTCMonitor:
             ltc_date = f_m.group(1)   # "YYYY-MM-DD"
             ltc_tz   = f_m.group(2)   # "±HHMM"
         else:
-            d_m = _DATE_RE.search(raw)
-            if d_m:
-                ltc_date = d_m.group(0)
+            fub_m = _LTCDUMP_F_UB_RE.match(raw)
+            if fub_m:
+                hex_ub = fub_m.group(1)                          # "64260408"
+                nibbles = [int(c, 16) for c in hex_ub]          # [6,4,2,6,0,4,0,8]
+                user_bits = " ".join(hex_ub[i:i+2].upper() for i in range(0, 8, 2))
+                ltc_date = _decode_ltc_date(nibbles)
             else:
-                ub_m = _UB_RE.search(raw)
-                if ub_m:
-                    nibbles = [int(ub_m.group(i)) for i in range(1, 9)]
-                    user_bits = _nibbles_to_ub(nibbles)
-                    ltc_date = _decode_ltc_date(nibbles)
+                d_m = _DATE_RE.search(raw)
+                if d_m:
+                    ltc_date = d_m.group(0)
+                else:
+                    ub_m = _UB_RE.search(raw)
+                    if ub_m:
+                        nibbles = [int(ub_m.group(i)) for i in range(1, 9)]
+                        user_bits = _nibbles_to_ub(nibbles)
+                        ltc_date = _decode_ltc_date(nibbles)
         with self._lock:
             self._status.present = True
             self._status.timecode = tc
