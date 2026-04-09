@@ -294,9 +294,11 @@ function tick(){{
     const tc = lastApi?.ltc?.timecode;
     if(!enabled) {{ setNoSignal('LTC nicht aktiv'); return; }}
     if(!present || !tc) {{ setNoSignal('LTC kein Signal'); return; }}
-    const hms = parseTcToHMS(tc);
-    if(!hms) {{ setNoSignal('LTC kein Signal'); return; }}
-    setSignal(fmtHMS(hms.h, hms.m, hms.s));
+    // Show HH:MM:SS:FF — frame number colon-separated (SMPTE style).
+    const m = tc.match(/^(\\d{{2}}):(\\d{{2}}):(\\d{{2}}):(\\d{{2}})$/);
+    if(!m) {{ setNoSignal('LTC kein Signal'); return; }}
+    const pad = n => String(n).padStart(2,'0');
+    setSignal(pad(parseInt(m[1]))+':'+pad(parseInt(m[2]))+':'+pad(parseInt(m[3]))+':'+pad(parseInt(m[4])));
     return;
   }}
 

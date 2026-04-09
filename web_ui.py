@@ -132,7 +132,7 @@ def ui_html() -> str:
 
         <div class="timeLabel">LTC</div>
         <div class="timeStatus muted" id="ltcStatusBadge">—</div>
-        <div class="seg-wrap" id="ltcTimeSegs" style="opacity:0.18">00:00:00.00</div>
+        <div class="seg-wrap" id="ltcTimeSegs" style="opacity:0.18">00:00:00:00</div>
       </div>
 
 <div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
@@ -377,13 +377,12 @@ function renderLedMeter(ledPeak){{
 
   function pad2(n) {{ return String(n).padStart(2,'0'); }}
 
-  function renderSevenSeg(el, timeStr) {{
+  function renderSevenSeg(el, timeStr, placeholder) {{
     if(!el) return;
-    // Use '00:00:00.00' as placeholder (not '--:--:--.--') so that the Seg7 font
-    // renders the same-width digit glyphs in both active and inactive states.
-    // The '-' glyph is narrower than digits in Seg7, causing the grid column to
-    // resize when the display switches between placeholder and live time.
-    el.textContent = timeStr || '00:00:00.00';
+    // Use same-width digit-only placeholder so the Seg7 font doesn't resize the
+    // grid column when switching between inactive and live state.
+    // LTC passes '00:00:00:00' (frame separator); PTP/NTP use '00:00:00.00' (ms).
+    el.textContent = timeStr || placeholder || '00:00:00.00';
     el.style.opacity = timeStr ? '' : '0.18';
   }}
 
@@ -604,23 +603,28 @@ function renderLedMeter(ledPeak){{
       els('ltcInferredTzLine').textContent = '—';
     }}
 
-    // LTC 7-segment: if TZ known → show UTC equivalent; otherwise raw timecode.
+    // LTC 7-segment: show HH:MM:SS:FF (frames, not centiseconds).
+    // If TZ known → convert to UTC equivalent, then reconstruct frame number.
     if(ltc.enabled && ltc.present && tc && tc !== '—') {{
       const tcm = tc.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}}):(\d{{2}})$/);
       if(tcm) {{
-        const fpsN = Number(ltc.fps) || 25;
-        const cs = Math.min(99, Math.round(Number(tcm[4]) / fpsN * 100));
+        const fpsN = Math.max(1, Number(ltc.fps) || 25);
+        const ff   = parseInt(tcm[4], 10);
         if (_ltcInferredTzMs !== null) {{
-          const lMs = parseInt(tcm[1])*3600000 + parseInt(tcm[2])*60000 + parseInt(tcm[3])*1000;
+          // Include frame as fractional ms so UTC wraps correctly at midnight.
+          const lMs = parseInt(tcm[1])*3600000 + parseInt(tcm[2])*60000
+                    + parseInt(tcm[3])*1000 + Math.round(ff / fpsN * 1000);
           const uMs = ((lMs - _ltcInferredTzMs) % 86400000 + 86400000) % 86400000;
+          const uff = Math.min(fpsN - 1, Math.floor((uMs % 1000) / 1000 * fpsN));
           renderSevenSeg(els('ltcTimeSegs'),
             pad2(Math.floor(uMs/3600000))+':'+pad2(Math.floor((uMs%3600000)/60000))+':'+
-            pad2(Math.floor((uMs%60000)/1000))+'.'+pad2(cs));
+            pad2(Math.floor((uMs%60000)/1000))+':'+pad2(uff), '00:00:00:00');
         }} else {{
-          renderSevenSeg(els('ltcTimeSegs'), tcm[1]+':'+tcm[2]+':'+tcm[3]+'.'+pad2(cs));
+          renderSevenSeg(els('ltcTimeSegs'),
+            tcm[1]+':'+tcm[2]+':'+tcm[3]+':'+pad2(ff), '00:00:00:00');
         }}
-      }} else {{ renderSevenSeg(els('ltcTimeSegs'), null); }}
-    }} else {{ renderSevenSeg(els('ltcTimeSegs'), null); }}
+      }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
+    }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
 
     // rolling summary
     const eR = Number(roll.errors_rolling ?? 0);
