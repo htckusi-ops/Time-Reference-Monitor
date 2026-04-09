@@ -35,23 +35,31 @@ def _nibbles_to_ub(n: list) -> str:
 
 def _decode_ltc_date(nibbles: list) -> Optional[str]:
     """
-    Try SMPTE 309M date decode from 8 user-bit nibbles (UG1..UG8).
-    UG2=year-units, UG3=year-tens, UG5=day-units, UG6=day-tens,
-    UG7=month-units, UG8[2:0]=month-tens, UG8[3]=21st-century flag.
-    Returns 'YYYY-MM-DD' or None if the nibbles don't form a valid date.
+    Decode SMPTE 309M date from 8 user-bit nibbles as output by ltcdump -F
+    (without -d).  Empirically verified against known data: '64260408' → 2026-04-08.
+
+    Nibble layout (0-indexed, each nibble = 4 bits):
+      [0]: BGF flags + timezone sign/info   (not used for date)
+      [1]: BGF flags + century bit (bit 2)  (nibble[1] >> 2) & 1 → 1=2000+
+      [2]: year tens
+      [3]: year units
+      [4]: month tens
+      [5]: month units
+      [6]: day tens
+      [7]: day units
     """
     if len(nibbles) != 8:
         return None
-    year_u  = nibbles[1] & 0xF
+    century = 2000 if (nibbles[1] >> 2) & 1 else 1900
     year_t  = nibbles[2] & 0xF
-    day_u   = nibbles[4] & 0xF
-    day_t   = nibbles[5] & 0xF
-    mon_u   = nibbles[6] & 0xF
-    mon_t   = nibbles[7] & 0x7
-    century = 2000 if (nibbles[7] >> 3) & 1 else 1900
+    year_u  = nibbles[3] & 0xF
+    mon_t   = nibbles[4] & 0xF
+    mon_u   = nibbles[5] & 0xF
+    day_t   = nibbles[6] & 0xF
+    day_u   = nibbles[7] & 0xF
     year  = century + year_t * 10 + year_u
-    month = mon_t  * 10 + mon_u
-    day   = day_t  * 10 + day_u
+    month = mon_t * 10 + mon_u
+    day   = day_t * 10 + day_u
     if not (1 <= month <= 12 and 1 <= day <= 31):
         return None
     try:
