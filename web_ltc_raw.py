@@ -171,7 +171,7 @@ _HTML = """<!doctype html>
   // ── controls ──────────────────────────────────────────────────────────────
   $('btnPause').addEventListener('click', () => {{
     paused = !paused;
-    $('btnPause').textContent = paused ? '&#9654; Resume' : '&#9646;&#9646; Pause';
+    $('btnPause').innerHTML = paused ? '&#9654; Resume' : '&#9646;&#9646; Pause';
     $('btnPause').className = 'btn' + (paused ? ' paused' : '');
   }});
 
