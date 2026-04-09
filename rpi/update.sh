@@ -162,15 +162,35 @@ else
 fi
 
 # Re-apply any NTP server that was set via the Settings UI.
-# set_ntp_server() in network_mgr.py writes the chosen server here.
-# This survives update.sh runs AND NetworkManager DHCP-triggered conf rewrites.
+# set_ntp_server() in network_mgr.py writes the chosen server to this file.
+# This survives update.sh runs AND git-pull overwrites of chrony.conf.
 NTP_PERSIST="/var/lib/time-reference-monitor/ntp_server"
 if [ -f "$NTP_PERSIST" ]; then
     CUSTOM_NTP=$(cat "$NTP_PERSIST" | tr -d '[:space:]')
     if [ -n "$CUSTOM_NTP" ]; then
-        # Replace only the first server/pool line; keep the rest of the file intact.
-        sed -i "0,/^\(server\|pool\) /s|^\(server\|pool\) \S\+|server ${CUSTOM_NTP}|" "$CHRONY_CONF"
-        info "NTP-Server wiederhergestellt aus Persistenz-Datei: ${CUSTOM_NTP}"
+        # Comment out ALL existing server/pool lines and insert the custom server
+        # at the position of the first one.  A simple sed "replace first match"
+        # would leave the remaining pool servers active — this ensures exactly
+        # one NTP source is configured after every update.
+        python3 - "$CHRONY_CONF" "$CUSTOM_NTP" <<'PYEOF'
+import sys, re
+path, server = sys.argv[1], sys.argv[2]
+lines = open(path).readlines()
+out, inserted = [], False
+for l in lines:
+    s = l.strip()
+    if s and not s.startswith('#') and re.match(r'(server|pool)\s', s):
+        if not inserted:
+            out.append(f'server {server} iburst\n')
+            inserted = True
+        out.append('# ' + l)
+    else:
+        out.append(l)
+if not inserted:
+    out.append(f'server {server} iburst\n')
+open(path, 'w').write(''.join(out))
+PYEOF
+        info "NTP-Server wiederhergestellt (alle pool/server-Einträge ersetzt): ${CUSTOM_NTP}"
         systemctl restart chrony 2>/dev/null || true
     fi
 else
