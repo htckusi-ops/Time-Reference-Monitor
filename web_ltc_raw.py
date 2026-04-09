@@ -61,14 +61,14 @@ _HTML = """<!doctype html>
       <h1 style="margin:0 0 4px;">LTC Raw Output</h1>
       <p class="sub" style="margin:0;">Live-Ausgabe des LTC-Decoder-Prozesses</p>
     </div>
-    <button class="btn" id="btnClose">&#10005; Close</button>
+    <button class="btn" id="btnClose">✕ Close</button>
   </div>
 
   <div class="cmd-box">Befehl: <span id="cmdLine">—</span></div>
 
   <div class="toolbar">
-    <button class="btn" id="btnPause">&#9646;&#9646; Pause</button>
-    <button class="btn" id="btnClear">&#10005; Clear</button>
+    <button class="btn" id="btnPause">⏸ Pause</button>
+    <button class="btn" id="btnClear">✕ Clear</button>
   </div>
 
   <div class="stat" id="statBar">
@@ -171,7 +171,7 @@ _HTML = """<!doctype html>
   // ── controls ──────────────────────────────────────────────────────────────
   $('btnPause').addEventListener('click', () => {{
     paused = !paused;
-    $('btnPause').innerHTML = paused ? '&#9654; Resume' : '&#9646;&#9646; Pause';
+    $('btnPause').textContent = paused ? '▶ Resume' : '⏸ Pause';
     $('btnPause').className = 'btn' + (paused ? ' paused' : '');
   }});
 
