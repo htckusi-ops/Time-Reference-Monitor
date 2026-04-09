@@ -24,7 +24,7 @@ from web_settings import settings_html
 from web_tcpdump import tcpdump_html
 from tcpdump_mgr import TcpdumpCapture
 from domain_scanner import DomainScanner
-from ltc_level import read_ltc_level
+from ltc_level import read_ltc_level, LtcLevelPoller
 from network_mgr import (
     get_network_status, apply_static, apply_dhcp,
     get_wifi_status, set_wifi,
@@ -362,22 +362,12 @@ def create_app(
         subprocess.Popen(["sudo", "/sbin/poweroff"])
         return jsonify({"ok": True, "ts_utc": _utc_iso_ms()})
 
-    from config import LTC_ALSA_DEVICE
-    from ltc_level import read_ltc_level
-
     @app.get("/api/ltc/level")
     def api_ltc_level():
-        device = (request.args.get("device") or "").strip()
-        if not device:
-            device = LTC_ALSA_DEVICE  # <-- zentraler Default
-
-        duration_raw = request.args.get("duration_ms", "250")
-        duration_ms = int("".join(c for c in duration_raw if c.isdigit()) or "250")
-
-        if duration_ms <= 0 or duration_ms > 2000:
-            return jsonify({"error": "duration_ms out of range"}), 400
-
-        level = read_ltc_level(device=device, duration_ms=duration_ms)
+        device = (request.args.get("device") or "").strip() or LTC_ALSA_DEVICE
+        # Use background poller: one arecord per device, result cached.
+        # Prevents thread exhaustion when arecord hangs in D-state.
+        level = LtcLevelPoller.for_device(device).get()
         return jsonify(level)
 
     # ---------------------------
