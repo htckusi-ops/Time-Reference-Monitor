@@ -105,6 +105,7 @@ def ui_html() -> str:
             <button class="nav-item" id="btnReload">&#8635; Reload</button>
             <a class="nav-item" href="/ltc-clock" target="_blank" rel="noopener">&#9654; Screen Clock…</a>
             <a class="nav-item" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">&#126;&#126; LTC Spectrum…</a>
+            <a class="nav-item" href="/ltc-raw" target="_blank" rel="noopener">&#128250; LTC Raw Output…</a>
             <a class="nav-item" href="/tcpdump" target="_blank" rel="noopener">&#128268; PTP Capture…</a>
             <a class="nav-item" href="/settings">&#9881; Settings</a>
             <div class="nav-sep"></div>

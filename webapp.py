@@ -22,6 +22,7 @@ from web_ui import ui_html, spectrum_html
 from web_clock_ui import ltc_clock_html
 from web_settings import settings_html
 from web_tcpdump import tcpdump_html
+from web_ltc_raw import ltc_raw_html
 from tcpdump_mgr import TcpdumpCapture
 from domain_scanner import DomainScanner
 from ltc_level import read_ltc_level, LtcLevelPoller
@@ -46,6 +47,7 @@ def create_app(
     meta_provider: Callable[[], Dict[str, Any]],
     spectrum=None,
     *,
+    ltc_mon=None,
     ui_refresh_ms: int = 50,
     ui_api_poll_ms: int = 250,
     get_ptp_source: Callable = None,
@@ -369,6 +371,26 @@ def create_app(
         # Prevents thread exhaustion when arecord hangs in D-state.
         level = LtcLevelPoller.for_device(device).get()
         return jsonify(level)
+
+    @app.get("/ltc-raw")
+    def ltc_raw_page() -> Response:
+        return Response(ltc_raw_html(), mimetype="text/html")
+
+    @app.get("/api/ltc/raw-lines")
+    def api_ltc_raw_lines() -> Response:
+        try:
+            since = int(request.args.get("since", "0"))
+        except ValueError:
+            since = 0
+        if ltc_mon is None:
+            return jsonify({"lines": [], "seq": 0, "cmd": "", "enabled": False})
+        lines, seq = ltc_mon.get_raw_lines(since)
+        return jsonify({
+            "lines": lines,
+            "seq": seq,
+            "cmd": ltc_mon.cmd,
+            "enabled": ltc_mon.enabled,
+        })
 
     # ---------------------------
     # tcpdump / PTP capture

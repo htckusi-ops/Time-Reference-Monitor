@@ -1,4 +1,5 @@
 from __future__ import annotations
+import collections
 import dataclasses
 import shlex
 import subprocess
@@ -7,7 +8,7 @@ import time
 import re
 import select
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from models import LTCStatus
 from rolling import RollingCounter
@@ -215,6 +216,11 @@ class LTCMonitor:
         self._thr: Optional[threading.Thread] = None
         self._err_roll = RollingCounter(rolling_window_s)
 
+        # Raw line ring buffer for live diagnostic view
+        self._raw_lines: collections.deque = collections.deque(maxlen=500)
+        self._raw_seq: int = 0
+        self._raw_lock = threading.Lock()
+
     def start(self) -> None:
         if not self.enabled:
             return
@@ -275,6 +281,21 @@ class LTCMonitor:
             self._status.ltc_date = ltc_date
             self._status.raw = raw if self.trace else None
 
+    def get_raw_lines(self, since: int = 0) -> Tuple[List[str], int]:
+        """Return (lines_since, current_seq).  Thread-safe."""
+        with self._raw_lock:
+            lines = list(self._raw_lines)
+            seq = self._raw_seq
+        drop = max(0, seq - len(lines))
+        start = max(0, since - drop)
+        return lines[start:], seq
+
+    def _append_raw(self, line: str) -> None:
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3]
+        with self._raw_lock:
+            self._raw_lines.append(f"{ts}  {line}")
+            self._raw_seq += 1
+
     def _run(self) -> None:
 
         while not self._stop.is_set():
@@ -313,6 +334,8 @@ class LTCMonitor:
                         line = line.strip()
                         if not line:
                             continue
+
+                        self._append_raw(line)
 
                         if line == "NO_LTC":
                             self._mark_absent()

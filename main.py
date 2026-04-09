@@ -329,6 +329,7 @@ def main() -> None:
             bus,
             meta_provider,
             spectrum=spectrum,
+            ltc_mon=ltc_mon,
             ui_refresh_ms=int(args.ui_refresh_ms),
             ui_api_poll_ms=int(args.ui_api_poll_ms),
             get_ptp_source=get_ptp_source,
