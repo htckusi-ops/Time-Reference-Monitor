@@ -70,10 +70,14 @@ inst_hash=$(cat "$ALSALTC_HASH_FILE" 2>/dev/null || echo "")
 if [ "$src_hash" != "$inst_hash" ] || [ ! -f "$ALSALTC_BIN" ]; then
     info "alsaltc source changed or binary missing – recompiling…"
     make -C "${REPO_DIR}/alsaltc-v02" clean
-    make -C "${REPO_DIR}/alsaltc-v02"
-    install -m 0755 "${REPO_DIR}/alsaltc-v02/alsaltc" "$ALSALTC_BIN"
-    echo "$src_hash" > "$ALSALTC_HASH_FILE"
-    info "alsaltc installed to ${ALSALTC_BIN}"
+    if make -C "${REPO_DIR}/alsaltc-v02"; then
+        install -m 0755 "${REPO_DIR}/alsaltc-v02/alsaltc" "$ALSALTC_BIN"
+        echo "$src_hash" > "$ALSALTC_HASH_FILE"
+        info "alsaltc installed to ${ALSALTC_BIN}"
+    else
+        echo "ERROR: alsaltc compilation failed – keeping existing binary (if any)." >&2
+        echo "       Install build deps: apt install libasound2-dev libltc-dev gcc make pkg-config" >&2
+    fi
 else
     info "alsaltc unchanged (hash match) – skipping recompile."
 fi
