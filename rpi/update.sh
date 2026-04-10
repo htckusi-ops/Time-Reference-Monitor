@@ -56,17 +56,30 @@ info "Updating Python dependencies…"
 sudo -u "$APP_USER" "${INSTALL_DIR}/venv/bin/pip" install -q --upgrade pip
 sudo -u "$APP_USER" "${INSTALL_DIR}/venv/bin/pip" install -q -r "${INSTALL_DIR}/requirements.txt"
 
-# ── 4. Recompile alsaltc if source changed ────────────────────────────────────
+# ── 4. Recompile alsaltc if source changed (hash-based) ──────────────────────
+# Hash-based check: timestamp comparison is unreliable after git clone/pull.
+# The hash file records which source version is currently installed.
 ALSALTC_SRC="${REPO_DIR}/alsaltc-v02/alsaltc.c"
 ALSALTC_BIN="/usr/local/bin/alsaltc"
-if [ "$ALSALTC_SRC" -nt "$ALSALTC_BIN" ] 2>/dev/null || [ ! -f "$ALSALTC_BIN" ]; then
-    info "alsaltc source is newer than installed binary – recompiling…"
+ALSALTC_HASH_FILE="${DATA_DIR}/.alsaltc_src_hash"
+mkdir -p "$DATA_DIR"
+
+src_hash=$(sha256sum "$ALSALTC_SRC" | cut -d' ' -f1)
+inst_hash=$(cat "$ALSALTC_HASH_FILE" 2>/dev/null || echo "")
+
+if [ "$src_hash" != "$inst_hash" ] || [ ! -f "$ALSALTC_BIN" ]; then
+    info "alsaltc source changed or binary missing – recompiling…"
     make -C "${REPO_DIR}/alsaltc-v02" clean
-    make -C "${REPO_DIR}/alsaltc-v02"
-    install -m 0755 "${REPO_DIR}/alsaltc-v02/alsaltc" "$ALSALTC_BIN"
-    info "alsaltc reinstalled to ${ALSALTC_BIN}"
+    if make -C "${REPO_DIR}/alsaltc-v02"; then
+        install -m 0755 "${REPO_DIR}/alsaltc-v02/alsaltc" "$ALSALTC_BIN"
+        echo "$src_hash" > "$ALSALTC_HASH_FILE"
+        info "alsaltc installed to ${ALSALTC_BIN}"
+    else
+        echo "ERROR: alsaltc compilation failed – keeping existing binary (if any)." >&2
+        echo "       Install build deps: apt install libasound2-dev libltc-dev gcc make pkg-config" >&2
+    fi
 else
-    info "alsaltc is up to date – skipping recompile."
+    info "alsaltc unchanged (hash match) – skipping recompile."
 fi
 
 # ── 5. systemd service files ──────────────────────────────────────────────────
@@ -153,15 +166,35 @@ else
 fi
 
 # Re-apply any NTP server that was set via the Settings UI.
-# set_ntp_server() in network_mgr.py writes the chosen server here.
-# This survives update.sh runs AND NetworkManager DHCP-triggered conf rewrites.
+# set_ntp_server() in network_mgr.py writes the chosen server to this file.
+# This survives update.sh runs AND git-pull overwrites of chrony.conf.
 NTP_PERSIST="/var/lib/time-reference-monitor/ntp_server"
 if [ -f "$NTP_PERSIST" ]; then
     CUSTOM_NTP=$(cat "$NTP_PERSIST" | tr -d '[:space:]')
     if [ -n "$CUSTOM_NTP" ]; then
-        # Replace only the first server/pool line; keep the rest of the file intact.
-        sed -i "0,/^\(server\|pool\) /s|^\(server\|pool\) \S\+|server ${CUSTOM_NTP}|" "$CHRONY_CONF"
-        info "NTP-Server wiederhergestellt aus Persistenz-Datei: ${CUSTOM_NTP}"
+        # Comment out ALL existing server/pool lines and insert the custom server
+        # at the position of the first one.  A simple sed "replace first match"
+        # would leave the remaining pool servers active — this ensures exactly
+        # one NTP source is configured after every update.
+        python3 - "$CHRONY_CONF" "$CUSTOM_NTP" <<'PYEOF'
+import sys, re
+path, server = sys.argv[1], sys.argv[2]
+lines = open(path).readlines()
+out, inserted = [], False
+for l in lines:
+    s = l.strip()
+    if s and not s.startswith('#') and re.match(r'(server|pool)\s', s):
+        if not inserted:
+            out.append(f'server {server} iburst\n')
+            inserted = True
+        out.append('# ' + l)
+    else:
+        out.append(l)
+if not inserted:
+    out.append(f'server {server} iburst\n')
+open(path, 'w').write(''.join(out))
+PYEOF
+        info "NTP-Server wiederhergestellt (alle pool/server-Einträge ersetzt): ${CUSTOM_NTP}"
         systemctl restart chrony 2>/dev/null || true
     fi
 else

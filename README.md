@@ -11,7 +11,7 @@ Monitoring-Tool für Zeitreferenzen in professionellen Broadcast-Umgebungen.
 |--------|--------|---------|
 | PTP | `pmc` (linuxptp) → `offsetFromMaster` | PTP-Grandmaster-Zeit, Offset, Delay, Port-State, GM-Identity |
 | NTP | `chronyc tracking` → `System time: X slow/fast` | NTP-Referenzzeit, Synchronisationsstatus, Stratum |
-| LTC | `alsaltc` (ALSA + libltc) | Timecode HH:MM:SS:FF, Präsenz, Decode-Fehler, Sprünge, Delta zu PTP/NTP |
+| LTC | `alsaltc` / `ltcdump -d -F` (ALSA + libltc) | Timecode HH:MM:SS:FF, Präsenz, Decode-Fehler, Sprünge, Delta zu PTP/NTP, Datum + Timezone (SMPTE 309M User Bits), rohe User Bits |
 
 Alle Werte werden nur **angezeigt und bewertet** — keine Zeitdisziplinierung, kein Eingriff in laufende Dienste.
 
@@ -48,19 +48,59 @@ Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fü
 | **Haupt-Dashboard** | `/` | PTP/NTP/LTC-Status, 7-Seg-Zeitanzeige, rollende Fehlerzähler, Ereignisprotokoll |
 | **Screen Clock** | `/ltc-clock` | Vollbild-Uhr (LTC/PTP/Local), konfigurierbare Schrift/Farbe/Breite, Close-Button |
 | **LTC Spektrum** | `/spectrum` | On-Demand-WAV-Aufnahme (arecord) + FFT-Spektrogramm (sox), PNG- und WAV-Download |
+| **LTC Raw Output** | `/ltc-raw` | Live-Ausgabe des LTC-Decoder-Prozesses (`ltcdump`/`alsaltc`), Ring-Buffer 500 Zeilen, Pause-Button, Diagnosewerkzeug |
 | **PTP Capture** | `/tcpdump` | Echtzeit-tcpdump von PTP-Paketen (UDP 319/320 + EtherType 0x88F7), Live-Terminal mit Colorierung, PCAP-Download |
-| **Einstellungen** | `/settings` | Netzwerk (DHCP/statisch), NTP-Server, WLAN, PTP-Domain-Scanner, PTP/NTP-Simulation |
+| **Einstellungen** | `/settings` | Netzwerk (DHCP/statisch), NTP-Server, WLAN, PTP-Domain-Scanner, PTP/NTP-Simulation, Gerät/Standort |
 
 ### Haupt-Dashboard (`/`)
 
-Das Dashboard zeigt alle drei Zeitquellen gleichzeitig in Echtzeit:
-- **PTP-Status**: Grandmaster-Identität, Offset, Delay, Port-State (SLAVE/MASTER/UNCALIBRATED)
-- **NTP-Status**: Referenzserver, Stratum, System-Offset, Synchronisationszustand
-- **LTC-Status**: Timecode HH:MM:SS:FF, Präsenz, Dekodierqualität
-- **7-Segment-Zeitanzeige**: PTP-Zeit wird client-seitig monoton interpoliert (kein Rückläufer, stabile Breite durch Platzhalter `00:00:00.00`)
-- **Rollende Fehlerzähler**: Fehler im konfigurierbaren Zeitfenster (Standard 1 h), GM-Wechsel im 48-h-Fenster
-- **Δ-Werte**: Δ(NTP–PTP), Δ(LTC–PTP), Δ(LTC–NTP) mit ALSA-Capture-Delay-Kompensation
-- **Ereignisprotokoll**: Alle Statusübergänge mit UTC-Timestamp, Schweregrad und Typ
+Das Dashboard zeigt alle drei Zeitquellen gleichzeitig in Echtzeit.
+
+**Header-Navigation:** Ein `☰ Menu`-Button in der Kopfzeile öffnet beim Hover ein Dropdown mit allen Navigationslinks (Screen Clock, LTC Spektrum, PTP Capture, Einstellungen) sowie den Systemaktionen Reload, Reboot und Shutdown. Die Zeitanzeige-Karte wird dadurch von Buttons freigehalten.
+
+**7-Segment-Zeitanzeige:** PTP-, NTP- und LTC-Zeit in Echtzeit, client-seitig monoton interpoliert:
+- Kein Rückläufer bei Netzwerk-Jitter (neue Serverzeit wird nur übernommen wenn ≥ aktuelle interpolierte Zeit)
+- Stabile Spaltenbreite durch Platzhalter `00:00:00.00` (Seg7-Schrift hat gleiche Zeichenbreite für Ziffern und `0`)
+- Status-Spalte mit fixer Breite (140 px); lange Texte wie `present 25fps` oder `stale 200s` umbrechen innerhalb der Spalte ohne Layout-Verschiebung
+
+**PTP-Status** (zweispaltig):
+
+| Linke Spalte | Rechte Spalte |
+|---|---|
+| State, Port state, PTP valid, GM present | Source (real/mock), Time source (GPS/NTP/…) |
+| Interface, Domain, PTP version | UTC offset, Time/Freq traceable, PTP timescale |
+| Offset (ns), Path delay (ns), Poll age (ms) | GM identity, Parent port |
+| GM changes, NO PTP since | GM priority1/2, GM clock class/accuracy |
+
+Zusätzliche PTP-Felder werden aus `GET TIME_PROPERTIES_DATA_SET` (via `pmc`) gewonnen: Time Source (dekodiert, z.B. `GPS`, `NTP`, `ATOMIC_CLOCK`), Traceability-Flags, UTC-Offset, PTP-Timescale. `PTP version` zeigt nur `v2` wenn PTP tatsächlich aktiv ist.
+
+**NTP-Status** (zweispaltig, getrennt von PTP durch horizontale Linie):
+
+| Linke Spalte | Rechte Spalte |
+|---|---|
+| Status, Stratum, Reference | System offset (ms) |
+| Last update (Ref time UTC), Update age | RMS offset (ms) |
+| | Frequency (ppm) |
+
+**NTP-Staleness-Erkennung:** Wenn `Ref time (UTC)` länger als `--ntp-stale-threshold-s` (Standard 1200 s) nicht aktualisiert wurde, wird der Status auf `stale` gesetzt — auch wenn chrony intern noch `synced` meldet. Hintergrund: chrony's adaptives Polling kann bei stabilem Systemclock bis auf `maxpoll=10` (= 2^10 = 1024 s ≈ 17 min) ansteigen. Ein Threshold unterhalb dieses Werts löst Fehlalarme während normaler Langpoll-Zyklen aus. Der Standard von 1200 s liegt ~3 min über dem maximalen Poll-Intervall. Die NTP 7-Seg-Anzeige graut bei `stale` oder `unsynced` aus. Status-Werte: `synced` (grün) / `stale <Ns>` (gelb) / `unsynced` (rot) / `unknown` (grau).
+
+**LTC-Status** (zweispaltig, nach NTP):
+
+| Linke Spalte | Rechte Spalte |
+|---|---|
+| Timecode (raw, HH:MM:SS:FF), Frame rate, ALSA delay, Update age | Date (YYYY-MM-DD), Timezone (UTC±HH:MM), User Bits (Hex, z.B. `64 26 04 08`) |
+
+Wenn Timezone bekannt (direkt aus LTC User Bits oder aus Datum-vs.-PTP-Inferenz), zeigt die LTC-7-Seg-Anzeige die **UTC-äquivalente Zeit** statt der lokalen LTC-Zeit. Die Screen Clock zeigt ebenfalls die UTC-Zeit, wenn ein Timezone-Offset bekannt ist.
+
+`alsaltc` dekodiert Datum und Timezone via `ltc_frame_to_time(..., LTC_USE_DATE)` (libltc SMPTE 309M) und gibt sie als `YYYY-MM-DD ±HHMM HH:MM:SS:FF` aus — dasselbe Format wie `ltcdump -d -F`. Fallback-Parser-Kette für alle ltcdump-Ausgabeformate vorhanden (siehe Konzept).
+
+**LTC-Pegel:** Kompakter LED-Bargraph (30 Segmente, −60 dBFS bis 0 dBFS) mit inline dBFS-Textanzeige rechts daneben. Farbbereiche: grün (< −18 dBFS), orange (−18 bis −6 dBFS), rot (> −6 dBFS). Peak-Hold 800 ms.
+
+**Rollende Fehlerzähler:** Alle Ereignisse (PTP_LOST, NTP_STALE, NTP_LOST, LTC_LOST, GM_CHANGED, Offset-Sprünge, Drift) fliessen in das Rolling-Error-Summary ein. Ein **Reset-Button** setzt alle Zähler sofort auf 0 zurück. Fehlerfenster konfigurierbar via `--error-window-s` (Standard 1 h).
+
+**Δ-Werte:** Vier Paare im Delta-Raster: NTP Date / PTP Date, NTP TZ / System TZ (PTP), Δ(NTP-PTP) / Δ(LTC-NTP), Δ(LTC-PTP) adj / Δ(LTC-PTP) raw. ALSA delay wird im LTC-Status-Block angezeigt (nicht im Delta-Raster).
+
+**Ereignisprotokoll:** Alle Statusübergänge mit UTC-Timestamp, Schweregrad (INFO/WARN/ALARM) und Typ.
 
 ### Screen Clock (`/ltc-clock`)
 
@@ -79,7 +119,7 @@ On-Demand-Werkzeug zur Diagnose des LTC-Audiosignals:
 **Analysenutzen:**
 - LTC-Signal bei 25 fps SMPTE liegt im Bereich ~600 Hz – 2,4 kHz. Das Spektrogramm zeigt sofort, ob das Signal im richtigen Frequenzband liegt
 - Rauschen (breitbandig), Netzbrumm (50/100 Hz-Peaks), oder falsche Pegel sind direkt sichtbar
-- **WAV-Download**: Die aufgenommene Audiodatei kann heruntergeladen und mit Audacity oder anderen Werkzeugen nachanalysiert werden
+- **WAV-Download und PNG-Download**: Beide Dateien werden mit Zeitstempel im Format `YYYYMMDD-HH_MM_SS_UTC-LTC_Capture.{wav,png}` benannt — so können mehrere Aufnahmen unterschieden werden, ohne Überschreiben
 - Typische Befunde: Kabeldefekt (Rauschteppich), Pegelregler falsch (zu leise → Dekodierungsfehler), Erder-Schleife (50-Hz-Brumm)
 
 ### PTP Capture (`/tcpdump`) — Protokollanalyse
@@ -110,7 +150,7 @@ Die Einstellungsseite bündelt alle Konfigurationsoptionen, die zur Laufzeit ge�
 | Karte | Funktion |
 |-------|----------|
 | **Netzwerk** | DHCP / statische IP, Subnetzmaske, Gateway, DNS |
-| **NTP-Server** | Primären NTP-Server zur Laufzeit ändern |
+| **NTP-Server** | Exklusiven NTP-Server zur Laufzeit setzen — ersetzt alle pool/server-Einträge in `chrony.conf`; persistiert in `/var/lib/time-reference-monitor/ntp_server` |
 | **WLAN** | SSID und Passwort konfigurieren |
 | **PTP Domain** | PTP-Domain scannen und zur Laufzeit wechseln (siehe unten) |
 | **PTP-Simulation** | Synthetische PTP-Fehler erzeugen (GM-Flap, Dropout, Offset-Sprung, Wander, Drift) |
@@ -155,10 +195,11 @@ Die drei Δ-Werte zeigen die tatsächlichen Beziehungen zwischen den Zeitquellen
 | Delta | Formel | Bedeutung |
 |-------|--------|-----------|
 | **Δ(NTP–PTP)** | `chrony_offset_ms + ptp_offset_ms` | Differenz zwischen NTP-Referenzzeit und PTP-Grandmaster |
-| **Δ(LTC–PTP)** | `ltc_s − ptp_s − alsa_delay_ms/1000` | LTC-Generator vs. PTP-Grandmaster, Capture-Delay kompensiert |
+| **Δ(LTC–PTP) adj** | `ltc_s − ptp_s − alsa_delay_ms/1000` | LTC-Generator vs. PTP-Grandmaster, Capture-Delay kompensiert |
+| **Δ(LTC–PTP) raw** | `ltc_s − ptp_s` | LTC vs. PTP ohne Delay-Kompensation |
 | **Δ(LTC–NTP)** | `ltc_s − ntp_s − alsa_delay_ms/1000` | LTC-Generator vs. NTP-Referenz, Capture-Delay kompensiert |
 
-Die ALSA-Capture-Latenz (`alsa_delay_ms`) wird automatisch beim ersten LTC-Frame gemessen (`period_size / sample_rate`) und von allen LTC-Deltas subtrahiert.
+Die ALSA-Capture-Latenz (`alsa_delay_ms`) wird automatisch beim ersten LTC-Frame gemessen (`period_size / sample_rate`) und von den kompensierten LTC-Deltas subtrahiert. Der Wert wird im LTC-Status-Block angezeigt (nicht mehr im Delta-Raster).
 
 ---
 
@@ -213,13 +254,40 @@ apt install libasound2-dev libltc-dev gcc make pkg-config
 cd alsaltc-v02 && make && sudo make install
 ```
 
-Der vorkompilierte `alsaltc`-Binary im Repository-Root ist für **x86_64**. Auf dem Raspberry Pi immer aus den Quellen kompilieren.
+`alsaltc` muss auf dem Zielsystem (ARM) aus den Quellen kompiliert werden. Der Decoder gibt Datum, Timezone und User Bits direkt aus dem LTC-Frame aus (SMPTE 309M via `ltc_frame_to_time(..., LTC_USE_DATE)`):
+
+**Ausgabeformat:** `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD`
+- `YYYY-MM-DD` — Datum aus User Bits
+- `±HHMM` — Timezone aus User Bits
+- `HH:MM:SS:FF` — SMPTE-Timecode
+- `AABBCCDD` — rohe User Bits (8 Hex-Nibbles), für den Fall dass User Bits nicht für Datum/TZ genutzt werden
+
+Wenn Datum oder Timezone in den User Bits fehlt, werden die fehlenden Felder weggelassen.
+
+```bash
+cd alsaltc-v02 && make && sudo make install
+```
+
+`setup.sh` kompiliert `alsaltc` automatisch beim Deployment — manuelles Neubauen ist nur nötig, wenn `alsaltc` nach einem Update des Source-Codes aktualisiert werden soll.
 
 ### ALSA-Capture-Delay
 
 Die LTC-Capture-Latenz (`alsa_delay_ms`) wird beim ersten LTC-Frame automatisch via `arecord --verbose` gemessen. Basis ist `period_size / sample_rate` (= ein ALSA-Interrupt-Periode = tatsächliche Capture-Latenz). Der Wert wird von allen Δ(LTC-*)-Berechnungen abgezogen.
 
 Falls der Wert beim Start `—` zeigt (Gerät war beim Booten noch nicht bereit), wird beim nächsten empfangenen LTC-Frame automatisch nachgemessen.
+
+### Wichtige Startparameter
+
+| Parameter | Standard | Bedeutung |
+|-----------|----------|-----------|
+| `--poll` | 0.5 s | PTP-Abfrageintervall (`pmc`) |
+| `--ntp-refresh-s` | 0.25 s | Wie oft `chronyc tracking` gelesen wird (unabhängig von chrony's eigenem NTP-Poll-Zyklus von 64–1024 s) |
+| `--ntp-stale-threshold-s` | 1200 s | Ab welchem Alter von `Ref time (UTC)` NTP als `stale` gilt. Chrony's adaptives Polling kann bis auf `maxpoll=10` (1024 s ≈ 17 min) ansteigen; der Threshold muss darüber liegen. 1200 s = ~3 min Puffer über dem maximalen Poll-Intervall |
+| `--error-window-s` | 3600 s | Zeitfenster für rollende Fehlerzähler |
+| `--gm-window-s` | 172800 s | Zeitfenster für GM-Wechsel-Zähler (48 h) |
+| `--stale-threshold-ms` | 2000 ms | Wie lange ohne frische API-Antwort bis Dashboard-Status auf ALARM wechselt |
+| `--startup-grace-s` | 6 s | Startphase: WARN/ALARM-Events werden als `suppressed` markiert bis erster PTP-Lock |
+| `--domain` | 0 | PTP-Domain-Nummer; überschrieben durch Persistenz-Datei falls vorhanden |
 
 ---
 
@@ -550,7 +618,7 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 5. Systemd-Service-Dateien aktualisieren + `daemon-reload` (Kiosk-Restart nur bei Änderung)
 6. ptp4l Drop-Ins aktualisieren (`uds-permissions.conf`, `time-reference-monitor.conf`)
 7. `/etc/linuxptp/ptp4l.conf` aktualisieren — Monitor-Modus (`free_running 1`, `slaveOnly 1`); Backup nach `.bak`
-8. `/etc/chrony/chrony.conf` aktualisieren — NTP-only; Backup nach `.bak`; chrony neu starten
+8. `/etc/chrony/chrony.conf` aktualisieren — NTP-only; Backup nach `.bak`; anschliessend Custom-NTP-Server aus Persistenz-Datei wiederherstellen (alle pool/server-Einträge werden ersetzt); chrony neu starten
 9. ALSA-Konfiguration aktualisieren (Backup nach `/etc/asound.conf.bak`)
 10. `/etc/X11/Xwrapper.config` aktualisieren (idempotent — nur bei Abweichung)
 11. Kiosk-Konfigurationsdatei erstellen (nur wenn `/etc/time-reference-monitor.conf` fehlt)

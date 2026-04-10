@@ -1,4 +1,5 @@
 from __future__ import annotations
+import collections
 import dataclasses
 import shlex
 import subprocess
@@ -7,13 +8,76 @@ import time
 import re
 import select
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from models import LTCStatus
 from rolling import RollingCounter
 
 
 _TC_RE = re.compile(r"(?P<hh>\d{2}):(?P<mm>\d{2}):(?P<ss>\d{2}):(?P<ff>\d{2})")
+
+# ltcdump -F -d output: "YYYY-MM-DD ±HHMM HH:MM:SS:FF | pos pos"
+# alsaltc output:       "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD"
+# This is the preferred format — includes date AND timezone directly.
+# Group 4 (optional): raw user bits as 8 hex nibbles (alsaltc only).
+_LTCDUMP_F_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\s+([+-]\d{4})\s+(\d{2}:\d{2}:\d{2}:\d{2})(?:\s+([0-9A-Fa-f]{8}))?")
+
+# ltcdump -F output WITHOUT -d: "AABBCCDD HH:MM:SS:FF | pos pos"
+# 8 hex nibbles (4 bytes) before the timecode — user bits in raw hex.
+_LTCDUMP_F_UB_RE = re.compile(r"^([0-9A-Fa-f]{8})\s+(\d{2}:\d{2}:\d{2}:\d{2})")
+
+# ltcdump 0.7.0 output with -d only: "HH:MM:SS:FF YYYY-MM-DD"
+# alsaltc output with date:          "HH:MM:SS:FF YYYY-MM-DD"
+_DATE_RE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+
+# ltcdump output without -d: "HH:MM:SS:FF | n1 n2 n3 n4 n5 n6 n7 n8"  (8 nibbles 0-15)
+_UB_RE = re.compile(r"\|\s*(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})")
+
+# alsaltc appends 8 hex nibbles at end of every line: "... AABBCCDD"
+# Used as fallback when no other pattern captured user bits.
+_UB_TAIL_RE = re.compile(r"\s([0-9A-Fa-f]{8})\s*$")
+
+
+def _nibbles_to_ub(n: list) -> str:
+    """Format 8 nibbles as 4 hex bytes: 'AB CD EF GH'."""
+    return " ".join(f"{(n[i] << 4 | n[i + 1]):02X}" for i in range(0, 8, 2))
+
+
+def _decode_ltc_date(nibbles: list) -> Optional[str]:
+    """
+    Decode SMPTE 309M date from 8 user-bit nibbles as output by ltcdump -F
+    (without -d).  Empirically verified against known data: '64260408' → 2026-04-08.
+
+    Nibble layout (0-indexed, each nibble = 4 bits):
+      [0]: BGF flags + timezone sign/info   (not used for date)
+      [1]: BGF flags + century bit (bit 2)  (nibble[1] >> 2) & 1 → 1=2000+
+      [2]: year tens
+      [3]: year units
+      [4]: month tens
+      [5]: month units
+      [6]: day tens
+      [7]: day units
+    """
+    if len(nibbles) != 8:
+        return None
+    century = 2000 if (nibbles[1] >> 2) & 1 else 1900
+    year_t  = nibbles[2] & 0xF
+    year_u  = nibbles[3] & 0xF
+    mon_t   = nibbles[4] & 0xF
+    mon_u   = nibbles[5] & 0xF
+    day_t   = nibbles[6] & 0xF
+    day_u   = nibbles[7] & 0xF
+    year  = century + year_t * 10 + year_u
+    month = mon_t * 10 + mon_u
+    day   = day_t * 10 + day_u
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    try:
+        from datetime import date as _date
+        _date(year, month, day)
+        return f"{year:04d}-{month:02d}-{day:02d}"
+    except ValueError:
+        return None
 
 
 def utc_iso_ms() -> str:
@@ -142,7 +206,9 @@ class LTCMonitor:
         self.enabled = bool(enabled)
         self.device = device or "default"
         self.fps = fps or "25"
-        self.cmd = cmd or f"ltcdump -d {shlex.quote(self.device)} -f {shlex.quote(self.fps)}"
+        # ltcdump: -a for ALSA device, -d to decode date/tz from user bits, -F for full format
+        # Full format output: "YYYY-MM-DD ±HHMM HH:MM:SS:FF | pos pos"
+        self.cmd = cmd or f"ltcdump -a {shlex.quote(self.device)} -f {shlex.quote(self.fps)} -d -F"
         self.trace = bool(trace)
 
         self.dropout_timeout_ms = max(0, int(dropout_timeout_ms or 0))
@@ -172,6 +238,11 @@ class LTCMonitor:
         self._stop = threading.Event()
         self._thr: Optional[threading.Thread] = None
         self._err_roll = RollingCounter(rolling_window_s)
+
+        # Raw line ring buffer for live diagnostic view
+        self._raw_lines: collections.deque = collections.deque(maxlen=500)
+        self._raw_seq: int = 0
+        self._raw_lock = threading.Lock()
 
     def start(self) -> None:
         if not self.enabled:
@@ -211,12 +282,77 @@ class LTCMonitor:
                 self._alsa_probed = True
                 with self._lock:
                     self._status.alsa_delay_ms = delay
+        # Parse date + timezone + raw user bits, tried in order:
+        # 1. alsaltc (full):   "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD"
+        #    ltcdump -d -F:    "YYYY-MM-DD ±HHMM HH:MM:SS:FF | pos pos"
+        #    → date + tz; user bits from group 4 if present (alsaltc only)
+        # 2. ltcdump -F (no -d):  "AABBCCDD HH:MM:SS:FF | pos pos"
+        #    → raw hex user bits; decode date via SMPTE 309M nibble mapping
+        # 3. ltcdump -d (no -F) / old alsaltc: "HH:MM:SS:FF YYYY-MM-DD"
+        #    alsaltc (date, no tz):             "HH:MM:SS:FF YYYY-MM-DD AABBCCDD"
+        #    → date; user bits from _UB_TAIL_RE fallback below
+        # 4. old ltcdump (no -F, no -d): "HH:MM:SS:FF | n1 n2 ... n8"
+        #    → 8 decimal nibbles; decode date via SMPTE 309M nibble mapping
+        # 5. alsaltc (no date): "HH:MM:SS:FF AABBCCDD"
+        #    → user bits from _UB_TAIL_RE fallback below
+        user_bits: Optional[str] = None
+        ltc_date: Optional[str] = None
+        ltc_tz: Optional[str] = None
+        f_m = _LTCDUMP_F_RE.match(raw)
+        if f_m:
+            ltc_date = f_m.group(1)   # "YYYY-MM-DD"
+            ltc_tz   = f_m.group(2)   # "±HHMM"
+            if f_m.group(4):          # user bits appended by alsaltc
+                hex_ub = f_m.group(4)
+                user_bits = " ".join(hex_ub[i:i+2].upper() for i in range(0, 8, 2))
+        else:
+            fub_m = _LTCDUMP_F_UB_RE.match(raw)
+            if fub_m:
+                hex_ub = fub_m.group(1)                          # "64260408"
+                nibbles = [int(c, 16) for c in hex_ub]          # [6,4,2,6,0,4,0,8]
+                user_bits = " ".join(hex_ub[i:i+2].upper() for i in range(0, 8, 2))
+                ltc_date = _decode_ltc_date(nibbles)
+            else:
+                d_m = _DATE_RE.search(raw)
+                if d_m:
+                    ltc_date = d_m.group(0)
+                else:
+                    ub_m = _UB_RE.search(raw)
+                    if ub_m:
+                        nibbles = [int(ub_m.group(i)) for i in range(1, 9)]
+                        user_bits = _nibbles_to_ub(nibbles)
+                        ltc_date = _decode_ltc_date(nibbles)
+        # Fallback: alsaltc appends user bits as trailing "AABBCCDD" on every line.
+        # Catches "HH:MM:SS:FF AABBCCDD" and "HH:MM:SS:FF YYYY-MM-DD AABBCCDD".
+        if user_bits is None:
+            tail_m = _UB_TAIL_RE.search(raw)
+            if tail_m:
+                hex_ub = tail_m.group(1)
+                user_bits = " ".join(hex_ub[i:i+2].upper() for i in range(0, 8, 2))
         with self._lock:
             self._status.present = True
             self._status.timecode = tc
             self._status.last_update_utc = utc_iso_ms()
             self._status.no_ltc_since_utc = None
+            self._status.user_bits = user_bits
+            self._status.ltc_date = ltc_date
+            self._status.ltc_tz   = ltc_tz
             self._status.raw = raw if self.trace else None
+
+    def get_raw_lines(self, since: int = 0) -> Tuple[List[str], int]:
+        """Return (lines_since, current_seq).  Thread-safe."""
+        with self._raw_lock:
+            lines = list(self._raw_lines)
+            seq = self._raw_seq
+        drop = max(0, seq - len(lines))
+        start = max(0, since - drop)
+        return lines[start:], seq
+
+    def _append_raw(self, line: str) -> None:
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3]
+        with self._raw_lock:
+            self._raw_lines.append(f"{ts}  {line}")
+            self._raw_seq += 1
 
     def _run(self) -> None:
 
@@ -256,6 +392,8 @@ class LTCMonitor:
                         line = line.strip()
                         if not line:
                             continue
+
+                        self._append_raw(line)
 
                         if line == "NO_LTC":
                             self._mark_absent()

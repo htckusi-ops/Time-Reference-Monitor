@@ -5,9 +5,12 @@ Uses NetworkManager (nmcli) for network config — standard on Bookworm.
 All write operations require sudo (configured via sudoers in setup.sh).
 """
 from __future__ import annotations
+import os
 import re
 import subprocess
 from typing import Optional, Dict, Any, Tuple
+
+_LOCATION_PATH = "/var/lib/time-reference-monitor/device_location"
 
 
 def _run(*args: str, timeout: int = 10) -> subprocess.CompletedProcess:
@@ -102,33 +105,108 @@ def get_wifi_status() -> Dict[str, Any]:
     }
 
 
+_CHRONY_SOURCES_FILE = "/etc/chrony/sources.d/time-reference-monitor.sources"
+_NTP_PERSIST_PATH = "/var/lib/time-reference-monitor/ntp_server"
+
+_CHRONY_CONF = (
+    "/etc/chrony/chrony.conf" if os.path.isdir("/etc/chrony") else "/etc/chrony.conf"
+)
+
+
 def get_ntp_server() -> str:
-    """Return the first configured NTP server from chrony.conf."""
+    """Return the configured NTP server.
+
+    Reads from the persist file first (set via Settings UI), then falls back
+    to the first uncommented server/pool entry in chrony.conf.
+    """
+    # Primary: persist file written by set_ntp_server()
     try:
-        with open("/etc/chrony/chrony.conf") as f:
-            for line in f:
-                s = line.strip()
-                if s.startswith(("server ", "pool ")):
-                    parts = s.split()
-                    if len(parts) >= 2:
-                        return parts[1]
+        with open(_NTP_PERSIST_PATH) as f:
+            v = f.read().strip()
+            if v:
+                return v
     except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    # Fallback: first active server/pool line in chrony.conf
+    for path in (_CHRONY_CONF, "/etc/chrony/chrony.conf", "/etc/chrony.conf"):
         try:
-            with open("/etc/chrony.conf") as f:
+            with open(path) as f:
                 for line in f:
                     s = line.strip()
-                    if s.startswith(("server ", "pool ")):
+                    if s and not s.startswith("#") and s.startswith(("server ", "pool ")):
                         parts = s.split()
                         if len(parts) >= 2:
                             return parts[1]
+        except FileNotFoundError:
+            continue
         except Exception:
-            pass
-    except Exception:
-        pass
+            break
     return ""
 
 
-# ── write ─────────────────────────────────────────────────────────────────────
+def set_ntp_server(server: str) -> Tuple[bool, str]:
+    """Set a custom NTP server as the exclusive NTP source.
+
+    Rewrites chrony.conf: comments out all existing server/pool lines and
+    inserts the custom server in their place.  This ensures no pool servers
+    remain active after a restart.
+
+    Persists the server name to _NTP_PERSIST_PATH so update.sh can re-apply
+    it after pulling a new chrony.conf from the repository.
+    """
+    # Read current chrony.conf
+    try:
+        with open(_CHRONY_CONF) as f:
+            original_lines = f.readlines()
+    except Exception as e:
+        return False, f"Konnte {_CHRONY_CONF} nicht lesen: {e}"
+
+    # Rewrite: comment out all server/pool lines, insert custom server once
+    # at the position of the first pool/server line.
+    new_lines: list = []
+    inserted = False
+    for line in original_lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and stripped.startswith(("server ", "pool ")):
+            if not inserted:
+                new_lines.append(f"server {server} iburst\n")
+                inserted = True
+            new_lines.append(f"# {line}" if not line.startswith("#") else line)
+        else:
+            new_lines.append(line)
+    if not inserted:
+        new_lines.append(f"server {server} iburst\n")
+
+    content = "".join(new_lines)
+
+    # Write back via sudo tee (allowed by sudoers without password)
+    r = subprocess.run(
+        ["sudo", "tee", _CHRONY_CONF],
+        input=content, capture_output=True, text=True, timeout=10,
+    )
+    if r.returncode != 0:
+        return False, f"Schreiben von {_CHRONY_CONF} fehlgeschlagen: " + (r.stderr or r.stdout).strip()
+
+    # Persist for update.sh (re-applied after every git pull)
+    try:
+        os.makedirs(os.path.dirname(_NTP_PERSIST_PATH), exist_ok=True)
+        with open(_NTP_PERSIST_PATH, "w") as f:
+            f.write(server + "\n")
+    except Exception:
+        pass  # Non-fatal
+
+    # Restart chrony to pick up the new config
+    r = _sudo("systemctl", "restart", "chrony", timeout=15)
+    if r.returncode != 0:
+        return True, f"NTP-Server auf {server} gesetzt (chrony restart: {(r.stderr or r.stdout).strip()})"
+
+    return True, f"NTP-Server auf {server} gesetzt."
+
+
+# ── write ────────────────────────────────────────────────────────────────────
 
 def apply_static(
     iface: str, ip: str, prefix: str, gateway: str, dns: str
@@ -192,67 +270,26 @@ def set_wifi(enabled: bool) -> Tuple[bool, str]:
     return True, f"WiFi {'aktiviert' if enabled else 'deaktiviert'}."
 
 
-def set_ntp_server(server: str) -> Tuple[bool, str]:
-    """Replace the first server/pool entry in chrony.conf and restart chrony."""
-    chrony_paths = ["/etc/chrony/chrony.conf", "/etc/chrony.conf"]
-    conf_path = None
-    for p in chrony_paths:
-        try:
-            open(p).close()
-            conf_path = p
-            break
-        except FileNotFoundError:
-            continue
+# ── Device location ──────────────────────────────────────────────────────────
 
-    if not conf_path:
-        return False, "chrony.conf nicht gefunden."
-
+def get_device_location() -> str:
+    """Return the stored device location string, or empty string if not set."""
     try:
-        with open(conf_path) as f:
-            lines = f.readlines()
-    except Exception as e:
-        return False, str(e)
-
-    new_lines = []
-    replaced = False
-    for line in lines:
-        if not replaced and line.strip().startswith(("server ", "pool ")):
-            new_lines.append(f"server {server} iburst\n")
-            replaced = True
-        else:
-            new_lines.append(line)
-    if not replaced:
-        new_lines.insert(0, f"server {server} iburst\n")
-
-    new_content = "".join(new_lines)
-
-    r = subprocess.run(
-        ["sudo", "tee", conf_path],
-        input=new_content, capture_output=True, text=True, timeout=10
-    )
-    if r.returncode != 0:
-        return False, (r.stderr or r.stdout).strip()
-
-    r = _sudo("systemctl", "restart", "chrony", timeout=20)
-    if r.returncode != 0:
-        return False, (r.stderr or r.stdout).strip()
-
-    # Persist the server so update.sh and DHCP-triggered conf rewrites can restore it
-    _persist_ntp_server(server)
-
-    return True, f"NTP-Server auf {server} gesetzt, chrony neu gestartet."
-
-
-# Writable data dir (owned by the app user); does not need sudo.
-_NTP_PERSIST_PATH = "/var/lib/time-reference-monitor/ntp_server"
-
-
-def _persist_ntp_server(server: str) -> None:
-    """Write the user's NTP server to the persistence file (survives conf overwrites)."""
-    try:
-        import os
-        os.makedirs(os.path.dirname(_NTP_PERSIST_PATH), exist_ok=True)
-        with open(_NTP_PERSIST_PATH, "w") as f:
-            f.write(server.strip() + "\n")
+        with open(_LOCATION_PATH) as f:
+            return f.read().strip()
     except Exception:
-        pass  # non-critical: chrony.conf is already updated
+        return ""
+
+
+def set_device_location(location: str) -> Tuple[bool, str]:
+    """Persist device location (max 500 chars)."""
+    location = str(location).strip()[:500]
+    try:
+        os.makedirs(os.path.dirname(_LOCATION_PATH), exist_ok=True)
+        with open(_LOCATION_PATH, "w") as f:
+            f.write(location + "\n")
+        return True, "Standort gespeichert."
+    except Exception as exc:
+        return False, f"Fehler beim Speichern: {exc}"
+
+

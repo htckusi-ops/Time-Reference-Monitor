@@ -269,7 +269,7 @@ int main(int argc, char** argv) {
 
         while (ltc_decoder_read(dec, &frame)) {
             SMPTETimecode tc;
-            ltc_frame_to_time(&tc, &frame.ltc, 0);
+            ltc_frame_to_time(&tc, &frame.ltc, LTC_USE_DATE);
 
             int hh = tc.hours;
             int mm = tc.mins;
@@ -277,7 +277,37 @@ int main(int argc, char** argv) {
             int ff = tc.frame;
 
             if (hh != last_h || mm != last_m || ss != last_s || ff != last_f) {
-                printf("%02d:%02d:%02d:%02d\n", hh, mm, ss, ff);
+                /* Decode date + timezone from user bits (SMPTE 309M via libltc).
+                 * LTC_USE_DATE populates tc.years/months/days and tc.timezone[6]
+                 * (e.g. "+0000" or "-0530"). */
+                int year_2d = (int)tc.years;
+                int month   = (int)tc.months;
+                int day     = (int)tc.days;
+                int year    = (year_2d < 70) ? 2000 + year_2d : 1900 + year_2d;
+                bool has_date = (month >= 1 && month <= 12 && day >= 1 && day <= 31);
+                bool has_tz   = has_date &&
+                                (tc.timezone[0] == '+' || tc.timezone[0] == '-');
+
+                /* Raw user bits as 8 hex nibbles: "AABBCCDD"
+                 * user1..user8 are 4-bit fields in LTCFrame (same order as ltcdump -F). */
+                char ub[9];
+                snprintf(ub, sizeof(ub), "%X%X%X%X%X%X%X%X",
+                         frame.ltc.user1, frame.ltc.user2,
+                         frame.ltc.user3, frame.ltc.user4,
+                         frame.ltc.user5, frame.ltc.user6,
+                         frame.ltc.user7, frame.ltc.user8);
+
+                if (has_date && has_tz) {
+                    /* ltcdump -F -d compatible + user bits appended:
+                     * "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD" */
+                    printf("%04d-%02d-%02d %.5s %02d:%02d:%02d:%02d %s\n",
+                           year, month, day, tc.timezone, hh, mm, ss, ff, ub);
+                } else if (has_date) {
+                    printf("%02d:%02d:%02d:%02d %04d-%02d-%02d %s\n",
+                           hh, mm, ss, ff, year, month, day, ub);
+                } else {
+                    printf("%02d:%02d:%02d:%02d %s\n", hh, mm, ss, ff, ub);
+                }
                 fflush(stdout);
 
                 last_h = hh; last_m = mm; last_s = ss; last_f = ff;

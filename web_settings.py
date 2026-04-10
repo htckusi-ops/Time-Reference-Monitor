@@ -27,13 +27,14 @@ h1 { font-size: 20px; margin: 0 0 4px; }
            letter-spacing: 0.08em; margin: 0 0 16px; }
 .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
 .field label { font-size: 12px; color: var(--muted); }
-.field input, .field select {
+.field input, .field select, .field textarea {
   background: rgba(0,0,0,0.4); color: var(--text); border: 1px solid var(--border);
   border-radius: 10px; padding: 9px 12px; font-family: var(--mono); font-size: 14px;
   width: 100%;
 }
+.field textarea { resize: vertical; min-height: 44px; max-height: 84px; line-height: 1.5; }
 .field input:disabled { opacity: 0.4; cursor: not-allowed; }
-.field input:focus { outline: none; border-color: var(--accent); }
+.field input:focus, .field textarea:focus { outline: none; border-color: var(--accent); }
 .row-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .btn { display: inline-flex; align-items: center; justify-content: center;
        padding: 10px 20px; border-radius: 12px; border: 1px solid var(--border);
@@ -90,6 +91,23 @@ _HTML = """<!doctype html>
   <a class="back" href="/">&#8592; Zurück zum Monitor</a>
   <h1>Settings</h1>
   <p class="sub">PTP Domain · Netzwerk · NTP · WiFi</p>
+
+  <!-- ── Gerät / Standort ── -->
+  <div class="card">
+    <h2>Gerät / Standort</h2>
+    <p class="hint" style="margin-bottom:14px;">
+      Wo ist dieser Raspberry Pi installiert? Die Angabe wird im Dashboard als Referenz angezeigt
+      und hilft bei der Identifikation — Raspberrys sind oft schwer zu finden.
+    </p>
+    <div class="field">
+      <label>Standort / Beschreibung</label>
+      <textarea id="deviceLocation" rows="3"
+                placeholder="z.B. Regie Studio 3, Rack B, Position 4"
+                maxlength="500"></textarea>
+    </div>
+    <button class="btn btn-primary" id="btnSaveLocation">Speichern</button>
+    <div class="msg" id="msgLocation"></div>
+  </div>
 
   <!-- ── PTP Domain ── -->
   <div class="card">
@@ -381,6 +399,32 @@ _HTML = """<!doctype html>
     el.textContent = text;
     setTimeout(() => {{ el.className = 'msg'; }}, 6000);
   }}
+
+  // ── Location ─────────────────────────────────────────────────────────────
+  async function loadLocation() {{
+    try {{
+      const r = await fetch('/api/settings/location', {{cache:'no-store'}});
+      const d = await r.json();
+      $('deviceLocation').value = d.location || '';
+    }} catch(e) {{}}
+  }}
+
+  $('btnSaveLocation').addEventListener('click', async () => {{
+    const location = $('deviceLocation').value.trim();
+    $('btnSaveLocation').disabled = true;
+    try {{
+      const r = await fetch('/api/settings/location', {{
+        method: 'POST', headers: {{'Content-Type':'application/json'}},
+        body: JSON.stringify({{ location }}),
+      }});
+      const d = await r.json();
+      showMsg('msgLocation', d.ok, d.message);
+    }} catch(e) {{
+      showMsg('msgLocation', false, 'Fehler: ' + e.message);
+    }} finally {{
+      $('btnSaveLocation').disabled = false;
+    }}
+  }});
 
   // ── Network ──────────────────────────────────────────────────────────────
   let origIp = '';
@@ -799,6 +843,7 @@ _HTML = """<!doctype html>
   }});
 
   // ── init ─────────────────────────────────────────────────────────────────
+  loadLocation();
   loadNet();
   loadNtp();
   loadWifi();

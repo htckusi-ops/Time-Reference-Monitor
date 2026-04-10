@@ -84,7 +84,7 @@ Das Backend betreibt vier dauerlaufende Threads neben dem Flask-HTTP-Server:
 | `ptp_loop` | `pmc`-Abfragen, PTP-Status in `status_bus` schreiben | `--poll` (250 ms) |
 | `ntp_loop` | `chronyc tracking` parsen, NTP-Status schreiben | `--ntp-refresh-s` (250 ms) |
 | `ltc_snapshot_loop` | Snapshot von `sources_ltc` holen, in `status_bus` schreiben | `--ltc-refresh-s` (250 ms) |
-| `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` HH:MM:SS:FF | kontinuierlich |
+| `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD` \| `NO_LTC` | kontinuierlich |
 
 Alle Zugriffe auf gemeinsamen Zustand laufen über `threading.Lock()`.
 
@@ -116,12 +116,13 @@ Zentrale State-Machine und Event-Bus. Hält den aktuellen Zustand aller drei Zei
 ALSA hw:X,0
     │
     ▼ (dsnoop_ltc – shared capture)
-    ├── alsaltc (subprocess)
-    │       libltc decoder
-    │       stdout: "HH:MM:SS:FF" | "NO_LTC"
+    ├── alsaltc (subprocess, LTC_USE_DATE)
+    │       libltc decoder (SMPTE 309M user bits)
+    │       stdout: "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD" | "NO_LTC"
     │            │
     │            ▼
-    │       sources_ltc.py (Regex-Parser)
+    │       sources_ltc.py (4-stufige Parser-Kette)
+    │       Ring-Buffer 500 Zeilen (_raw_lines)
     │       Jump-Detektion (Frame-Count-Vergleich)
     │            │
     │            ▼
@@ -132,6 +133,24 @@ ALSA hw:X,0
 ```
 
 `alsaltc` wurde entwickelt, weil `ltcdump` und ähnliche Tools kein zuverlässiges Dropout-Signaling über `stdout` bieten. Die C-Implementierung verwendet direkt ALSA-`snd_pcm_readi` und libltc ohne zusätzliche Latenz-Schichten.
+
+**Ausgabeformat (alsaltc):** `ltc_frame_to_time(..., LTC_USE_DATE)` befüllt `SMPTETimecode.years/months/days/timezone` aus den LTC User Bits (SMPTE 309M). `alsaltc` gibt in einer Zeile aus:
+- `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD` — vollständig (Datum, TZ, User Bits)
+- `HH:MM:SS:FF YYYY-MM-DD AABBCCDD` — Datum ohne TZ
+- `HH:MM:SS:FF AABBCCDD` — nur User Bits (kein Datum)
+
+`AABBCCDD` sind die rohen 8 User-Bit-Nibbles als Hex-String (gleiche Reihenfolge wie `ltcdump -F` ohne `-d`).
+
+**Parser-Kette in `sources_ltc.py`:** 4-stufiger Fallback, um alle ltcdump/alsaltc-Ausgabeformate zu unterstützen:
+1. `_LTCDUMP_F_RE` → `YYYY-MM-DD ±HHMM HH:MM:SS:FF [AABBCCDD]` (alsaltc + ltcdump -d -F)
+2. `_LTCDUMP_F_UB_RE` → `AABBCCDD HH:MM:SS:FF` (ltcdump -F ohne -d)
+3. `_DATE_RE` → sucht `YYYY-MM-DD` im Zeilerest
+4. `_UB_RE` → `| n1 n2..n8` (ltcdump ohne -F/-d, dezimale Nibbles)
+5. Fallback `_UB_TAIL_RE` → `...AABBCCDD` am Zeilenende (alsaltc ohne Datum)
+
+**Ring-Buffer:** `_raw_lines` (deque, maxlen=500) + monotoner `_raw_seq`-Zähler. Die `/ltc-raw`-Seite liest via `get_raw_lines(since)` ohne eigenen Prozess — der Subprocess läuft nur einmal, alle Browser-Clients teilen denselben Buffer.
+
+**ltcdump 0.7.0 Bug:** In `ltcdump` 0.7.0 bedeutet `-d` `--date` (nicht Device). Das ALSA-Device wird mit `-a` angegeben. Der Default-Befehl lautet daher `ltcdump -a <device> -f <fps> -d`. Benutzerdefinierter `--ltc-cmd` (alsaltc) ist davon nicht betroffen.
 
 ### `webapp.py` / `web_ui.py` — Web-Frontend
 
@@ -147,9 +166,146 @@ Verfügbare Seiten:
 |-----|-------|
 | `/` | Haupt-Dashboard (PTP/NTP/LTC, 7-Seg, Fehlerzähler, Ereignislog) |
 | `/ltc-clock` | Screen Clock (Vollbild, LTC/PTP/Local, Schrift/Farbe/Breite konfigurierbar) |
+| `/ltc-raw` | LTC Raw Output (Live-Decoder-Ausgabe, Ring-Buffer 500 Zeilen, Pause/Clear) |
 | `/spectrum` | LTC Spektrum (On-Demand-Aufnahme + FFT-PNG + WAV-Download) |
 | `/tcpdump` | PTP Capture (Live-tcpdump, Ring-Buffer, PCAP-Download) |
 | `/settings` | Einstellungen (Netzwerk, NTP, WLAN, PTP Domain, Simulation) |
+
+---
+
+## 4c. Web-UI: Layout- und Design-Details
+
+### Seitenstruktur / Header
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ APP_TITLE          APP_SUBTITLE                             │
+│                              [Pill] [Badge] [☰ Menu ▾]     │
+├─────────────────────────────────────────────────────────────┤
+│  .grid (1.1fr / 0.9fr)                                      │
+│  ┌──────────────────────────┐  ┌────────────────────────┐   │
+│  │ .card  Reference Time    │  │ .card  Error Summary   │   │
+│  └──────────────────────────┘  └────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Navigation Dropdown (`.nav-wrap`):**
+- Trigger: `<div class="nav-btn">☰ Menu</div>` — immer sichtbar im Header
+- Öffnen: **reines CSS** über `.nav-wrap:hover .nav-drop { display:block }` — kein JavaScript
+- Gap-Problem gelöst: `.nav-drop` hat `top:100%; padding-top:8px` (kein `margin-top`); das transparente Padding überbrückt den visuellen Abstand, ohne den Hover-Bereich zu unterbrechen
+- Panel (`.nav-drop-inner`): Hintergrund, Border, Box-Shadow — getrennt vom äusseren Hover-Bereich
+
+### bigtime-Zeitraster (`.bigtime`)
+
+```css
+.bigtime {
+  display: grid;
+  grid-template-columns: 76px 140px 1fr;
+  /* Label | Status (fix) | 7-Seg (rest) */
+  row-gap: 16px;
+  column-gap: 10px;
+}
+```
+
+| Spalte | Breite | Inhalt |
+|--------|--------|--------|
+| Label | 76 px (fix) | „PTP" / „NTP" / „LTC" — `font-size:30px; font-weight:700` |
+| Status | 140 px (fix) | `.timeStatus` — `font-family:mono; font-size:17px; font-weight:600` |
+| Zeit | `1fr` (Rest) | `.seg-wrap` — Segment7-Font, `font-size:48px; white-space:nowrap` |
+
+**Warum fixe 140 px für den Status?**
+Früher war die Statusspalte `minmax(110px,1fr)` und die Zeit `auto`. Wechselte der Text von `synced` zu `present 25fps` oder `stale 200s`, änderte sich die Spaltenbreite und das gesamte Raster verschob sich. Mit fixer Statusbreite und `1fr` für die Zeitanzeige ist die Gesamtbreite konstant.
+
+**Zeilenumbruch in der Statusspalte:**
+```css
+.timeStatus { white-space: normal; word-break: break-word; line-height: 1.3; }
+```
+Lange Texte umbrechen innerhalb der 140 px, ohne die Spalte zu verbreitern.
+
+**Platzhalter-Trick für die 7-Seg-Anzeige:**
+Der Seg7-Font hat für das Zeichen `-` eine deutlich schmalere Glyphe als für Ziffern `0–9`. Früher verwendeter Platzhalter `--:--:--.--` war schmaler als ein Live-Timecode → Layoutsprung beim ersten Frame. Lösung: Platzhalter `00:00:00.00` mit `opacity:0.18`; gleiche Zeichenbreite, kein Reflow.
+
+### Zweispaltige Status-Blöcke (`.kv2`)
+
+```css
+.kv2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
+.kv2 .kv { grid-template-columns: 130px 1fr; }
+.kv  { display: grid; grid-template-columns: 170px 1fr; gap: 6px 10px; font-size: 13px; }
+```
+
+PTP- und NTP-Status werden jeweils in einem `.kv2`-Block mit je zwei `.kv`-Hälften dargestellt. Beide Blöcke sind durch `<hr>` und `<h3>`-Überschriften voneinander getrennt.
+
+Zeilenabstand: `gap: 6px 10px` — 6 px zwischen Zeilen, 10 px zwischen Schlüssel und Wert. Gleicher Wert in beiden Hälften für optische Konsistenz.
+
+### LTC-Status-Block
+
+Nach NTP gibt es einen dritten `kv2`-Block für den LTC-Status (gleiche Struktur wie PTP/NTP):
+
+- Linke `.kv`-Hälfte: Timecode (HH:MM:SS:FF), Frame rate, ALSA delay (ms), Update age (s)
+- Rechte `.kv`-Hälfte: Date (`YYYY-MM-DD`, SMPTE 309M-dekodiert), Timezone (`UTC±HH:MM`, direkt aus User Bits), User Bits (rohe Hex-Bytes, z.B. `64 26 04 08`)
+
+**ALSA delay** wurde zuvor im Delta-Raster neben Δ(NTP-PTP) angezeigt. Es wurde in den LTC-Status-Block verschoben, wo es inhaltlich hingehört (es ist eine Eigenschaft der LTC-Capture-Pipeline, kein Zeitquellen-Delta).
+
+### Delta-Raster
+
+Das Delta-Raster zeigt vier Zeilenpaare ohne ALSA delay:
+
+| Linke Spalte | Rechte Spalte |
+|---|---|
+| NTP Date | PTP Date |
+| NTP TZ | System TZ (PTP) |
+| Δ(NTP-PTP) | Δ(LTC-NTP) |
+| Δ(LTC-PTP) adj | Δ(LTC-PTP) raw |
+
+`adj` = ALSA-Capture-Delay kompensiert; `raw` = ohne Kompensation.
+
+### EMA-Glättung
+
+Zwei EMA-Stufen verhindern nervöse Anzeigen bei schnellen Jitter-Peaks:
+
+| Ziel | α | τ bei 20 ms Refresh | Zweck |
+|------|---|---------------------|-------|
+| Delta-Werte (PTP Offset, Path Delay, Δ-Linien) | 0.05 | ~400 ms | Schnelle PTP-Jitter-Peaks mitteln ohne die Langzeit-Genauigkeit zu beeinflussen |
+| 7-Seg-Zeitstempel (PTP, NTP) | 0.25 | ~60 ms | Flackern beim Sekundenwechsel dämpfen, praktisch kein sichtbarer Lag |
+
+Die **Rohwerte** werden weiterhin unverändert für Zeitberechnungen (`ptpNow`, `ntpNow`, Δ-Formeln) verwendet. Nur die angezeigten Pixelwerte (Zahlentext in den Seg7- und Delta-Feldern) werden geglättet.
+
+Hintergrund: PTP-Offset bei kurzen Polling-Intervallen (250 ms) zeigt starke Burst-Varianz durch Netzwerk-Jitter. Ohne EMA springen die Anzeigen ständig und sind schwer lesbar. α=0.05 entspricht einem ~20-Sample-Fenster (≈ 5 s bei 250 ms Poll), was Kurzzeit-Peaks effektiv dämpft, ohne Langzeittrends zu verschleppen.
+
+### LED-Pegel (`.ledMeter`)
+
+```css
+.ledMeter { display: inline-flex; gap: 2px; padding: 5px 6px; border-radius: 8px; }
+.led      { width: 5px; height: 9px; border-radius: 2px; }
+```
+
+**Wichtige Designentscheidung `inline-flex`:** Mit `display:flex` dehnt sich der Container auf die volle Kartenbreite aus — der Rahmen ist dann viel breiter als die LEDs. `inline-flex` lässt den Container auf die tatsächliche LED-Fläche schrumpfen.
+
+**dBFS-Text inline:** Ein äusseres `.ledWrap { display:flex; align-items:center; gap:8px }` hält Meter und Textlabel (`#ltcLevelText`) auf einer Linie nebeneinander statt übereinander.
+
+LED-Grösse bewusst klein (5×9 px, halbe ursprüngliche Grösse): Der Pegel ist eine Zusatzinformation — die 7-Seg-Zeitanzeigen sind das primäre visuelle Element.
+
+### Rollende Fehlerzähler — Bug-Fix
+
+**Problem:** `update_ptp()`, `update_ntp()`, `update_ltc()` erzeugten Events direkt mit `self._events.appendleft(Event(...))` — dies umging `add_event()`, die einzige Stelle wo `_roll_err`, `_roll_warn`, `_roll_alarm` inkrementiert wurden. Alle realen Zustandsänderungs-Events (PTP_LOST, NTP_LOST, LTC_LOST, GM_CHANGED, Offset-Sprünge) flossen nicht in die Zähler ein.
+
+**Fix:** Private Methode `_append_event_locked(ev)` — führt `appendleft` und alle Counter-Updates aus und setzt voraus, dass der Lock bereits gehalten wird. `add_event()` (externe API) und alle `update_*`-Methoden rufen nur noch `_append_event_locked()` auf.
+
+### NTP-Staleness
+
+`chronyc tracking` liefert weiterhin `synced` + validen Stratum, nachdem das Netzwerk getrennt wurde — bis chrony intern entscheidet, dass es keine valide Quelle mehr hat (kann viele Minuten dauern). Lösung:
+
+```
+last_update_age_s = now − Ref_time_UTC
+if status == "synced" and last_update_age_s > ntp_stale_threshold_s:
+    status = "stale"
+```
+
+`Ref time (UTC)` aus `chronyc tracking` ist der Zeitstempel der letzten erfolgreichen NTP-Referenzmessung (nicht das Abfragezeitpunkt — diese Verwechslung war ein früherer Bug, der `Update age` immer 0.0 zeigte).
+
+**Threshold-Wahl:** Chrony's adaptives Polling steigert das Poll-Intervall bei stabilem Systemclock bis auf `maxpoll=10` (= 2^10 = 1024 s ≈ 17 min). Ein Threshold unterhalb dieses Werts löst im Normalbetrieb fälschlich `stale`-Alarme aus. Der Standard-Threshold von **1200 s** liegt ca. 3 min über dem maximalen Poll-Intervall und gibt damit ausreichend Puffer, ohne Netzwerkausfälle zu spät zu erkennen.
+
+Status-Werte NTP: `synced` → `stale` → `unsynced` → `unknown`. Bei `stale` und `unsynced` graut die NTP-7-Seg-Anzeige aus (`ntpNow = null`).
 
 ---
 

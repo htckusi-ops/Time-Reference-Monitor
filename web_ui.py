@@ -105,6 +105,7 @@ def ui_html() -> str:
             <button class="nav-item" id="btnReload">&#8635; Reload</button>
             <a class="nav-item" href="/ltc-clock" target="_blank" rel="noopener">&#9654; Screen Clock…</a>
             <a class="nav-item" id="btnLtcSpectrum" href="/spectrum" target="_blank" rel="noopener">&#126;&#126; LTC Spectrum…</a>
+            <a class="nav-item" href="/ltc-raw" target="_blank" rel="noopener">&#128250; LTC Raw Output…</a>
             <a class="nav-item" href="/tcpdump" target="_blank" rel="noopener">&#128268; PTP Capture…</a>
             <a class="nav-item" href="/settings">&#9881; Settings</a>
             <div class="nav-sep"></div>
@@ -131,33 +132,11 @@ def ui_html() -> str:
 
         <div class="timeLabel">LTC</div>
         <div class="timeStatus muted" id="ltcStatusBadge">—</div>
-        <div class="seg-wrap" id="ltcTimeSegs" style="opacity:0.18">00:00:00.00</div>
+        <div class="seg-wrap" id="ltcTimeSegs" style="opacity:0.18">00:00:00:00</div>
       </div>
 
 <div id="ltcDevice" data-device="{config.LTC_ALSA_DEVICE}"></div>
-      <div class="delta-grid">
-        <div class="smalltime" id="ntpDateLine">NTP Date: —</div>
-        <div class="smalltime" id="ptpDateLine">PTP Date: —</div>
-
-        <div class="smalltime" id="ntpTzLine">NTP TZ: —</div>
-        <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
-
-        <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
-        <div class="smalltime" id="alsaDelayLine">ALSA cap. delay: —</div>
-
-        <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
-        <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
-
-        <div class="smalltime muted"></div>
-        <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
-      </div>
-      <div class="smalltime">
-      LTC Audio Level ({config.LTC_ALSA_DEVICE})
-        </div>
-        <div class="ledWrap">
-          <div id="ltcLedMeter" class="ledMeter"></div>
-          <div id="ltcLevelText" class="ledText">—</div>
-        </div>
+      <div class="smalltime" id="dateLine" style="margin:4px 0 8px;">Date  NTP: — | PTP: — | LTC: —</div>
       <div class="hr"></div>
       <h3 style="margin-bottom:8px;">PTP</h3>
       <div class="kv2">
@@ -211,9 +190,41 @@ def ui_html() -> str:
           <div class="kv-k">Frequency</div><div class="kv-v" id="ntpFreqLine">—</div>
         </div>
       </div>
+
+      <div class="hr"></div>
+      <h3 style="margin-bottom:8px;">LTC</h3>
+      <div class="kv2">
+        <div class="kv">
+          <div class="kv-k">Timecode (raw)</div><div class="kv-v" id="ltcTcLine">—</div>
+          <div class="kv-k">Frame rate</div><div class="kv-v" id="ltcFpsLine">—</div>
+          <div class="kv-k">ALSA delay</div><div class="kv-v" id="ltcAlsaLine">—</div>
+          <div class="kv-k">Update age</div><div class="kv-v" id="ltcAgeLine">—</div>
+        </div>
+        <div class="kv">
+          <div class="kv-k">Date</div><div class="kv-v" id="ltcDateLine">—</div>
+          <div class="kv-k">Timezone</div><div class="kv-v" id="ltcInferredTzLine">—</div>
+          <div class="kv-k">User Bits</div><div class="kv-v mono" id="ltcUbLine">—</div>
+        </div>
+      </div>
     </div>
 
     <div class="card">
+      <div class="delta-grid" style="margin-bottom:6px;">
+        <div class="smalltime" id="ntpTzLine">NTP TZ: —</div>
+        <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
+
+        <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
+        <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
+
+        <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
+        <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
+      </div>
+      <div class="smalltime">LTC Audio Level ({config.LTC_ALSA_DEVICE})</div>
+      <div class="ledWrap">
+        <div id="ltcLedMeter" class="ledMeter"></div>
+        <div id="ltcLevelText" class="ledText">—</div>
+      </div>
+      <div class="hr"></div>
       <div class="split">
         <h3>Rolling Error Summary</h3>
         <div class="row">
@@ -252,6 +263,13 @@ def ui_html() -> str:
           <tbody></tbody>
         </table>
       </div>
+
+      <div id="locationBox" style="display:none; margin-top:12px; padding:8px 12px;
+           background:rgba(0,0,0,.2); border:1px solid rgba(38,50,71,.7); border-radius:10px;
+           font-size:12px; color:var(--muted);">
+        <span style="color:var(--text);">Standort</span>&nbsp;&nbsp;<span id="locationText"
+          style="white-space:pre-wrap;"></span>
+      </div>
     </div>
   </div>
 
@@ -270,8 +288,35 @@ def ui_html() -> str:
   // This ensures both displays freeze when the RPi goes offline, and reflect RPi time
   // (not the browser's local clock) when accessed from a remote computer.
   let srvBaseMs  = null;   // RPi UTC ms at last API receipt
-  let srvLocalMs = null;   // browser Date.now() when API was received
+  let srvLocalMs = null;   // browser Date.now() when API was received (monotonic guard)
+  let lastApiMs  = null;   // browser Date.now() on every successful API response
   let ptpCanTick = false;
+
+  // EMA smoothing for rapidly-changing display values (α=0.05 ≈ 20-sample window)
+  const EMA_A = 0.05;
+  function _ema(prev, v) {{ return prev == null ? v : EMA_A * v + (1 - EMA_A) * prev; }}
+  let _emaPtpOffNs    = null;
+  let _emaPtpDelayNs  = null;
+  let _emaDeltaNtpPtp = null;
+  let _emaDeltaLtcNtp = null;
+  let _emaDeltaLtcAdj = null;
+  let _emaDeltaLtcRaw = null;
+
+  // Very light EMA on 7-seg display timestamps to damp second-boundary flicker.
+  // α=0.25 at 20 ms refresh → time constant ≈ 60 ms; visually imperceptible lag.
+  let _smPtpMs = null;
+  let _smNtpMs = null;
+
+  // LTC timezone inferred from ltc_date vs PTP UTC (ms offset, null = unknown).
+  // Rounded to nearest 15 min. When set, 7-seg shows UTC = LTC_local - TZ.
+  let _ltcInferredTzMs = null;
+
+  // Combined date line state (NTP / PTP / LTC)
+  let _dateNtp = '—', _datePtp = '—', _dateLtc = '—';
+  function _updDate() {{
+    const d = els('dateLine');
+    if (d) d.textContent = 'Date  NTP: ' + _dateNtp + '  |  PTP: ' + _datePtp + '  |  LTC: ' + _dateLtc;
+  }}
 
   const els = (id) => document.getElementById(id);
 
@@ -332,13 +377,12 @@ function renderLedMeter(ledPeak){{
 
   function pad2(n) {{ return String(n).padStart(2,'0'); }}
 
-  function renderSevenSeg(el, timeStr) {{
+  function renderSevenSeg(el, timeStr, placeholder) {{
     if(!el) return;
-    // Use '00:00:00.00' as placeholder (not '--:--:--.--') so that the Seg7 font
-    // renders the same-width digit glyphs in both active and inactive states.
-    // The '-' glyph is narrower than digits in Seg7, causing the grid column to
-    // resize when the display switches between placeholder and live time.
-    el.textContent = timeStr || '00:00:00.00';
+    // Use same-width digit-only placeholder so the Seg7 font doesn't resize the
+    // grid column when switching between inactive and live state.
+    // LTC passes '00:00:00:00' (frame separator); PTP/NTP use '00:00:00.00' (ms).
+    el.textContent = timeStr || placeholder || '00:00:00.00';
     el.style.opacity = timeStr ? '' : '0.18';
   }}
 
@@ -423,6 +467,7 @@ function renderLedMeter(ledPeak){{
 
   function applyApi(data){{
     lastApi = data;
+    lastApiMs = Date.now();
     const meta = data.meta || {{}};
     const st = data.status || {{}};
     const ntp = data.ntp || {{}};
@@ -433,7 +478,26 @@ function renderLedMeter(ledPeak){{
     els('pillMeta').textContent = `${{meta.source || '—'}} | ${{meta.iface || '—'}} | domain=${{meta.domain ?? '—'}} | poll=${{meta.poll_s ?? '—'}}s`;
     els('footMeta').textContent = `API: ${{meta.ts_utc || '—'}}`;
 
-    els('sourceLine').textContent = meta.source || '—';
+    // Location box
+    const loc = (meta.device_location || '').trim();
+    const locBox = els('locationBox');
+    if (loc) {{ els('locationText').textContent = loc; locBox.style.display = ''; }}
+    else {{ locBox.style.display = 'none'; }}
+
+    // Source: "mock", "real / local (MASTER)", "real / remote (SLAVE)", "real"
+    (function() {{
+      const src = meta.source || '';
+      if (src === 'mock') {{ els('sourceLine').textContent = 'mock'; return; }}
+      if (src === 'real') {{
+        const ps = (st.port_state || '').toUpperCase();
+        if (ps === 'MASTER') {{ els('sourceLine').textContent = 'real / local (MASTER)'; }}
+        else if (ps === 'SLAVE' || ps === 'UNCALIBRATED') {{ els('sourceLine').textContent = 'real / remote (' + ps + ')'; }}
+        else if (ps && ps !== 'UNKNOWN') {{ els('sourceLine').textContent = 'real / ' + ps.toLowerCase(); }}
+        else {{ els('sourceLine').textContent = 'real'; }}
+        return;
+      }}
+      els('sourceLine').textContent = src || '—';
+    }})();
     els('ifaceLine').textContent = meta.iface || '—';
     els('domainLine').textContent = String(meta.domain ?? '—');
 
@@ -446,8 +510,10 @@ function renderLedMeter(ledPeak){{
     els('gmPresentLine').textContent = String(!!st.gm_present);
     els('portStateLine').textContent = st.port_state || '—';
     els('ptpVerLine').textContent = st.ptp_versions || '—';
-    els('offLine').textContent = (st.offset_ns != null) ? String(st.offset_ns) : '—';
-    els('delayLine').textContent = (st.mean_path_delay_ns != null) ? String(st.mean_path_delay_ns) : '—';
+    _emaPtpOffNs   = (st.offset_ns           != null) ? _ema(_emaPtpOffNs,   st.offset_ns)           : null;
+    _emaPtpDelayNs = (st.mean_path_delay_ns  != null) ? _ema(_emaPtpDelayNs, st.mean_path_delay_ns)  : null;
+    els('offLine').textContent   = (_emaPtpOffNs   != null) ? _emaPtpOffNs.toFixed(0)   + ' ns' : '—';
+    els('delayLine').textContent = (_emaPtpDelayNs != null) ? _emaPtpDelayNs.toFixed(0) + ' ns' : '—';
     els('ageLine').textContent = (st.poll_age_ms != null) ? String(st.poll_age_ms) : '—';
     els('noPtpLine').textContent = st.no_ptp_since_utc || '—';
     els('gmChgLine').textContent = String(roll.gm_changes_rolling ?? '—');
@@ -497,15 +563,68 @@ function renderLedMeter(ledPeak){{
     else if(ltc.present) {{ ltcStat.className = 'timeStatus ok'; ltcStat.textContent = 'present' + (ltc.fps ? ' '+ltc.fps+'fps' : ''); }}
     else {{ ltcStat.className = 'timeStatus warn'; ltcStat.textContent = 'absent'; }}
 
-    // LTC 7-segment time (convert HH:MM:SS:FF → HH:MM:SS.CC)
+    // LTC status section
+    els('ltcTcLine').textContent   = tc;
+    els('ltcFpsLine').textContent  = fps;
+    els('ltcAlsaLine').textContent = (ltc.alsa_delay_ms != null) ? ltc.alsa_delay_ms.toFixed(1) + ' ms' : '—';
+    els('ltcAgeLine').textContent  = age;
+    els('ltcDateLine').textContent = ltc.ltc_date || '—';
+    els('ltcUbLine').textContent   = ltc.user_bits || '—';
+    _dateLtc = ltc.ltc_date || '—'; _updDate();
+
+    // LTC timezone: direct from ltcdump -F (±HHMM), or infer from date vs PTP UTC.
+    _ltcInferredTzMs = null;
+    if (ltc.ltc_tz) {{
+      // ltcdump -F supplies timezone directly as "±HHMM", e.g. "+0100"
+      const tzSign = ltc.ltc_tz.charAt(0) === '+' ? 1 : -1;
+      const tzH = parseInt(ltc.ltc_tz.slice(1, 3), 10);
+      const tzM = parseInt(ltc.ltc_tz.slice(3, 5), 10);
+      _ltcInferredTzMs = tzSign * (tzH * 3600000 + tzM * 60000);
+      els('ltcInferredTzLine').textContent = 'UTC' + ltc.ltc_tz.charAt(0) + pad2(tzH) + ':' + pad2(tzM);
+    }} else if (ltc.ltc_date && ltc.timecode && st.ptp_valid && st.ptp_time_utc_iso) {{
+      // Fallback: infer offset by treating LTC date+time as UTC, subtract PTP UTC.
+      const _tm = ltc.timecode.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}})/);
+      if (_tm) {{
+        const ltcAsUtcMs = new Date(ltc.ltc_date + 'T' + _tm[1] + ':' + _tm[2] + ':' + _tm[3] + '.000Z').getTime();
+        const ptpUtcMs   = new Date(st.ptp_time_utc_iso).getTime();
+        let diff = ltcAsUtcMs - ptpUtcMs;
+        while (diff < -12 * 3600000) diff += 86400000;
+        while (diff >  14 * 3600000) diff -= 86400000;
+        _ltcInferredTzMs = Math.round(diff / 900000) * 900000;
+      }}
+      if (_ltcInferredTzMs !== null) {{
+        const _s = _ltcInferredTzMs >= 0 ? '+' : '-';
+        const _a = Math.abs(_ltcInferredTzMs);
+        els('ltcInferredTzLine').textContent = 'UTC' + _s + pad2(Math.floor(_a/3600000)) + ':' + pad2(Math.floor((_a%3600000)/60000));
+      }} else {{
+        els('ltcInferredTzLine').textContent = '—';
+      }}
+    }} else {{
+      els('ltcInferredTzLine').textContent = '—';
+    }}
+
+    // LTC 7-segment: show HH:MM:SS:FF (frames, not centiseconds).
+    // If TZ known → convert to UTC equivalent, then reconstruct frame number.
     if(ltc.enabled && ltc.present && tc && tc !== '—') {{
       const tcm = tc.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}}):(\d{{2}})$/);
       if(tcm) {{
-        const fpsN = Number(ltc.fps) || 25;
-        const cs = Math.min(99, Math.round(Number(tcm[4]) / fpsN * 100));
-        renderSevenSeg(els('ltcTimeSegs'), tcm[1]+':'+tcm[2]+':'+tcm[3]+'.'+pad2(cs));
-      }} else {{ renderSevenSeg(els('ltcTimeSegs'), null); }}
-    }} else {{ renderSevenSeg(els('ltcTimeSegs'), null); }}
+        const fpsN = Math.max(1, Number(ltc.fps) || 25);
+        const ff   = parseInt(tcm[4], 10);
+        if (_ltcInferredTzMs !== null) {{
+          // Include frame as fractional ms so UTC wraps correctly at midnight.
+          const lMs = parseInt(tcm[1])*3600000 + parseInt(tcm[2])*60000
+                    + parseInt(tcm[3])*1000 + Math.round(ff / fpsN * 1000);
+          const uMs = ((lMs - _ltcInferredTzMs) % 86400000 + 86400000) % 86400000;
+          const uff = Math.min(fpsN - 1, Math.floor((uMs % 1000) / 1000 * fpsN));
+          renderSevenSeg(els('ltcTimeSegs'),
+            pad2(Math.floor(uMs/3600000))+':'+pad2(Math.floor((uMs%3600000)/60000))+':'+
+            pad2(Math.floor((uMs%60000)/1000))+':'+pad2(uff), '00:00:00:00');
+        }} else {{
+          renderSevenSeg(els('ltcTimeSegs'),
+            tcm[1]+':'+tcm[2]+':'+tcm[3]+':'+pad2(ff), '00:00:00:00');
+        }}
+      }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
+    }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
 
     // rolling summary
     const eR = Number(roll.errors_rolling ?? 0);
@@ -535,10 +654,9 @@ function renderLedMeter(ledPeak){{
     else if(ageMs > staleTh) {{ ptpStat.className = 'timeStatus alarm'; ptpStat.textContent = 'STALE DATA'; }}
     else {{ ptpStat.className = 'timeStatus ok'; ptpStat.textContent = 'SYNC OK'; }}
 
-    // PTP date
-    els('ptpDateLine').textContent = (st.ptp_valid && st.ptp_time_utc_iso)
-      ? 'PTP Date: ' + st.ptp_time_utc_iso.slice(0,10)
-      : 'PTP Date: —';
+    // PTP date (combined date line)
+    _datePtp = (st.ptp_valid && st.ptp_time_utc_iso) ? st.ptp_time_utc_iso.slice(0,10) : '—';
+    _updDate();
 
     ptpCanTick = canTick;
 
@@ -572,8 +690,11 @@ function renderLedMeter(ledPeak){{
 
   function uiTick(){{
     // RPi system clock interpolated from last API response.
-    // Freezes when RPi goes offline; used as base for NTP and PTP corrections.
-    const srvNow = (srvBaseMs != null && srvLocalMs != null)
+    // If the backend has been unreachable longer than the stale threshold,
+    // treat srvNow as null so all time displays grey out (not just PTP badge).
+    const staleTh = (lastApi?.meta?.stale_threshold_ms ?? 2000);
+    const apiAgeMs = lastApiMs != null ? (Date.now() - lastApiMs) : Infinity;
+    const srvNow = (srvBaseMs != null && srvLocalMs != null && apiAgeMs <= staleTh + 1000)
       ? new Date(srvBaseMs + (Date.now() - srvLocalMs))
       : null;
 
@@ -590,28 +711,26 @@ function renderLedMeter(ledPeak){{
     const ntpNow = (srvNow && ntpLive) ? new Date(srvNow.getTime() + ntpOffsetMs) : null;
 
     if(ntpNow) {{
-      const nh = ntpNow.getUTCHours(), nm = ntpNow.getUTCMinutes(), ns2 = ntpNow.getUTCSeconds();
-      const ncs = Math.floor(ntpNow.getUTCMilliseconds() / 10);
+      _smNtpMs = _smNtpMs == null ? ntpNow.getTime() : 0.25 * ntpNow.getTime() + 0.75 * _smNtpMs;
+      const dispNtp = new Date(_smNtpMs);
+      const nh = dispNtp.getUTCHours(), nm = dispNtp.getUTCMinutes(), ns2 = dispNtp.getUTCSeconds();
+      const ncs = Math.floor(dispNtp.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
-      els('ntpDateLine').textContent = 'NTP Date: ' + ntpNow.toISOString().slice(0,10);
+      _dateNtp = ntpNow.toISOString().slice(0,10); _updDate();
       // TZ offset from RPi server (meta.tz_offset_s); falls back to browser TZ if unavailable
       const srvTzOffS = meta.tz_offset_s != null ? meta.tz_offset_s : null;
       const tzOffMin = srvTzOffS != null ? Math.round(srvTzOffS / 60) : -srvNow.getTimezoneOffset();
       const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
       els('ntpTzLine').textContent = 'NTP TZ: UTC' + (tzOffMin>=0?'+':'-') + pad2(tzH)+':'+pad2(tzM);
     }} else {{
+      _smNtpMs = null;
       renderSevenSeg(els('ntpTimeSegs'), null);
-      els('ntpDateLine').textContent = 'NTP Date: —';
+      _dateNtp = '—'; _updDate();
       els('ntpTzLine').textContent = 'NTP TZ: —';
     }}
 
     const ltc = lastApi ? (lastApi.ltc || {{}}) : {{}};
     const alsaDelayMs = (ltc.alsa_delay_ms != null) ? Number(ltc.alsa_delay_ms) : 0;
-
-    // ALSA delay display
-    els('alsaDelayLine').textContent = (ltc.alsa_delay_ms != null)
-      ? 'ALSA cap. delay: ' + alsaDelayMs.toFixed(1) + ' ms'
-      : 'ALSA cap. delay: —';
 
     // Δ(LTC-NTP): LTC corrected for ALSA delay vs pure NTP time
     if(ntpNow && ltc.enabled && ltc.present && ltc.timecode) {{
@@ -620,17 +739,20 @@ function renderLedMeter(ledPeak){{
       if(ltcTod != null) {{
         const ltcCorr = ltcTod - alsaDelayMs;
         const ntpTod = todMsFromUtcDate(ntpNow);
-        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): ' + wrapDeltaMs(ltcCorr - ntpTod).toFixed(3) + ' ms';
+        _emaDeltaLtcNtp = _ema(_emaDeltaLtcNtp, wrapDeltaMs(ltcCorr - ntpTod));
+        els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): ' + _emaDeltaLtcNtp.toFixed(3) + ' ms';
       }} else {{
+        _emaDeltaLtcNtp = null;
         els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
       }}
     }} else {{
+      _emaDeltaLtcNtp = null;
       els('deltaLtcNtpLine').textContent = 'Δ(LTC-NTP): —';
     }}
 
     if(!lastApi) {{
       renderSevenSeg(els('ptpTimeSegs'), null);
-      els('ptpDateLine').textContent = 'PTP Date: —';
+      _datePtp = '—'; _updDate();
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
@@ -647,14 +769,14 @@ function renderLedMeter(ledPeak){{
       : 0;
     const ptpNow = srvNow ? new Date(srvNow.getTime() + ptpDeltaMs) : null;
 
-    els('ptpDateLine').textContent = (st.ptp_valid && st.ptp_time_utc_iso)
-      ? 'PTP Date: ' + st.ptp_time_utc_iso.slice(0,10)
-      : 'PTP Date: —';
+    _datePtp = (st.ptp_valid && st.ptp_time_utc_iso) ? st.ptp_time_utc_iso.slice(0,10) : '—';
+    _updDate();
 
     if(ptpCanTick && ptpNow) {{
-      // PTP 7-segment: pure PTP grandmaster time
-      const ph = ptpNow.getUTCHours(), pm = ptpNow.getUTCMinutes(), ps = ptpNow.getUTCSeconds();
-      const pcs = Math.floor(ptpNow.getUTCMilliseconds() / 10);
+      _smPtpMs = _smPtpMs == null ? ptpNow.getTime() : 0.25 * ptpNow.getTime() + 0.75 * _smPtpMs;
+      const dispPtp = new Date(_smPtpMs);
+      const ph = dispPtp.getUTCHours(), pm = dispPtp.getUTCMinutes(), ps = dispPtp.getUTCSeconds();
+      const pcs = Math.floor(dispPtp.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
 
       // Δ(NTP-PTP) = NTP_time - PTP_time
@@ -663,12 +785,14 @@ function renderLedMeter(ledPeak){{
       // Fallback: offset_ns/1e6 from ptp4l alone (= Δ(system - PTP_master)).
       const offNs = st.offset_ns;
       if(ntp.system_offset_s != null && offNs != null) {{
-        els('deltaLine').textContent = 'Δ(NTP-PTP): ' + (ntpOffsetMs - ptpDeltaMs).toFixed(3) + ' ms';
+        _emaDeltaNtpPtp = _ema(_emaDeltaNtpPtp, ntpOffsetMs - ptpDeltaMs);
       }} else if(offNs != null) {{
-        els('deltaLine').textContent = 'Δ(NTP-PTP): ' + (offNs / 1e6).toFixed(3) + ' ms';
+        _emaDeltaNtpPtp = _ema(_emaDeltaNtpPtp, offNs / 1e6);
       }} else {{
-        els('deltaLine').textContent = 'Δ(NTP-PTP): —';
+        _emaDeltaNtpPtp = null;
       }}
+      els('deltaLine').textContent = _emaDeltaNtpPtp != null
+        ? 'Δ(NTP-PTP): ' + _emaDeltaNtpPtp.toFixed(3) + ' ms' : 'Δ(NTP-PTP): —';
 
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
@@ -682,20 +806,26 @@ function renderLedMeter(ledPeak){{
         const ptpTodLocal = ptpTodUtc + srvTzMs;
         if(ltcTod != null) {{
           const ltcCorr = ltcTod - alsaDelayMs;
-          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + wrapDeltaMs(ltcCorr - ptpTodLocal).toFixed(3) + ' ms';
-          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + wrapDeltaMs(ltcCorr - ptpTodUtc).toFixed(3) + ' ms';
+          _emaDeltaLtcAdj = _ema(_emaDeltaLtcAdj, wrapDeltaMs(ltcCorr - ptpTodLocal));
+          _emaDeltaLtcRaw = _ema(_emaDeltaLtcRaw, wrapDeltaMs(ltcCorr - ptpTodUtc));
+          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + _emaDeltaLtcAdj.toFixed(3) + ' ms';
+          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + _emaDeltaLtcRaw.toFixed(3) + ' ms';
           els('ltcTzLine').textContent = 'System TZ (PTP): ' + (srvTzMs/1000).toFixed(0) + ' s (' + srvTzMs.toFixed(0) + ' ms)';
         }} else {{
+          _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
           els('ltcTzLine').textContent = 'System TZ (PTP): —';
         }}
       }} else {{
+        _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
         els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
         els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
         els('ltcTzLine').textContent = 'System TZ (PTP): —';
       }}
     }} else {{
+      _smPtpMs = null;
+      _emaDeltaNtpPtp = null; _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
       renderSevenSeg(els('ptpTimeSegs'), null);
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
@@ -707,7 +837,10 @@ function renderLedMeter(ledPeak){{
   els('btnReload').addEventListener('click', () => {{ window.location.reload(); }});
 
   els('btnResetSummaries').addEventListener('click', async () => {{
-    await fetch('/api/reset-summaries', {{method:'POST'}});
+    try {{
+      const r = await fetch('/api/reset-summaries', {{method:'POST'}});
+      if (r.ok) await pollApi();
+    }} catch(e) {{}}
   }});
 
   els('btnReboot').addEventListener('click', async () => {{
@@ -904,7 +1037,16 @@ def spectrum_html() -> str:
       const ts = Date.now();
       const url = '/api/spectrum/audio?ts=' + ts;
       el('audioPlayer').src = url;
-      el('audioDownload').href = url;
+      const ad = el('audioDownload');
+      ad.href = url;
+      const d = j.last_generated_utc ? new Date(j.last_generated_utc) : new Date(ts);
+      ad.download = d.getUTCFullYear().toString()
+        + String(d.getUTCMonth()+1).padStart(2,'0')
+        + String(d.getUTCDate()).padStart(2,'0') + '-'
+        + String(d.getUTCHours()).padStart(2,'0') + '_'
+        + String(d.getUTCMinutes()).padStart(2,'0') + '_'
+        + String(d.getUTCSeconds()).padStart(2,'0')
+        + '_UTC-LTC_Capture.wav';
       el('audioWrap').style.display='block';
     }}
     return j;

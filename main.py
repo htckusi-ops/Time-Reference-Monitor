@@ -223,9 +223,10 @@ def main() -> None:
     def meta_provider():
         with _src_lock:
             active = "mock" if _src["mock"] else "real"
+        from network_mgr import get_device_location
         # Override static meta["domain"] with the live (possibly user-changed) value
         return {**meta, "tz_offset_s": time.localtime().tm_gmtoff, "source": active,
-                "domain": get_ptp_domain()}
+                "domain": get_ptp_domain(), "device_location": get_device_location()}
 
     def ptp_loop():
         last_poll = time.monotonic()
@@ -328,6 +329,7 @@ def main() -> None:
             bus,
             meta_provider,
             spectrum=spectrum,
+            ltc_mon=ltc_mon,
             ui_refresh_ms=int(args.ui_refresh_ms),
             ui_api_poll_ms=int(args.ui_api_poll_ms),
             get_ptp_source=get_ptp_source,
