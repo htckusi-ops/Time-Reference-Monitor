@@ -946,5 +946,21 @@ run.py [--source mock|real] [--iface IFACE] [--domain N] [--poll S]
 Vollständige Beschreibung: `Time_Reference_Monitor_Anleitung_DE.txt`
 
 ---
+## License
+
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0-only).
+See the [LICENSE](LICENSE) file for the full license text.
+
+## Disclaimer
+
+This software was created privately by Markus Gerber in personal time and as an independent side project.
+
+It is not a commissioned work and was not developed as part of an employer-assigned deliverable.
+
+The software is tested and used within a professional environment for training, evaluation, and monitoring purposes. Such use does not by itself change the private origin of the project.
+
+All rights to this repository and its source code remain with the author, unless explicitly agreed otherwise in writing.
+---
+
 
 *Markus Gerber &lt;dev@npn.ch&gt;*
