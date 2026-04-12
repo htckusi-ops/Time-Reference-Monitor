@@ -15,14 +15,14 @@ Die folgenden Features wurden seit Erstellung dieses TODO-Dokuments implementier
 - **Header-Navigation-Dropdown**: `☰ Menu`-Button im Header, reines CSS-Hover; alle Seitenlinks und Systemaktionen (Reload, Reboot, Shutdown) darin; Dashboard-Karte von Buttons freigehalten
 - **Zweispaltige PTP/NTP-Statusblöcke**: PTP und NTP in getrennten, je zweispaltigen `.kv2`-Blöcken mit `<h3>`/`<hr>`-Trennung; PTP erweitert um GM-Priorität, Clock-Klasse/-Genauigkeit, Parent-Port, Time Source (dekodiert), Traceability, UTC-Offset, PTP-Timescale (via `GET TIME_PROPERTIES_DATA_SET`)
 - **Stabile Status-Spaltenbreite**: Fixe 140 px für Status-Spalte im bigtime-Grid; `white-space:normal; word-break:break-word` für Zeilenumbruch ohne Layout-Verschiebung
-- **NTP-Staleness-Erkennung**: Status `stale` wenn `Ref time (UTC)` älter als `--ntp-stale-threshold-s` (Standard 180 s); NTP-7-Seg graut aus; Event `NTP_STALE` (WARN); `ptp_versions` zeigt nur `v2` wenn PTP aktiv
+- **NTP-Staleness-Erkennung**: Status `stale` wenn `Ref time (UTC)` älter als `--ntp-stale-threshold-s` (Standard 1200 s); NTP-7-Seg graut aus; Event `NTP_STALE` (WARN); `ptp_versions` zeigt nur `v2` wenn PTP aktiv
 - **NTP Update-age-Fix**: `last_update_utc` war `utc_iso_ms()` (Abfragezeitpunkt) → immer 0.0; jetzt `Ref time (UTC)` aus `chronyc tracking` geparst
 - **Rolling-Counter-Bug-Fix**: `update_ptp/ntp/ltc` erzeugten Events direkt mit `appendleft()` an `add_event()` vorbei → Zähler immer 0; Fix: `_append_event_locked()` zentralisiert Append + Counter-Update
 - **Reset-Button Rolling Error Summary**: `POST /api/reset-summaries` → alle Rolling-Counter und Summaries auf 0
 - **LED-Pegel halbiert + inline**: LED-Grösse 10×18 → 5×9 px; `inline-flex` statt `flex` (Container schrumpft auf LED-Breite); dBFS-Text rechts neben dem Meter auf einer Linie
 - **LTC Raw Output** (`web_ltc_raw.py`, `/ltc-raw`): Live-Terminal für Decoder-Rohausgabe, Ring-Buffer 500 Zeilen, Pause/Resume (Zeilen gehen nicht verloren), Clear-Button; `/api/ltc/raw-lines?since=N` poll-basiertes Streaming; Timestamp + Farb-Highlighting (Timecode blau, Datum grün, NO_LTC rot)
 - **LTC Datum + Timezone + User Bits**: `alsaltc` dekodiert via `LTC_USE_DATE`; Ausgabeformat `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD`; `LTCStatus.ltc_tz` neu; Web-UI zeigt Timezone-Zeile (direkt aus User Bits); User-Bits-Zeile (`64 26 04 08`) in LTC-Statusblock
-- **4-stufige Parser-Kette** in `sources_ltc.py`: `_LTCDUMP_F_RE` (date+tz+optional UB) → `_LTCDUMP_F_UB_RE` (UB vor TC) → `_DATE_RE` → `_UB_RE` (Nibbles) → `_UB_TAIL_RE` (Fallback UB am Zeilenende)
+- **5-stufige Parser-Kette** in `sources_ltc.py`: `_LTCDUMP_F_RE` (date+tz+optional UB) → `_LTCDUMP_F_UB_RE` (UB vor TC) → `_DATE_RE` → `_UB_RE` (Nibbles) → `_UB_TAIL_RE` (Fallback UB am Zeilenende)
 - **NTP-Server exklusiv setzen** (`network_mgr.py`): `set_ntp_server()` schreibt nicht mehr in `sources.d` (addiert nur), sondern schreibt `chrony.conf` direkt via `sudo tee` um — alle bestehenden `pool`/`server`-Zeilen werden auskommentiert, Custom-Server wird einmalig eingefügt. Persistenz in `/var/lib/time-reference-monitor/ntp_server`. `update.sh` wendet denselben Ersatz-Algorithmus (python3) nach jedem `git pull` wieder an.
 
 ---
