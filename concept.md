@@ -81,7 +81,7 @@ Das Backend betreibt vier dauerlaufende Threads neben dem Flask-HTTP-Server:
 
 | Thread | Aufgabe | Intervall |
 |--------|---------|-----------|
-| `ptp_loop` | `pmc`-Abfragen, PTP-Status in `status_bus` schreiben | `--poll` (250 ms) |
+| `ptp_loop` | `pmc`-Abfragen, PTP-Status in `status_bus` schreiben | `--poll` (500 ms) |
 | `ntp_loop` | `chronyc tracking` parsen, NTP-Status schreiben | `--ntp-refresh-s` (250 ms) |
 | `ltc_snapshot_loop` | Snapshot von `sources_ltc` holen, in `status_bus` schreiben | `--ltc-refresh-s` (250 ms) |
 | `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD` \| `NO_LTC` | kontinuierlich |
@@ -101,12 +101,19 @@ Zusätzlich gibt es **kurzlebige Scan-Threads** auf Anfrage:
 
 Zentrale State-Machine und Event-Bus. Hält den aktuellen Zustand aller drei Zeitquellen und generiert Events bei Übergängen:
 
-- `PTP_LOSS` / `PTP_OK` — Ausfall und Wiederherstellung
-- `GM_CHANGE` — Grandmaster-Wechsel
-- `NTP_UNSYNC` / `NTP_OK` — NTP-Statswechsel
-- `LTC_LOSS` / `LTC_OK` — LTC-Dropout
-- `LTC_JUMP` — Zeitsprung im LTC-Signal
-- `LTC_DECODE_ERROR` — Dekodierungsfehler
+- `PTP_LOST` (ALARM) / `PTP_RECOVERED` (INFO) — Ausfall und Wiederherstellung
+- `PTP_GM_CHANGED` (WARN) — Grandmaster-Wechsel
+- `PTP_PORT_STATE_CHANGED` (WARN/INFO) — Port-State-Übergang (SLAVE/UNCALIBRATED/…)
+- `PTP_OFFSET_JUMP` (WARN) — plötzlicher Offset-Sprung
+- `PTP_DRIFT_DETECTED` (WARN/ALARM) — anhaltende Offset-Drift
+- `NTP_LOST` (ALARM) / `NTP_RECOVERED` (INFO) — NTP-Ausfall und Wiederherstellung
+- `NTP_STALE` (WARN) — kein NTP-Update seit > `--ntp-stale-threshold-s`
+- `NTP_STATUS_CHANGED` (WARN) — Statuswechsel (z.B. unsynced → synced)
+- `NTP_REF_CHANGED` (WARN) — NTP-Referenzserver gewechselt
+- `NTP_OFFSET_JUMP` (WARN) — plötzlicher NTP-Offset-Sprung
+- `LTC_LOST` (WARN) / `LTC_RECOVERED` (INFO) — LTC-Dropout
+- `LTC_JUMP` (WARN) — Zeitsprung im LTC-Signal
+- `LTC_DECODE_ERROR` (WARN) — Dekodierungsfehler
 
 **Startup-Grace-Period:** In den ersten Sekunden nach dem Start werden WARN/ALARM-Events als `suppressed=True` markiert, damit initiale PTP-Lock-Transienten die Fehlerzähler nicht verfälschen.
 
@@ -121,7 +128,7 @@ ALSA hw:X,0
     │       stdout: "YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD" | "NO_LTC"
     │            │
     │            ▼
-    │       sources_ltc.py (4-stufige Parser-Kette)
+    │       sources_ltc.py (5-stufige Parser-Kette)
     │       Ring-Buffer 500 Zeilen (_raw_lines)
     │       Jump-Detektion (Frame-Count-Vergleich)
     │            │
@@ -141,7 +148,7 @@ ALSA hw:X,0
 
 `AABBCCDD` sind die rohen 8 User-Bit-Nibbles als Hex-String (gleiche Reihenfolge wie `ltcdump -F` ohne `-d`).
 
-**Parser-Kette in `sources_ltc.py`:** 4-stufiger Fallback, um alle ltcdump/alsaltc-Ausgabeformate zu unterstützen:
+**Parser-Kette in `sources_ltc.py`:** 5-stufiger Fallback, um alle ltcdump/alsaltc-Ausgabeformate zu unterstützen:
 1. `_LTCDUMP_F_RE` → `YYYY-MM-DD ±HHMM HH:MM:SS:FF [AABBCCDD]` (alsaltc + ltcdump -d -F)
 2. `_LTCDUMP_F_UB_RE` → `AABBCCDD HH:MM:SS:FF` (ltcdump -F ohne -d)
 3. `_DATE_RE` → sucht `YYYY-MM-DD` im Zeilerest
