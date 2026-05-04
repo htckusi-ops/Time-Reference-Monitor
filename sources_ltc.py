@@ -45,6 +45,15 @@ _UB_TAIL_RE = re.compile(r"\s([0-9A-Fa-f]{8})\s*$")
 _SUBPROCESS_WATCHDOG_S = 60.0
 
 
+def _drain_pipe(pipe) -> None:
+    """Read and discard all output from *pipe* — prevents pipe-buffer fill without blocking."""
+    try:
+        for _ in pipe:
+            pass
+    except Exception:
+        pass
+
+
 def _kill_pgroup(proc: subprocess.Popen) -> None:
     """Send SIGTERM to the whole process group, wait, then SIGKILL if needed.
 
@@ -401,15 +410,25 @@ class LTCMonitor:
             self._raw_seq += 1
 
     def _run(self) -> None:
+        # Restart backoff: doubles on each quick exit (< 5 s), resets on long-lived run.
+        # Prevents rapid open/close cycles from destabilising the USB audio driver.
+        _restart_backoff = 0.5
 
         while not self._stop.is_set():
             proc: Optional[subprocess.Popen] = None
+            _proc_start = time.monotonic()
             try:
                 proc = subprocess.Popen(
                     self.cmd,
                     shell=True,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                    # stderr MUST be separate from stdout.  alsaltc writes ALSA error
+                    # messages ("ALSA read error: …") to stderr.  If those reach the
+                    # stdout pipe (via STDOUT redirect) Python reads them as regular
+                    # lines and resets last_output_mono — silently bypassing the 60 s
+                    # watchdog.  Separated stderr is drained by a background thread so
+                    # the pipe buffer never fills and blocks alsaltc.
+                    stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,
                     # New process group so _kill_pgroup() reaches alsaltc even when
@@ -418,6 +437,11 @@ class LTCMonitor:
                     # orphan that holds the ALSA handle indefinitely.
                     preexec_fn=os.setsid,
                 )
+                # Drain stderr in a daemon thread — prevents pipe-buffer fill.
+                threading.Thread(
+                    target=_drain_pipe, args=(proc.stderr,),
+                    daemon=True, name="ltc-stderr-drain",
+                ).start()
                 assert proc.stdout is not None
 
                 # Reset per-process state
@@ -425,6 +449,7 @@ class LTCMonitor:
                 self._last_tc_mono = None
                 dropout_marked = False
                 last_output_mono = time.monotonic()  # watchdog reset point
+                _restart_backoff = 0.5               # reset on each successful start
 
                 while not self._stop.is_set():
                     # Periodic timeout so we can detect dropouts even if no output arrives
@@ -447,7 +472,7 @@ class LTCMonitor:
                         line = proc.stdout.readline()
                         if not line:
                             break
-                        last_output_mono = now  # any stdout resets watchdog
+                        last_output_mono = now  # stdout resets watchdog (LTC output only)
                         line = line.strip()
                         if not line:
                             continue
@@ -482,7 +507,6 @@ class LTCMonitor:
                                     with self._lock:
                                         self._status.jumps_total += 1
                                         self._jump_roll.add()
-                                    # Mark as present anyway, but keep raw line for diagnostics
                         self._last_tc_frames = _tc_to_frames(tc, self._fps_i) or self._last_tc_frames
                         self._last_tc_mono = now
                         dropout_marked = False
@@ -501,4 +525,13 @@ class LTCMonitor:
                     _kill_pgroup(proc)
 
             self._mark_absent()
-            time.sleep(0.5)
+
+            # Adaptive backoff: if the process exited quickly (ALSA error storm causes
+            # the C-level 500-error exit after ~10 s), increase the wait exponentially
+            # up to 30 s.  This prevents rapid open/close cycles from destabilising
+            # the USB audio driver (Tascam US-2x2HR / kernel snd-usb-audio).
+            if time.monotonic() - _proc_start < 5.0:
+                _restart_backoff = min(_restart_backoff * 2, 30.0)
+            else:
+                _restart_backoff = 0.5
+            self._stop.wait(timeout=_restart_backoff)
