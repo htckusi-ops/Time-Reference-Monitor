@@ -898,6 +898,10 @@ pollLtcLevel();
 
 
 def spectrum_html() -> str:
+    _dur_opts = "\n".join(
+        f'          <option value="{d}">{d} s</option>'
+        for d in config.SPECTRUM_ALLOWED_DURATIONS_S
+    )
     return f"""<!doctype html>
 <html>
 <head>
@@ -962,11 +966,7 @@ def spectrum_html() -> str:
         <input id="dev" value="{config.LTC_ALSA_DEVICE}" size="20"/>
         <label>Duration</label>
         <select id=\"dur\">
-          <option value=\"5\">5 s</option>
-          <option value=\"10\">10 s</option>
-          <option value=\"20\">20 s</option>
-          <option value=\"30\">30 s</option>
-          <option value=\"60\">60 s</option>
+{_dur_opts}
         </select>
         <button class=\"btn\" id=\"gen\">GENERATE</button>
         <span id=\"state\" class=\"muted\">—</span>

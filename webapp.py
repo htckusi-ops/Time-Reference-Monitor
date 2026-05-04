@@ -314,7 +314,7 @@ def create_app(
 
         if not device:
             return jsonify({"ok": False, "message": "Missing 'device'.", "ts_utc": _utc_iso_ms()}), 400
-        if duration_s <= 0 or duration_s > 120:
+        if duration_s <= 0 or duration_s > spectrum.max_duration_s:
             return jsonify({"ok": False, "message": "Invalid 'duration_s'.", "ts_utc": _utc_iso_ms()}), 400
 
         out = spectrum.generate(duration_s=duration_s, device=device)

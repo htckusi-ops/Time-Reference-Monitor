@@ -322,7 +322,13 @@ def main() -> None:
     else:
         bus.update_ltc(LTCStatus(enabled=False, present=False))
 
-    spectrum = SpectrumManager()
+    spectrum = SpectrumManager(
+        sample_rate=config.SPECTRUM_SAMPLE_RATE,
+        channels=config.SPECTRUM_CHANNELS,
+        fmt=config.SPECTRUM_FORMAT,
+        max_duration_s=config.SPECTRUM_MAX_DURATION_S,
+        tmp_dir=config.SPECTRUM_TMP_DIR,
+    )
 
     if args.http:
         app = create_app(
