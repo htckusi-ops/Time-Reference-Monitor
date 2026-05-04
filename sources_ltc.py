@@ -261,10 +261,12 @@ class LTCMonitor:
         self._last_tc_frames: Optional[int] = None
         self._last_tc_mono: Optional[float] = None
         self._jump_roll = RollingCounter(rolling_window_s)
-        self._alsa_probed = False   # retry flag: probe again on first LTC frame if initial probe fails
+        # False until the ALSA delay has been probed at least once from _mark_present().
+        # Allows one retry on the first LTC frame if the construction-time probe failed.
+        self._alsa_probed = False
 
-        # Probe ALSA capture delay once at construction time.
-        # May return None if the device is not yet ready; will retry on first LTC frame.
+        # Probe ALSA capture delay at construction time (before alsaltc starts).
+        # May return None if the device is not ready yet; _mark_present() will retry once.
         alsa_delay: Optional[float] = None
         if self.enabled:
             alsa_delay = _probe_alsa_delay_ms(self.device)
@@ -315,11 +317,15 @@ class LTCMonitor:
                 self._status.no_ltc_since_utc = utc_iso_ms()
 
     def _mark_present(self, tc: str, raw: str) -> None:
-        # Retry ALSA delay probe if the initial probe failed (device not ready at startup)
+        # One-shot retry: probe ALSA delay if the initial probe at construction failed.
+        # _alsa_probed is set True immediately (before calling) so this runs at most
+        # once per LTCMonitor lifetime.  Without this guard the probe ran on EVERY LTC
+        # frame (25+/s), spawning arecord subprocesses that competed with alsaltc for
+        # the dsnoop device — exhausting ALSA resources within seconds of boot.
         if not self._alsa_probed:
+            self._alsa_probed = True
             delay = _probe_alsa_delay_ms(self.device)
             if delay is not None:
-                self._alsa_probed = True
                 with self._lock:
                     self._status.alsa_delay_ms = delay
         # Parse date + timezone + raw user bits, tried in order:
