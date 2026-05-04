@@ -146,52 +146,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    snd_pcm_hw_params_t* hw_params;
-    snd_pcm_hw_params_alloca(&hw_params);
-    err = snd_pcm_hw_params_any(pcm, hw_params);
-    if (err < 0) {
-        fprintf(stderr, "snd_pcm_hw_params_any: %s\n", snd_strerror(err));
-        snd_pcm_close(pcm);
-        return 1;
-    }
-
-    err = snd_pcm_hw_params_set_access(pcm, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
-    if (err < 0) {
-        fprintf(stderr, "set_access: %s\n", snd_strerror(err));
-        snd_pcm_close(pcm);
-        return 1;
-    }
-
-    err = snd_pcm_hw_params_set_format(pcm, hw_params, format);
-    if (err < 0) {
-        fprintf(stderr, "ALSA set format %s: %s\n", format_str, snd_strerror(err));
-        snd_pcm_close(pcm);
-        return 1;
-    }
-
-    err = snd_pcm_hw_params_set_rate_near(pcm, hw_params, &rate, 0);
-    if (err < 0) {
-        fprintf(stderr, "set_rate: %s\n", snd_strerror(err));
-        snd_pcm_close(pcm);
-        return 1;
-    }
-
     unsigned ch_set = channels;
-    err = snd_pcm_hw_params_set_channels(pcm, hw_params, ch_set);
-    if (err < 0) {
-        fprintf(stderr, "ALSA set channels %u: %s\n", ch_set, snd_strerror(err));
-        snd_pcm_close(pcm);
-        return 1;
-    }
-
-    err = snd_pcm_hw_params(pcm, hw_params);
-    if (err < 0) {
-        fprintf(stderr, "snd_pcm_hw_params: %s\n", snd_strerror(err));
-        snd_pcm_close(pcm);
-        return 1;
-    }
-
-    snd_pcm_uframes_t frames = 128;  // Small buffer for low latency
+    snd_pcm_uframes_t frames = 128;
     err = snd_pcm_set_params(pcm, format, SND_PCM_ACCESS_RW_INTERLEAVED, ch_set, rate, 1, 500000);
     if (err < 0) {
         fprintf(stderr, "snd_pcm_set_params: %s\n", snd_strerror(err));
@@ -229,16 +185,23 @@ int main(int argc, char** argv) {
     reset_decoder(&dec, rate, fps, &last_h, &last_m, &last_s, &last_f, &last_frame_s, &dropout_emitted, &start_s);
 
     uint64_t sample_pos = 0;
+    int consec_errors = 0;
 
     while (!g_stop) {
         snd_pcm_sframes_t got = snd_pcm_readi(pcm, interleaved, frames);
 
         if (got == -EPIPE) {
+            consec_errors = 0;
             snd_pcm_prepare(pcm);
             reset_decoder(&dec, rate, fps, &last_h, &last_m, &last_s, &last_f, &last_frame_s, &dropout_emitted, &start_s);
             continue;
         } else if (got < 0) {
             fprintf(stderr, "ALSA read error: %s\n", snd_strerror((int)got));
+            if (++consec_errors >= 500) {
+                /* ~10 s of consecutive errors — exit so Python restarts us cleanly */
+                fprintf(stderr, "alsaltc: too many consecutive ALSA errors, exiting.\n");
+                break;
+            }
             snd_pcm_prepare(pcm);
             usleep(20000);
             reset_decoder(&dec, rate, fps, &last_h, &last_m, &last_s, &last_f, &last_frame_s, &dropout_emitted, &start_s);
@@ -247,6 +210,7 @@ int main(int argc, char** argv) {
             usleep(10000);
             continue;
         }
+        consec_errors = 0;
 
         // Extract selected channel to mono buffer and scale to ltcsnd_sample_t (0-255)
         const int ch_idx = (ch_set == 1) ? 0 : decode_channel;

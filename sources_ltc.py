@@ -1,7 +1,9 @@
 from __future__ import annotations
 import collections
 import dataclasses
+import os
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -36,6 +38,44 @@ _UB_RE = re.compile(r"\|\s*(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1
 # alsaltc appends 8 hex nibbles at end of every line: "... AABBCCDD"
 # Used as fallback when no other pattern captured user bits.
 _UB_TAIL_RE = re.compile(r"\s([0-9A-Fa-f]{8})\s*$")
+
+# If the subprocess produces no stdout for this many seconds it is killed and
+# restarted.  Catches the case where alsaltc is stuck in a blocking kernel call
+# (e.g. snd_pcm_readi never returns) and cannot exit on its own.
+_SUBPROCESS_WATCHDOG_S = 60.0
+
+
+def _kill_pgroup(proc: subprocess.Popen) -> None:
+    """Send SIGTERM to the whole process group, wait, then SIGKILL if needed.
+
+    Using a process group (set via os.setsid in Popen) ensures that the child
+    shell AND the alsaltc grandchild are both terminated.  Without this,
+    proc.terminate() only kills the shell; alsaltc becomes an orphan that holds
+    the ALSA handle and eventually fills the pipe buffer — causing a hang.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=2.0)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=2.0)
+    except Exception:
+        pass
 
 
 def _nibbles_to_ub(n: list) -> str:
@@ -357,6 +397,7 @@ class LTCMonitor:
     def _run(self) -> None:
 
         while not self._stop.is_set():
+            proc: Optional[subprocess.Popen] = None
             try:
                 proc = subprocess.Popen(
                     self.cmd,
@@ -365,6 +406,11 @@ class LTCMonitor:
                     stderr=subprocess.STDOUT,
                     text=True,
                     bufsize=1,
+                    # New process group so _kill_pgroup() reaches alsaltc even when
+                    # shell=True spawns an intermediate /bin/sh.  Without this,
+                    # proc.terminate() only kills the shell; alsaltc becomes an
+                    # orphan that holds the ALSA handle indefinitely.
+                    preexec_fn=os.setsid,
                 )
                 assert proc.stdout is not None
 
@@ -372,11 +418,17 @@ class LTCMonitor:
                 self._last_tc_frames = None
                 self._last_tc_mono = None
                 dropout_marked = False
+                last_output_mono = time.monotonic()  # watchdog reset point
 
                 while not self._stop.is_set():
                     # Periodic timeout so we can detect dropouts even if no output arrives
                     r, _, _ = select.select([proc.stdout], [], [], 0.2)
                     now = time.monotonic()
+
+                    # Subprocess watchdog: if no stdout for _SUBPROCESS_WATCHDOG_S seconds,
+                    # alsaltc is likely stuck in a blocking kernel call — kill and restart.
+                    if now - last_output_mono > _SUBPROCESS_WATCHDOG_S:
+                        break
 
                     # Dropout watchdog (Python-side)
                     if self.dropout_timeout_ms > 0 and self._last_tc_mono is not None:
@@ -389,6 +441,7 @@ class LTCMonitor:
                         line = proc.stdout.readline()
                         if not line:
                             break
+                        last_output_mono = now  # any stdout resets watchdog
                         line = line.strip()
                         if not line:
                             continue
@@ -430,17 +483,16 @@ class LTCMonitor:
 
                         self._mark_present(tc, line)
 
-                # Process ended or stream closed -> absent
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-                self._mark_absent()
-                time.sleep(0.5)
-
             except Exception:
                 with self._lock:
                     self._status.decode_errors_total += 1
                     self._err_roll.add()
-                self._mark_absent()
-                time.sleep(1.0)
+
+            finally:
+                # Kill the entire process group (shell + alsaltc grandchild).
+                # proc.wait() reaps the zombie so it does not accumulate.
+                if proc is not None:
+                    _kill_pgroup(proc)
+
+            self._mark_absent()
+            time.sleep(0.5)
