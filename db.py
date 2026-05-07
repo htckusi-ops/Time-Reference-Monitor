@@ -59,24 +59,27 @@ class DBWriter:
             self._inserts += 1
 
             if self.max_events > 0 and (self._inserts % config.DB_TRIM_EVERY_N_INSERTS == 0):
-                self.trim_events()
+                self._trim_locked()
+
+    def _trim_locked(self) -> None:
+        """Trim old events. Caller must already hold self._lock."""
+        assert self._conn is not None
+        self._conn.execute(
+            """
+            DELETE FROM events
+            WHERE id NOT IN (
+              SELECT id FROM events ORDER BY id DESC LIMIT ?
+            )
+            """,
+            (self.max_events,),
+        )
+        self._conn.commit()
 
     def trim_events(self) -> None:
         if not self._conn or self.max_events <= 0:
             return
         with self._lock:
-            assert self._conn is not None
-            # keep newest max_events by id
-            self._conn.execute(
-                """
-                DELETE FROM events
-                WHERE id NOT IN (
-                  SELECT id FROM events ORDER BY id DESC LIMIT ?
-                )
-                """,
-                (self.max_events,),
-            )
-            self._conn.commit()
+            self._trim_locked()
 
     def meta(self) -> Dict[str, Any]:
         return {
