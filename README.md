@@ -39,6 +39,125 @@ Andernfalls Fallback auf `offset_ns / 1e6` allein (= Δ(Systemclock − PTP)).
 
 ---
 
+## Architektur
+
+### Systemaufbau
+
+Die drei Zeitquellen werden unabhängig voneinander abgetastet und im gemeinsamen `StatusBus` zusammengeführt. Flask dient ausschliesslich als Read-Only-API — alle Messungen laufen in Hintergrund-Threads.
+
+```mermaid
+flowchart TB
+    subgraph ext["Externe Zeitquellen"]
+        GM["PTP-Grandmaster<br/>(GPS / Switch)"]
+        NTP_SRV["NTP-Server<br/>(pool.ntp.org)"]
+        LTC_GEN["LTC-Generator"]
+    end
+
+    subgraph rpi["Raspberry Pi"]
+        ptp4l["ptp4l<br/>(Monitor-Modus)"]
+        chrony["chrony"]
+
+        subgraph alsa["ALSA — Tascam US-2x2HR"]
+            dsnoop["dsnoop_ltc<br/>Shared Capture"]
+            plug["ltc_left_mono<br/>plug · mono · Kanal 0"]
+        end
+
+        subgraph backend["Python-Backend (run.py)"]
+            ptp_poll["PTP-Poller<br/>pmc · 0.25 s"]
+            ntp_poll["NTP-Poller<br/>chronyc · 0.25 s"]
+            ltc_mon["LTCMonitor<br/>alsaltc subprocess"]
+            ltc_lvl["LtcLevelPoller<br/>arecord · 150 ms"]
+            spec["SpectrumManager<br/>on-demand"]
+            bus["StatusBus"]
+            db[("SQLite Events")]
+            flask["Flask :8088"]
+        end
+    end
+
+    subgraph clients["Clients"]
+        kiosk["Chromium-Kiosk<br/>VT7"]
+        browser["Browser<br/>Netzwerk"]
+        led["LED-Matrix<br/>optional"]
+    end
+
+    GM -->|"PTP v2"| ptp4l
+    NTP_SRV -->|"NTP"| chrony
+    LTC_GEN -->|"Audio"| dsnoop
+    dsnoop --> plug
+
+    ptp4l -->|"pmc socket"| ptp_poll
+    chrony -->|"chronyc tracking"| ntp_poll
+    plug -->|"S32_LE · 48 kHz"| ltc_mon
+    plug -->|"S32_LE · 48 kHz"| ltc_lvl
+    plug -.->|"on-demand"| spec
+
+    ptp_poll --> bus
+    ntp_poll --> bus
+    ltc_mon --> bus
+    bus --> db
+    bus --> flask
+    ltc_lvl --> flask
+    spec --> flask
+
+    flask -->|"HTTP"| kiosk
+    flask -->|"HTTP"| browser
+    flask -->|"/api/status"| led
+```
+
+### LTC-Signalfluss
+
+Drei parallele ALSA-Clients greifen auf dasselbe physische Interface zu. `dsnoop_ltc` serialisiert den Hardware-Zugriff; `ltc_left_mono` (type plug) übernimmt Format- und Kanalkonvertierung. `stderr` des alsaltc-Subprozesses wird im separaten Drain-Thread verworfen — ALSA-Fehlermeldungen erreichen so nicht den stdout-Watchdog und blockieren ihn nicht.
+
+```mermaid
+flowchart LR
+    LTC_GEN["LTC-Generator"]
+
+    subgraph usb["USB-Audio (Tascam US-2x2HR)"]
+        HW["hw:US2x2HR,0<br/>S32_LE · 48 kHz · 2ch"]
+    end
+
+    subgraph asound["/etc/asound.conf"]
+        DSNOOP["dsnoop_ltc<br/>Shared Capture"]
+        PLUG["ltc_left_mono<br/>plug · Kanal 0 · mono"]
+    end
+
+    subgraph ltc_box["LTCMonitor — sources_ltc.py"]
+        ALSALTC["alsaltc<br/>libltc · SMPTE 309M"]
+        WDOG["stdout-Watchdog<br/>60 s Silence → killpg()"]
+        DRAIN["stderr-Drain<br/>Daemon-Thread"]
+        BACKOFF["Restart-Backoff<br/>0.5 s → 30 s"]
+    end
+
+    subgraph lvl_box["LtcLevelPoller — ltc_level.py"]
+        AREC["arecord<br/>150 ms · gecacht"]
+        LVL_BO["Fehler-Backoff<br/>bis 30 s"]
+    end
+
+    subgraph spec_box["SpectrumManager — spectrum.py"]
+        SAREC["arecord<br/>5–60 s · on-demand"]
+        SOX["sox<br/>FFT → PNG · /dev/shm"]
+    end
+
+    LTC_GEN -->|"Audio (XLR)"| HW
+    HW -->|"USB"| DSNOOP
+    DSNOOP --> PLUG
+
+    PLUG -->|"S32_LE · 48 kHz"| ALSALTC
+    ALSALTC -->|"stdout: HH:MM:SS:FF<br/>Datum · TZ · User Bits<br/>NO_LTC"| WDOG
+    ALSALTC -->|"stderr: ALSA-Fehler"| DRAIN
+    WDOG -->|"Timeout"| BACKOFF
+    BACKOFF -.->|"Neustart"| ALSALTC
+
+    PLUG -->|"S32_LE · 48 kHz"| AREC
+    AREC -.->|"schnelle Fehler"| LVL_BO
+    LVL_BO -.->|"Backoff"| AREC
+
+    PLUG -.->|"on-demand"| SAREC
+    SAREC --> SOX
+```
+
+---
+
 ## Web-Interface & Analysetools
 
 Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fünf Seiten:
