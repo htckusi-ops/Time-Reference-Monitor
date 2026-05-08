@@ -38,6 +38,13 @@ ExecStartPre=+/bin/chmod 1777 /tmp/.X11-unix
 #    xserver-xorg-legacy package updates can reset this file, breaking VT access.
 ExecStartPre=+/bin/bash -c 'grep -q needs_root_rights /etc/X11/Xwrapper.config 2>/dev/null || { mkdir -p /etc/X11; printf "allowed_users=anybody\nneeds_root_rights=yes\n" > /etc/X11/Xwrapper.config; echo "[kiosk-pre] Xwrapper.config wiederhergestellt."; }'
 
+# 4) Switch to VT7 before starting X so the logind session is active when Xorg
+#    first requests DRM device fds. Without this, on boot VT1 is still the active
+#    VT → logind returns card0/card1 as "paused" → Xorg falls back to fbdev →
+#    300 ms later udev activates card1 (vc4/KMS) → Xorg tries to add it as GPU
+#    device alongside the already-running fbdev primary → SIGABRT.
+ExecStartPre=+/bin/chvt 7
+
 # xinit starts X on display :0 on VT7, then runs kiosk.sh inside that X session.
 # -nocursor removed: mouse cursor visibility is managed by unclutter in kiosk.sh.
 ExecStart=/usr/bin/xinit /opt/time-reference-monitor/rpi/scripts/kiosk.sh -- :0 vt7
