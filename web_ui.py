@@ -448,21 +448,26 @@ function renderLedMeter(ledPeak){{
 
   function updateEvents(events){{
     const tb = els('evtTable').querySelector('tbody');
-    tb.innerHTML = '';
-    let shown = 0;
-    for(const ev of (events||[])){{
+    const evArr = (events || []).slice(0, {config.EVENTS_UI_MAX});
+    // Reuse existing rows instead of destroying/recreating them every poll.
+    // innerHTML='' + full createElement every 150 ms creates ~1500 DOM nodes/s
+    // that V8 must GC — causes renderer CPU runaway after days of uptime.
+    while (tb.children.length < evArr.length) {{
       const tr = document.createElement('tr');
-      const td1 = document.createElement('td'); td1.textContent = ev.ts_utc || '—';
-      const td2 = document.createElement('td'); td2.textContent = ev.severity || '—'; 
-      td2.className = 'sev ' + (ev.severity || 'INFO');
-      const td3 = document.createElement('td'); td3.textContent = ev.type || '—'; td3.className = 'mono';
-      const td4 = document.createElement('td'); 
-      td4.textContent = (ev.suppressed ? '[startup] ' : '') + (ev.message || '');
-      tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
+      for (let i = 0; i < 4; i++) tr.appendChild(document.createElement('td'));
       tb.appendChild(tr);
-      shown++;
-      if(shown >= {config.EVENTS_UI_MAX}) break;
     }}
+    while (tb.children.length > evArr.length) tb.removeChild(tb.lastChild);
+    const trs = tb.querySelectorAll('tr');
+    evArr.forEach((ev, idx) => {{
+      const tds = trs[idx].querySelectorAll('td');
+      tds[0].textContent = ev.ts_utc || '—';
+      tds[1].textContent = ev.severity || '—';
+      tds[1].className   = 'sev ' + (ev.severity || 'INFO');
+      tds[2].textContent = ev.type || '—';
+      tds[2].className   = 'mono';
+      tds[3].textContent = (ev.suppressed ? '[startup] ' : '') + (ev.message || '');
+    }});
   }}
 
   function applyApi(data){{
