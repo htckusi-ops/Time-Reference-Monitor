@@ -206,6 +206,39 @@ def set_ntp_server(server: str) -> Tuple[bool, str]:
     return True, f"NTP-Server auf {server} gesetzt."
 
 
+# ── timezone ──────────────────────────────────────────────────────────────────
+
+_tz_list_cache: list = []
+
+
+def get_timezone() -> str:
+    r = _run("timedatectl", "show", "--property=Timezone", "--value")
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip()
+    try:
+        with open("/etc/timezone") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def list_timezones() -> list:
+    global _tz_list_cache
+    if _tz_list_cache:
+        return _tz_list_cache
+    r = _run("timedatectl", "list-timezones", timeout=15)
+    if r.returncode == 0:
+        _tz_list_cache = [z for z in r.stdout.splitlines() if z.strip()]
+    return _tz_list_cache
+
+
+def set_timezone(tz: str) -> Tuple[bool, str]:
+    r = _sudo("timedatectl", "set-timezone", tz, timeout=10)
+    if r.returncode != 0:
+        return False, f"Timezone konnte nicht gesetzt werden: {(r.stderr or r.stdout).strip()}"
+    return True, f"Timezone auf {tz} gesetzt."
+
+
 # ── write ────────────────────────────────────────────────────────────────────
 
 def apply_static(

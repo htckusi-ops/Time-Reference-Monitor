@@ -31,6 +31,7 @@ from network_mgr import (
     get_wifi_status, set_wifi,
     get_ntp_server, set_ntp_server,
     get_device_location, set_device_location,
+    get_timezone, list_timezones, set_timezone,
 )
 from config import LTC_ALSA_DEVICE
 
@@ -171,6 +172,19 @@ def create_app(
         if not server:
             return jsonify({"ok": False, "message": "Kein Server angegeben."}), 400
         ok, msg = set_ntp_server(server)
+        return jsonify({"ok": ok, "message": msg})
+
+    @app.get("/api/settings/timezone")
+    def api_settings_tz_get() -> Response:
+        return jsonify({"timezone": get_timezone(), "zones": list_timezones()})
+
+    @app.post("/api/settings/timezone")
+    def api_settings_tz_post() -> Response:
+        body = request.get_json(silent=True) or {}
+        tz = str(body.get("timezone", "")).strip()
+        if not tz:
+            return jsonify({"ok": False, "message": "Keine Timezone angegeben."}), 400
+        ok, msg = set_timezone(tz)
         return jsonify({"ok": ok, "message": msg})
 
     @app.get("/api/settings/location")

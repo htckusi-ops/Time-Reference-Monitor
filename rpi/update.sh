@@ -266,6 +266,7 @@ ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/chrony.conf
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/tcpdump
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/sbin/tcpdump
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/killall
+${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/timedatectl set-timezone *
 SUDOEOF
 chmod 440 /etc/sudoers.d/time-reference-monitor
 

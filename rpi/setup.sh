@@ -243,6 +243,7 @@ ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/chrony.conf
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/tcpdump
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/sbin/tcpdump
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/killall
+${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/timedatectl set-timezone *
 SUDOEOF
     chmod 440 "$rule_file"
     info "Sudoers rule installed: ${rule_file}"

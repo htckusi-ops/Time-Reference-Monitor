@@ -212,7 +212,7 @@ _HTML = """<!doctype html>
     </div>
   </div>
 
-  <!-- ── NTP Server ── -->
+  <!-- ── NTP Server + Timezone ── -->
   <div class="card">
     <h2>NTP-Server (chrony)</h2>
     <div class="field">
@@ -227,6 +227,18 @@ _HTML = """<!doctype html>
     DHCP-Lease in chrony.conf schreiben.</p>
     <button class="btn btn-primary" id="btnSaveNtp">NTP speichern</button>
     <div class="msg" id="msgNtp"></div>
+
+    <hr style="margin:16px 0;border:none;border-top:1px solid #333">
+    <h3 style="margin:0 0 10px;font-size:1em;font-weight:600">Zeitzone</h3>
+    <div class="field">
+      <label>Zeitzone</label>
+      <input id="tzInput" type="text" list="tzList" placeholder="z.B. Europe/Zurich" autocomplete="off"/>
+      <datalist id="tzList"></datalist>
+    </div>
+    <p class="hint">Setzt die System-Zeitzone via <code>timedatectl set-timezone</code>.
+    Die Zeitzone bestimmt die lokale Zeitanzeige im Dashboard (NTP TZ / System TZ).</p>
+    <button class="btn btn-primary" id="btnSaveTz">Zeitzone speichern</button>
+    <div class="msg" id="msgTz"></div>
   </div>
 
   <!-- ── WiFi ── -->
@@ -516,6 +528,40 @@ _HTML = """<!doctype html>
       showMsg('msgNtp', false, 'Fehler: ' + e.message);
     }} finally {{
       $('btnSaveNtp').disabled = false;
+    }}
+  }});
+
+  // ── Timezone ──────────────────────────────────────────────────────────────
+  async function loadTimezone() {{
+    try {{
+      const r = await fetch('/api/settings/timezone', {{cache:'no-store'}});
+      const d = await r.json();
+      const dl = $('tzList');
+      dl.innerHTML = '';
+      for (const z of (d.zones || [])) {{
+        const o = document.createElement('option');
+        o.value = z;
+        dl.appendChild(o);
+      }}
+      $('tzInput').value = d.timezone || '';
+    }} catch(e) {{}}
+  }}
+
+  $('btnSaveTz').addEventListener('click', async () => {{
+    const tz = $('tzInput').value.trim();
+    if (!tz) {{ showMsg('msgTz', false, 'Keine Timezone angegeben.'); return; }}
+    $('btnSaveTz').disabled = true;
+    try {{
+      const r = await fetch('/api/settings/timezone', {{
+        method: 'POST', headers: {{'Content-Type':'application/json'}},
+        body: JSON.stringify({{ timezone: tz }}),
+      }});
+      const d = await r.json();
+      showMsg('msgTz', d.ok, d.message);
+    }} catch(e) {{
+      showMsg('msgTz', false, 'Fehler: ' + e.message);
+    }} finally {{
+      $('btnSaveTz').disabled = false;
     }}
   }});
 
@@ -846,6 +892,7 @@ _HTML = """<!doctype html>
   loadLocation();
   loadNet();
   loadNtp();
+  loadTimezone();
   loadWifi();
   loadPtpSource();
   loadNtpSource();
