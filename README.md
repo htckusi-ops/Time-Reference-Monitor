@@ -749,6 +749,96 @@ Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sob
 
 ---
 
+### Debian-System-Upgrade (z.B. Bookworm → Trixie)
+
+Ein vollständiges Betriebssystem-Upgrade erfordert nach dem `apt dist-upgrade` einige manuelle Nachschritte, da sich Python-Version und Systembibliotheken ändern.
+
+#### 1. Upgrade durchführen
+
+```bash
+sudo apt update && sudo apt full-upgrade
+sudo apt dist-upgrade
+sudo reboot
+```
+
+Während des Upgrades können dpkg-Konflikte bei Konfigurationsdateien auftreten. Empfehlung:
+
+| Datei | Aktion | Begründung |
+|-------|--------|-----------|
+| `/etc/chromium/master_preferences` | **`Y` (Maintainer-Version)** | Kiosk-Konfiguration steckt in `kiosk.sh`, nicht in dieser Datei |
+| `/etc/X11/Xwrapper.config` | **`N` (eigene Version behalten)** | Enthält `needs_root_rights=yes` — wird sonst zurückgesetzt und Kiosk startet nicht |
+| `/etc/asound.conf` | **`N` (eigene Version behalten)** | Enthält `dsnoop_ltc` / `ltc_left_mono` Gerätedefinitionen |
+| `/etc/chrony/chrony.conf` | **`N` (eigene Version behalten)** | NTP-only Konfiguration ohne PTP-Refclock |
+
+#### 2. Python-venv neu aufbauen
+
+Nach einem Debian-Upgrade ändert sich die Python-Version (z.B. 3.11 → 3.13). Das bestehende venv ist danach unbrauchbar und muss neu erstellt werden:
+
+```bash
+cd /home/ptp/git/Time-Reference-Monitor
+
+# Neuesten Code holen
+git pull origin claude/setup-raspberry-pi-kiosk-1sK3G   # oder main
+
+# Altes venv entfernen und neu erstellen
+rm -rf venv
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+```
+
+#### 3. alsaltc neu kompilieren
+
+```bash
+cd /home/ptp/git/Time-Reference-Monitor/alsaltc-v02
+make clean && make
+sudo make install   # → /usr/local/bin/alsaltc
+```
+
+#### 4. Service-Dateien deployen
+
+```bash
+sudo cp rpi/systemd/time-reference-monitor.service /etc/systemd/system/
+sudo cp rpi/systemd/chromium-kiosk.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+#### 5. Xwrapper.config prüfen
+
+Das Paket `xserver-xorg-legacy` überschreibt `/etc/X11/Xwrapper.config` gelegentlich beim Upgrade. Prüfen:
+
+```bash
+cat /etc/X11/Xwrapper.config
+# Muss enthalten:
+#   allowed_users=anybody
+#   needs_root_rights=yes
+```
+
+Falls nicht vorhanden oder falsch:
+```bash
+printf 'allowed_users=anybody\nneeds_root_rights=yes\n' | sudo tee /etc/X11/Xwrapper.config
+```
+
+#### 6. Dienste neu starten
+
+```bash
+sudo systemctl restart time-reference-monitor chromium-kiosk
+```
+
+#### 7. Verifizieren
+
+```bash
+# Backend antwortet?
+curl -s --max-time 5 http://localhost:8088/api/status | head -c 200
+
+# Dienste aktiv?
+sudo systemctl status time-reference-monitor chromium-kiosk --no-pager
+
+# venv zeigt richtige Python-Version?
+venv/bin/python3 --version
+```
+
+---
+
 ### PTP-Synchronisation lokal testen (Software-Grandmaster)
 
 Um PTP-Synchronisation unabhängig von einem externen Grandmaster zu testen, kann `ptp4l` auf dem RPi selbst als Grandmaster betrieben werden (Software-Timestamps, ohne dedizierte PTP-Hardware):
