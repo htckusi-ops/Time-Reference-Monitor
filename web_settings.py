@@ -237,7 +237,9 @@ _HTML = """<!doctype html>
       </select>
     </div>
     <p class="hint">Setzt die System-Zeitzone via <code>timedatectl set-timezone</code>.
-    Die Zeitzone bestimmt die lokale Zeitanzeige im Dashboard (NTP TZ / System TZ).</p>
+    Die Zeitzone bestimmt die lokale Zeitanzeige im Dashboard (NTP TZ / System TZ).<br>
+    <strong>Hinweis:</strong> Nach dem Speichern dauert es bis zu 30 Sekunden, bis der neue UTC-Offset
+    im Dashboard übernommen wird (Cache-Intervall).</p>
     <button class="btn btn-primary" id="btnSaveTz">Zeitzone speichern</button>
     <div class="msg" id="msgTz"></div>
   </div>
@@ -561,9 +563,8 @@ _HTML = """<!doctype html>
         for (const z of groups[region]) {{
           const o = document.createElement('option');
           o.value = z;
-          // Display only the city/area part; replace underscores with spaces.
-          const slash = z.indexOf('/');
-          o.textContent = (slash >= 0 ? z.slice(slash + 1) : z).replace(/_/g, ' ');
+          // Show full IANA name (e.g. "Europe/Zurich") with underscores as spaces.
+          o.textContent = z.replace(/_/g, ' ');
           if (z === currentTz) o.selected = true;
           og.appendChild(o);
         }}

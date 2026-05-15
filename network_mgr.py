@@ -209,7 +209,7 @@ def set_ntp_server(server: str) -> Tuple[bool, str]:
 # ── timezone ──────────────────────────────────────────────────────────────────
 
 _tz_list_cache: list = []
-_tz_offset_cache: dict = {"tz": "", "offset_s": 0, "expires": 0.0}
+_tz_offset_cache: dict = {"offset_s": 0, "expires": 0.0}
 
 
 def get_timezone() -> str:
@@ -226,25 +226,25 @@ def get_timezone() -> str:
 def get_tz_offset_s() -> int:
     """Return current timezone UTC offset in seconds, cached for 30 s.
 
-    Uses zoneinfo with the IANA timezone string from timedatectl, so the result
-    is correct immediately after timedatectl set-timezone — without restarting
-    the Python process.  time.localtime().tm_gmtoff uses the C-library cache
-    and stays at the startup timezone until the process is restarted.
+    Spawns `date +%z` in a fresh process — always reads the current
+    /etc/localtime regardless of the Python process startup timezone.
+    (time.localtime().tm_gmtoff stays at startup timezone after timedatectl
+    changes /etc/localtime; a subprocess always sees the current value.)
     """
     import time as _t
     now = _t.monotonic()
     if now < _tz_offset_cache["expires"]:
         return _tz_offset_cache["offset_s"]
-    tz = get_timezone()
     offset_s = 0
-    if tz:
-        try:
-            from zoneinfo import ZoneInfo
-            from datetime import datetime as _dt
-            offset_s = int(_dt.now(ZoneInfo(tz)).utcoffset().total_seconds())
-        except Exception:
-            pass
-    _tz_offset_cache.update({"tz": tz, "offset_s": offset_s, "expires": now + 30.0})
+    try:
+        r = _run("date", "+%z")           # e.g. "+0100", "-0530", "+0000"
+        tz_str = r.stdout.strip()          # always 5 chars: ±HHMM
+        if len(tz_str) == 5 and tz_str[0] in ('+', '-'):
+            sign = 1 if tz_str[0] == '+' else -1
+            offset_s = sign * (int(tz_str[1:3]) * 3600 + int(tz_str[3:5]) * 60)
+    except Exception:
+        pass
+    _tz_offset_cache.update({"offset_s": offset_s, "expires": now + 30.0})
     return offset_s
 
 
