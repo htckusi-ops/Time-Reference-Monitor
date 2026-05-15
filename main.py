@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Tuple
 
 import config
+import mem_log
 from db import DBWriter
 from models import LTCStatus
 from sources_ntp import read_chrony_tracking
@@ -96,6 +97,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     args.display_decimals = max(0, min(6, int(args.display_decimals)))
+
+    mem_log.setup()  # in-memory circular log + SIGUSR2 thread-dump handler
 
     dbw = None
     if args.db and args.db.strip():

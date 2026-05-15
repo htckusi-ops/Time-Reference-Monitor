@@ -365,6 +365,18 @@ def create_app(
         )
 
     # ---------------------------
+    # Debug / diagnostics
+    # ---------------------------
+
+    @app.get("/api/debug/logs")
+    def api_debug_logs() -> Response:
+        # Reads directly from the in-memory deque — no locks, no StatusBus.
+        # Stays reachable even when /api/status is deadlocked.
+        import mem_log as _ml
+        n = min(int(request.args.get("n", 200)), 500)
+        return jsonify({"lines": _ml.get_lines(n), "total_buffered": len(_ml._buffer)})
+
+    # ---------------------------
     # System control (kiosk)
     # ---------------------------
 
