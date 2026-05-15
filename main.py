@@ -226,9 +226,11 @@ def main() -> None:
     def meta_provider():
         with _src_lock:
             active = "mock" if _src["mock"] else "real"
-        from network_mgr import get_device_location
-        # Override static meta["domain"] with the live (possibly user-changed) value
-        return {**meta, "tz_offset_s": time.localtime().tm_gmtoff, "source": active,
+        from network_mgr import get_device_location, get_tz_offset_s
+        # Override static meta["domain"] with the live (possibly user-changed) value.
+        # get_tz_offset_s() uses zoneinfo so it reflects timedatectl changes immediately
+        # (time.localtime().tm_gmtoff would stay at the startup timezone until restart).
+        return {**meta, "tz_offset_s": get_tz_offset_s(), "source": active,
                 "domain": get_ptp_domain(), "device_location": get_device_location()}
 
     def ptp_loop():

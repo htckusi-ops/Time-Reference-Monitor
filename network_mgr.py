@@ -209,6 +209,7 @@ def set_ntp_server(server: str) -> Tuple[bool, str]:
 # ── timezone ──────────────────────────────────────────────────────────────────
 
 _tz_list_cache: list = []
+_tz_offset_cache: dict = {"tz": "", "offset_s": 0, "expires": 0.0}
 
 
 def get_timezone() -> str:
@@ -220,6 +221,31 @@ def get_timezone() -> str:
             return f.read().strip()
     except Exception:
         return ""
+
+
+def get_tz_offset_s() -> int:
+    """Return current timezone UTC offset in seconds, cached for 30 s.
+
+    Uses zoneinfo with the IANA timezone string from timedatectl, so the result
+    is correct immediately after timedatectl set-timezone — without restarting
+    the Python process.  time.localtime().tm_gmtoff uses the C-library cache
+    and stays at the startup timezone until the process is restarted.
+    """
+    import time as _t
+    now = _t.monotonic()
+    if now < _tz_offset_cache["expires"]:
+        return _tz_offset_cache["offset_s"]
+    tz = get_timezone()
+    offset_s = 0
+    if tz:
+        try:
+            from zoneinfo import ZoneInfo
+            from datetime import datetime as _dt
+            offset_s = int(_dt.now(ZoneInfo(tz)).utcoffset().total_seconds())
+        except Exception:
+            pass
+    _tz_offset_cache.update({"tz": tz, "offset_s": offset_s, "expires": now + 30.0})
+    return offset_s
 
 
 def list_timezones() -> list:
@@ -236,6 +262,8 @@ def set_timezone(tz: str) -> Tuple[bool, str]:
     r = _sudo("timedatectl", "set-timezone", tz, timeout=10)
     if r.returncode != 0:
         return False, f"Timezone konnte nicht gesetzt werden: {(r.stderr or r.stdout).strip()}"
+    # Invalidate offset cache so next meta_provider() call picks up the new offset.
+    _tz_offset_cache["expires"] = 0.0
     return True, f"Timezone auf {tz} gesetzt."
 
 

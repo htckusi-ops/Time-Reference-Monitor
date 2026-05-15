@@ -231,9 +231,10 @@ _HTML = """<!doctype html>
     <hr style="margin:16px 0;border:none;border-top:1px solid #333">
     <h3 style="margin:0 0 10px;font-size:1em;font-weight:600">Zeitzone</h3>
     <div class="field">
-      <label>Zeitzone</label>
-      <input id="tzInput" type="text" list="tzList" placeholder="z.B. Europe/Zurich" autocomplete="off"/>
-      <datalist id="tzList"></datalist>
+      <label>Zeitzone (Region / Stadt)</label>
+      <select id="tzSelect">
+        <option value="">— Lade Zeitzonen…</option>
+      </select>
     </div>
     <p class="hint">Setzt die System-Zeitzone via <code>timedatectl set-timezone</code>.
     Die Zeitzone bestimmt die lokale Zeitanzeige im Dashboard (NTP TZ / System TZ).</p>
@@ -536,19 +537,43 @@ _HTML = """<!doctype html>
     try {{
       const r = await fetch('/api/settings/timezone', {{cache:'no-store'}});
       const d = await r.json();
-      const dl = $('tzList');
-      dl.innerHTML = '';
+      const sel = $('tzSelect');
+      const currentTz = d.timezone || '';
+      // Group timezones by region (text before first '/') for usability.
+      const groups = {{}};
       for (const z of (d.zones || [])) {{
-        const o = document.createElement('option');
-        o.value = z;
-        dl.appendChild(o);
+        const slash = z.indexOf('/');
+        const region = slash >= 0 ? z.slice(0, slash) : 'Other';
+        if (!groups[region]) groups[region] = [];
+        groups[region].push(z);
       }}
-      $('tzInput').value = d.timezone || '';
+      sel.innerHTML = '';
+      // If current TZ is not in the list (unusual), add it as first option.
+      const allZones = d.zones || [];
+      if (currentTz && !allZones.includes(currentTz)) {{
+        const o = document.createElement('option');
+        o.value = currentTz; o.textContent = currentTz; o.selected = true;
+        sel.appendChild(o);
+      }}
+      for (const region of Object.keys(groups).sort()) {{
+        const og = document.createElement('optgroup');
+        og.label = region;
+        for (const z of groups[region]) {{
+          const o = document.createElement('option');
+          o.value = z;
+          // Display only the city/area part; replace underscores with spaces.
+          const slash = z.indexOf('/');
+          o.textContent = (slash >= 0 ? z.slice(slash + 1) : z).replace(/_/g, ' ');
+          if (z === currentTz) o.selected = true;
+          og.appendChild(o);
+        }}
+        sel.appendChild(og);
+      }}
     }} catch(e) {{}}
   }}
 
   $('btnSaveTz').addEventListener('click', async () => {{
-    const tz = $('tzInput').value.trim();
+    const tz = $('tzSelect').value;
     if (!tz) {{ showMsg('msgTz', false, 'Keine Timezone angegeben.'); return; }}
     $('btnSaveTz').disabled = true;
     try {{
