@@ -270,7 +270,25 @@ ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/timedatectl set-timezone *
 SUDOEOF
 chmod 440 /etc/sudoers.d/time-reference-monitor
 
-# ── 10. Restart services ───────────────────────────────────────────────────────
+# ── 10. WirePlumber masking (idempotent) ──────────────────────────────────────
+# Trixie installs WirePlumber which claims the Tascam ALSA capture device.
+# Mask it for the ptp user so arecord/alsaltc can access the device directly.
+if dpkg-query -W -f='${Status}' wireplumber 2>/dev/null | grep -q "install ok installed"; then
+    WP_DIR="/home/${APP_USER}/.config/systemd/user"
+    WP_MASK="${WP_DIR}/wireplumber.service"
+    if [ ! -L "$WP_MASK" ] || [ "$(readlink "$WP_MASK")" != "/dev/null" ]; then
+        mkdir -p "$WP_DIR"
+        ln -sf /dev/null "$WP_MASK"
+        chown -R "${APP_USER}:${APP_USER}" "$WP_DIR"
+        info "WirePlumber maskiert für ${APP_USER}."
+        # Stop if currently running
+        systemctl --user --machine="${APP_USER}@.host" stop wireplumber.service 2>/dev/null || true
+    else
+        info "WirePlumber bereits maskiert – unverändert."
+    fi
+fi
+
+# ── 11. Restart services ───────────────────────────────────────────────────────
 info "Restarting time-reference-monitor…"
 systemctl restart time-reference-monitor.service
 
