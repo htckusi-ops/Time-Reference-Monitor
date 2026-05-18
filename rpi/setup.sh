@@ -62,7 +62,8 @@ install_packages() {
         gcc make pkg-config \
         xorg openbox unclutter curl \
         chromium \
-        openssh-server
+        openssh-server \
+        ethtool
 
     info "Enabling SSH server…"
     systemctl enable ssh
@@ -162,6 +163,22 @@ configure_ptp4l() {
     fi
     cp "${REPO_DIR}/rpi/ptp4l/ptp4l.conf" "$dest"
     info "ptp4l config installed: ${dest}  (free_running=1, slaveOnly=1)"
+
+    # Auto-detect PTP hardware timestamping via ethtool.
+    # CM5 and RPi 5 expose hardware-transmit; RPi 4 does not.
+    local ptp_iface
+    ptp_iface=$(grep "^PTP_IFACE=" /etc/time-reference-monitor.conf 2>/dev/null \
+        | cut -d= -f2 | tr -d '[:space:]')
+    ptp_iface="${ptp_iface:-eth0}"
+
+    if ethtool -T "$ptp_iface" 2>/dev/null | grep -q "hardware-transmit"; then
+        info "Hardware PTP timestamping detected on ${ptp_iface} → time_stamping hardware"
+        sed -i "s/^time_stamping\s\+.*/time_stamping               hardware/" "$dest"
+        grep -q "^hwts_filter" "$dest" \
+            || sed -i "/^time_stamping/a hwts_filter                 full" "$dest"
+    else
+        info "No hardware PTP timestamping on ${ptp_iface} → time_stamping software"
+    fi
 
     # Install the service drop-in that overrides ExecStart with our config + PTP_IFACE
     mkdir -p /etc/systemd/system/ptp4l.service.d

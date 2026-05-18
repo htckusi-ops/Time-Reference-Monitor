@@ -267,6 +267,33 @@ def set_timezone(tz: str) -> Tuple[bool, str]:
     return True, f"Timezone auf {tz} gesetzt."
 
 
+_ptp_ts_cache: dict = {"mode": None, "expires": 0.0}
+_PTP4L_CONF = "/etc/linuxptp/ptp4l.conf"
+
+
+def get_ptp_timestamping() -> str:
+    """Return 'hardware' or 'software' from /etc/linuxptp/ptp4l.conf, cached 5 min."""
+    import time as _t
+    now = _t.monotonic()
+    if now < _ptp_ts_cache["expires"] and _ptp_ts_cache["mode"] is not None:
+        return _ptp_ts_cache["mode"]
+    mode = "software"
+    try:
+        with open(_PTP4L_CONF) as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("time_stamping") and not s.startswith("#"):
+                    parts = s.split()
+                    if len(parts) >= 2:
+                        mode = parts[-1]
+                    break
+    except Exception:
+        pass
+    _ptp_ts_cache.update({"mode": mode, "expires": now + 300.0})
+    return mode
+
+
+
 # ── write ────────────────────────────────────────────────────────────────────
 
 def apply_static(
