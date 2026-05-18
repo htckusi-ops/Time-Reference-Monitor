@@ -449,11 +449,16 @@ function renderLedMeter(ledPeak){{
     if(!st.ptp_valid) return 'ALARM';
     if(age > staleTh) return 'ALARM';
 
-    // warnings: ntp not synced, ltc absent (if enabled), ltc decode errors rolling > 0
+    // live warnings: ntp not synced, ltc absent (if enabled)
     if((ntp.status || 'unknown') !== 'synced') return 'WARN';
     if(ltc.enabled && !ltc.present) return 'WARN';
+
+    // rolling counts: reflect recent history in the error window;
+    // cleared by Reset → top badge follows dotErr after reset
     const roll = meta.summaries_rolling || {{}};
-    if((roll.ltc_decode_errors_rolling ?? 0) > 0) return 'WARN';
+    if((roll.alarms_rolling ?? 0) > 0) return 'ALARM';
+    if((roll.warnings_rolling ?? 0) > 0 || (roll.errors_rolling ?? 0) > 0
+       || (roll.ltc_decode_errors_rolling ?? 0) > 0) return 'WARN';
 
     return 'OK';
   }}
