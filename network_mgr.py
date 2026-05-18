@@ -5,12 +5,15 @@ Uses NetworkManager (nmcli) for network config — standard on Bookworm.
 All write operations require sudo (configured via sudoers in setup.sh).
 """
 from __future__ import annotations
+import ipaddress
+import json
 import os
 import re
 import subprocess
-from typing import Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple
 
 _LOCATION_PATH = "/var/lib/time-reference-monitor/device_location"
+_ALLOWLIST_PATH = "/var/lib/time-reference-monitor/api_allowlist.json"
 
 
 def _run(*args: str, timeout: int = 10) -> subprocess.CompletedProcess:
@@ -265,6 +268,83 @@ def set_timezone(tz: str) -> Tuple[bool, str]:
     # Invalidate offset cache so next meta_provider() call picks up the new offset.
     _tz_offset_cache["expires"] = 0.0
     return True, f"Timezone auf {tz} gesetzt."
+
+
+def get_api_allowlist() -> List[str]:
+    """Return saved list of allowed CIDRs/IPs; empty list means allow all."""
+    try:
+        with open(_ALLOWLIST_PATH) as f:
+            data = json.load(f)
+            if isinstance(data, list):
+                return data
+    except Exception:
+        pass
+    return []
+
+
+def set_api_allowlist(entries: List[str]) -> Tuple[bool, str]:
+    validated: List[str] = []
+    for raw in entries:
+        e = raw.strip()
+        if not e:
+            continue
+        try:
+            ipaddress.ip_network(e, strict=False)
+            validated.append(e)
+        except ValueError:
+            return False, f"Ungültiger Eintrag: {e!r} — bitte CIDR (z.B. 192.168.1.0/24) oder einzelne IP."
+    try:
+        os.makedirs(os.path.dirname(_ALLOWLIST_PATH), exist_ok=True)
+        with open(_ALLOWLIST_PATH, "w") as f:
+            json.dump(validated, f)
+    except Exception as exc:
+        return False, str(exc)
+    n = len(validated)
+    return True, "Zugriffsliste gespeichert (alle erlaubt)." if n == 0 else f"{n} {'Einträge' if n != 1 else 'Eintrag'} gespeichert."
+
+
+def is_ip_allowed(ip: str, allowlist: List[str]) -> bool:
+    """True if ip matches any allowlist entry, or allowlist is empty (allow all)."""
+    if not allowlist:
+        return True
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for entry in allowlist:
+        try:
+            if addr in ipaddress.ip_network(entry, strict=False):
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+_ptp_ts_cache: dict = {"mode": None, "expires": 0.0}
+_PTP4L_CONF = "/etc/linuxptp/ptp4l.conf"
+
+
+def get_ptp_timestamping() -> str:
+    """Return 'hardware' or 'software' from /etc/linuxptp/ptp4l.conf, cached 5 min."""
+    import time as _t
+    now = _t.monotonic()
+    if now < _ptp_ts_cache["expires"] and _ptp_ts_cache["mode"] is not None:
+        return _ptp_ts_cache["mode"]
+    mode = "software"
+    try:
+        with open(_PTP4L_CONF) as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("time_stamping") and not s.startswith("#"):
+                    parts = s.split()
+                    if len(parts) >= 2:
+                        mode = parts[-1]
+                    break
+    except Exception:
+        pass
+    _ptp_ts_cache.update({"mode": mode, "expires": now + 300.0})
+    return mode
+
 
 
 # ── write ────────────────────────────────────────────────────────────────────

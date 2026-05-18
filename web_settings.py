@@ -262,6 +262,29 @@ _HTML = """<!doctype html>
     </p>
   </div>
 
+  <!-- ── API-Zugriff ── -->
+  <div class="card">
+    <h2>API-Zugriff</h2>
+    <p class="hint" style="margin-bottom:14px;">
+      Welche IP-Adressen oder Subnetze dürfen auf das Web-Interface und die API zugreifen?<br>
+      <strong>Leer lassen = alle Zugriffe erlaubt</strong> (Standard).<br>
+      <code>127.0.0.1</code> und <code>::1</code> (lokales Web-Interface) sind immer erlaubt, unabhängig von dieser Liste.
+    </p>
+    <div class="field">
+      <label>Erlaubte IPs / Subnetze (eine Zeile pro Eintrag, CIDR-Notation)</label>
+      <textarea id="apiAllowlist" rows="5"
+                placeholder="192.168.1.0/24&#10;10.0.0.5&#10;172.16.0.0/12"></textarea>
+    </div>
+    <div id="apiAllowlistCurrent" class="current" style="margin-bottom:10px;">Lade…</div>
+    <button class="btn btn-primary" id="btnSaveApiAccess">Speichern</button>
+    <div class="msg" id="msgApiAccess"></div>
+    <p class="hint">
+      Einzelne IP: <code>192.168.1.42</code> — Subnetz: <code>192.168.1.0/24</code> —
+      Ganzes Netz: <code>10.0.0.0/8</code><br>
+      IPv6 wird unterstützt. Nach dem Speichern wird jede neue Anfrage gegen die Liste geprüft.
+    </p>
+  </div>
+
   <!-- ── NTP-Simulation ── -->
   <div class="card">
     <h2>NTP-Simulation</h2>
@@ -914,6 +937,40 @@ _HTML = """<!doctype html>
     applyDomain(v, true);
   }});
 
+  // ── API-Zugriff ──────────────────────────────────────────────────────────
+  async function loadApiAccess() {{
+    try {{
+      const r = await fetch('/api/settings/api-access', {{cache:'no-store'}});
+      const d = await r.json();
+      const entries = d.entries || [];
+      $('apiAllowlist').value = entries.join('\\n');
+      $('apiAllowlistCurrent').textContent = entries.length === 0
+        ? 'Aktuell: alle Zugriffe erlaubt (keine Einschränkung)'
+        : 'Aktuell: ' + entries.join(', ');
+    }} catch(e) {{
+      $('apiAllowlistCurrent').textContent = 'Fehler beim Laden.';
+    }}
+  }}
+
+  $('btnSaveApiAccess').addEventListener('click', async () => {{
+    const raw = $('apiAllowlist').value;
+    const entries = raw.split('\\n').map(s => s.trim()).filter(s => s.length > 0);
+    $('btnSaveApiAccess').disabled = true;
+    try {{
+      const r = await fetch('/api/settings/api-access', {{
+        method: 'POST', headers: {{'Content-Type':'application/json'}},
+        body: JSON.stringify({{ entries }}),
+      }});
+      const d = await r.json();
+      showMsg('msgApiAccess', d.ok, d.message);
+      if (d.ok) loadApiAccess();
+    }} catch(e) {{
+      showMsg('msgApiAccess', false, 'Fehler: ' + e.message);
+    }} finally {{
+      $('btnSaveApiAccess').disabled = false;
+    }}
+  }});
+
   // ── init ─────────────────────────────────────────────────────────────────
   loadLocation();
   loadNet();
@@ -923,6 +980,7 @@ _HTML = """<!doctype html>
   loadPtpSource();
   loadNtpSource();
   loadDomainCurrent();
+  loadApiAccess();
 }})();
 </script>
 </body>

@@ -180,6 +180,7 @@ def ui_html() -> str:
           <div class="kv-k">GM priority2</div><div class="kv-v" id="gmPrio2Line">—</div>
           <div class="kv-k">GM clock class</div><div class="kv-v" id="gmClockClassLine">—</div>
           <div class="kv-k">GM clock acc.</div><div class="kv-v" id="gmClockAccLine">—</div>
+          <div class="kv-k">Timestamping</div><div class="kv-v" id="ptpTsModeLine">—</div>
         </div>
       </div>
 
@@ -221,8 +222,8 @@ def ui_html() -> str:
 
     <div class="card">
       <div class="delta-grid" style="margin-bottom:6px;">
-        <div class="smalltime" id="ntpTzLine">NTP TZ: —</div>
-        <div class="smalltime" id="ltcTzLine">System TZ (PTP): —</div>
+        <div class="smalltime" id="sysTzLine">System TZ: —</div>
+        <div class="smalltime" id="ptpTsLine">PTP: —</div>
 
         <div class="smalltime" id="deltaLine">Δ(NTP-PTP): —</div>
         <div class="smalltime" id="deltaLtcNtpLine">Δ(LTC-NTP): —</div>
@@ -448,11 +449,16 @@ function renderLedMeter(ledPeak){{
     if(!st.ptp_valid) return 'ALARM';
     if(age > staleTh) return 'ALARM';
 
-    // warnings: ntp not synced, ltc absent (if enabled), ltc decode errors rolling > 0
+    // live warnings: ntp not synced, ltc absent (if enabled)
     if((ntp.status || 'unknown') !== 'synced') return 'WARN';
     if(ltc.enabled && !ltc.present) return 'WARN';
+
+    // rolling counts: reflect recent history in the error window;
+    // cleared by Reset → top badge follows dotErr after reset
     const roll = meta.summaries_rolling || {{}};
-    if((roll.ltc_decode_errors_rolling ?? 0) > 0) return 'WARN';
+    if((roll.alarms_rolling ?? 0) > 0) return 'ALARM';
+    if((roll.warnings_rolling ?? 0) > 0 || (roll.errors_rolling ?? 0) > 0
+       || (roll.ltc_decode_errors_rolling ?? 0) > 0) return 'WARN';
 
     return 'OK';
   }}
@@ -555,6 +561,22 @@ function renderLedMeter(ledPeak){{
     els('ntpSysOffLine').textContent  = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpRmsOffLine').textContent  = (ntp.rms_offset_s != null) ? (ntp.rms_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpFreqLine').textContent    = (ntp.frequency_ppm != null) ? ntp.frequency_ppm.toFixed(3)+' ppm' : '—';
+
+    // System TZ — always visible regardless of PTP/NTP state
+    {{
+      const _tzS = (meta.tz_offset_s != null) ? meta.tz_offset_s : 0;
+      const _tzM = Math.round(_tzS / 60);
+      const _tzH = Math.floor(Math.abs(_tzM) / 60), _tzMM = Math.abs(_tzM) % 60;
+      els('sysTzLine').textContent = 'System TZ: UTC' + (_tzM>=0?'+':'-') + pad2(_tzH)+':'+pad2(_tzMM);
+    }}
+    // PTP timestamping mode — always visible
+    {{
+      const _tsMode = meta.ptp_timestamping || 'software';
+      const _tsPtpEl = els('ptpTsLine');
+      if(_tsPtpEl) _tsPtpEl.textContent = 'PTP: ' + _tsMode + ' ts';
+      const _tsModeEl = els('ptpTsModeLine');
+      if(_tsModeEl) {{ _tsModeEl.textContent = _tsMode; _tsModeEl.style.color = _tsMode === 'hardware' ? 'var(--ok)' : 'var(--muted)'; }}
+    }}
 
     // NTP status badge
     const ntpStat = els('ntpStatusBadge');
@@ -731,13 +753,11 @@ function renderLedMeter(ledPeak){{
       _dateNtp = dispNtpLocal.toISOString().slice(0,10); _updDate();
       const tzOffMin = Math.round(srvTzOffS / 60);
       const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
-      els('ntpTzLine').textContent = 'TZ: UTC' + (tzOffMin>=0?'+':'-') + pad2(tzH)+':'+pad2(tzM);
       {{const _nb=els('ntpTzBadge'); if(_nb){{_nb.textContent='UTC'+(tzOffMin>=0?'+':'-')+pad2(tzH)+':'+pad2(tzM); _nb.className=srvTzOffS!==0?'tzBadge active':'tzBadge';}}}}
     }} else {{
       _smNtpMs = null;
       renderSevenSeg(els('ntpTimeSegs'), null);
       _dateNtp = '—'; _updDate();
-      els('ntpTzLine').textContent = 'TZ: —';
       {{const _nb=els('ntpTzBadge'); if(_nb){{_nb.textContent='—'; _nb.className='tzBadge';}}}}
     }}
 
@@ -768,7 +788,6 @@ function renderLedMeter(ledPeak){{
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-      els('ltcTzLine').textContent = 'System TZ: —';
       return;
     }}
 
@@ -829,22 +848,15 @@ function renderLedMeter(ledPeak){{
           _emaDeltaLtcRaw = _ema(_emaDeltaLtcRaw, wrapDeltaMs(ltcCorr - ptpTodUtc));
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + _emaDeltaLtcAdj.toFixed(3) + ' ms';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + _emaDeltaLtcRaw.toFixed(3) + ' ms';
-          {{
-            const _tzM2 = Math.round(srvTzMs / 60000);
-            const _tzH2 = Math.floor(Math.abs(_tzM2)/60), _tzMM2 = Math.abs(_tzM2)%60;
-            els('ltcTzLine').textContent = 'System TZ: UTC' + (_tzM2>=0?'+':'-') + pad2(_tzH2)+':'+pad2(_tzMM2);
-          }}
         }} else {{
           _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-          els('ltcTzLine').textContent = 'System TZ: —';
         }}
       }} else {{
         _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
         els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
         els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-        els('ltcTzLine').textContent = 'System TZ: —';
       }}
     }} else {{
       _smPtpMs = null;
@@ -854,7 +866,6 @@ function renderLedMeter(ledPeak){{
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-      els('ltcTzLine').textContent = 'System TZ: —';
     }}
   }}
 

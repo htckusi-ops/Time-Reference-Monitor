@@ -15,6 +15,7 @@ from typing import Any, Callable, Dict
 
 import subprocess
 
+import ipaddress
 from flask import Flask, Response, jsonify, request, send_file
 import os
 from flask import send_from_directory
@@ -32,6 +33,7 @@ from network_mgr import (
     get_ntp_server, set_ntp_server,
     get_device_location, set_device_location,
     get_timezone, list_timezones, set_timezone,
+    get_api_allowlist, set_api_allowlist, is_ip_allowed,
 )
 from config import LTC_ALSA_DEVICE
 
@@ -65,6 +67,18 @@ def create_app(
     BASE_DIR = os.path.dirname(__file__)
     FONT_DIR_1 = os.path.join(BASE_DIR, "font")
     FONT_DIR_2 = os.path.join(BASE_DIR, "fonts")
+
+    @app.before_request
+    def _check_ip_access():
+        ip = request.remote_addr or ""
+        try:
+            if ipaddress.ip_address(ip).is_loopback:
+                return None  # local web interface always allowed
+        except ValueError:
+            pass
+        if not is_ip_allowed(ip, get_api_allowlist()):
+            return Response("Forbidden", status=403, mimetype="text/plain")
+        return None
 
     @app.get("/font/<path:filename>")
     def serve_font(filename: str):
@@ -196,6 +210,19 @@ def create_app(
         body = request.get_json(silent=True) or {}
         location = str(body.get("location", "")).strip()
         ok, msg = set_device_location(location)
+        return jsonify({"ok": ok, "message": msg})
+
+    @app.get("/api/settings/api-access")
+    def api_access_get() -> Response:
+        return jsonify({"entries": get_api_allowlist()})
+
+    @app.post("/api/settings/api-access")
+    def api_access_post() -> Response:
+        body = request.get_json(silent=True) or {}
+        entries = body.get("entries", [])
+        if not isinstance(entries, list):
+            return jsonify({"ok": False, "message": "entries muss eine Liste sein."}), 400
+        ok, msg = set_api_allowlist([str(e) for e in entries])
         return jsonify({"ok": ok, "message": msg})
 
     # ---------------------------
