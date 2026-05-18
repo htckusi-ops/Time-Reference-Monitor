@@ -269,12 +269,15 @@ Die Einstellungsseite bündelt alle Konfigurationsoptionen, die zur Laufzeit ge�
 
 | Karte | Funktion |
 |-------|----------|
+| **Gerät / Standort** | Freitext-Bezeichnung des Geräts (erscheint im Dashboard) |
+| **PTP Domain** | PTP-Domain scannen und zur Laufzeit wechseln (siehe unten) |
 | **Netzwerk** | DHCP / statische IP, Subnetzmaske, Gateway, DNS |
 | **NTP-Server** | Exklusiven NTP-Server zur Laufzeit setzen — ersetzt alle pool/server-Einträge in `chrony.conf`; persistiert in `/var/lib/time-reference-monitor/ntp_server` |
-| **WLAN** | SSID und Passwort konfigurieren |
-| **PTP Domain** | PTP-Domain scannen und zur Laufzeit wechseln (siehe unten) |
-| **PTP-Simulation** | Synthetische PTP-Fehler erzeugen (GM-Flap, Dropout, Offset-Sprung, Wander, Drift) |
+| **Zeitzone** | System-Zeitzone via `timedatectl set-timezone` setzen; Offset im Dashboard erscheint nach ≤ 30 s |
+| **WLAN** | WiFi-Radio ein-/ausschalten |
+| **API-Zugriff** | IP/Subnet-Allowlist für Web-Interface und API; leer = alle erlaubt; `127.0.0.1`/`::1` immer erlaubt |
 | **NTP-Simulation** | Synthetischen NTP-Ausfall oder -Sprung simulieren |
+| **PTP-Simulation** | Synthetische PTP-Fehler erzeugen (GM-Flap, Dropout, Offset-Sprung, Wander, Drift) |
 
 #### PTP-Simulation (Mock-Modus)
 
@@ -334,18 +337,18 @@ PTP-Genauigkeit hängt direkt davon ab, ob das Netzwerk-Interface **Hardware-Tim
 | **RPi 4 Model B** | Nein (BCM54213PE, kein IEEE 1588) | Funktioniert nur mit Software-Timestamps (`-S`), ~10–100 µs Genauigkeit |
 | **RPi 5** | Ja (MAC-Level via RP1-Chip) — aber **wiederholte Kernel-Regressionen** | Nicht empfohlen für unbeaufsichtigten Produktionsbetrieb |
 | **RPi CM4** | Ja (PHY-Level, BCM54210PE) | Stabil, ~5–15 ns auf direktem Link, ~5–6 µs über Switches |
-| **RPi CM5** | Ja (PHY + MAC) | Beste Option; vollständige Unterstützung ab Kernel 6.12 |
+| **RPi CM5** | Ja (PHY + MAC) | Beste Option; vollständige Unterstützung ab Kernel 6.12; `setup.sh` erkennt HW-Timestamping automatisch via `ethtool -T` |
 
 **RPi 4 Model B:** ptp4l muss im Software-Timestamp-Modus betrieben werden. In `rpi/ptp4l/ptp4l.conf` ist bereits `time_stamping software` gesetzt — das passt für den RPi 4. Kein `-S`-Flag auf der Kommandozeile nötig. Für ein reines Monitoring-Tool (kein Grandmaster) ist die resultierende Genauigkeit von ~10–50 µs oft ausreichend.
 
 **RPi 5:** Hardware-Timestamping ist im Kernel vorhanden (MAC-Level via RP1-Chip), aber seit 2024 gibt es wiederholte Regressionen. **Raspberry Pi OS Bookworm (Stand Anfang 2026) ist betroffen** — Kernel 6.12.25–6.12.35 funktioniert nicht. Kernel 6.12.10 und 6.15 sind stabil. Workaround bis ein Fix landet: `sudo rpi-update` für einen neueren Pre-Release-Kernel, oder Software-Timestamps mit `-S`.
 
-Zusätzlich benötigt Hardware-Timestamping auf dem RPi 5 folgenden Eintrag in `rpi/ptp4l/ptp4l.conf`, sonst werden Timestamps stillschweigend verworfen:
+Hardware-Timestamping auf RPi 5 / CM5 erfordert zwei Einträge in `ptp4l.conf` (sonst werden Timestamps stillschweigend verworfen):
 ```ini
-hwts_filter    full
 time_stamping  hardware
+hwts_filter    full
 ```
-`time_stamping` in `rpi/ptp4l/ptp4l.conf` von `software` auf `hardware` ändern und `hwts_filter full` ergänzen.
+`setup.sh` setzt diese Einträge bei der Installation **automatisch**, sofern `ethtool -T eth0` Hardware-Timestamping meldet. Für manuelle Anpassung: `/etc/linuxptp/ptp4l.conf` bearbeiten und `ptp4l` neu starten.
 
 **Prüfen ob Hardware-Timestamping verfügbar ist:**
 ```bash
@@ -478,41 +481,148 @@ Der Standardname `ptp` kann überschrieben werden:
 sudo APP_USER=anderer-user bash rpi/setup.sh
 ```
 
-### Installation
+### Erstinstallation — Schritt für Schritt
+
+Dieser Abschnitt beschreibt den vollständigen Weg von der leeren SD-Karte bis zum laufenden Kiosk.
+
+#### Schritt 1 — Raspberry Pi OS Lite (64-bit) installieren
+
+1. **Raspberry Pi Imager** herunterladen: [raspberrypi.com/software](https://www.raspberrypi.com/software/)
+2. Ziel-OS wählen: **Raspberry Pi OS Lite (64-bit)** (kein Desktop)
+3. Im Imager **Advanced Options** (`Ctrl+Shift+X`) konfigurieren:
+   - Hostname setzen (z.B. `studioref-01`)
+   - SSH aktivieren (Public-Key-Authentifizierung empfohlen)
+   - Standard-User: `pi` (wird später durch `ptp` ersetzt)
+   - WLAN **nicht** konfigurieren — Kiosk läuft ausschliesslich über Ethernet
+4. SD-Karte schreiben, einlegen, Pi starten
+
+#### Schritt 2 — Erstzugang via SSH
+
+```bash
+ssh pi@<ip-adresse>        # oder: ssh pi@studioref-01.local
+```
+
+IP-Adresse im Router-DHCP-Log oder via `nmap -sn 192.168.1.0/24` ermitteln.
+
+#### Schritt 3 — Repository klonen
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone https://github.com/<org>/Time-Reference-Monitor.git
+cd Time-Reference-Monitor
+```
+
+#### Schritt 4 — Setup-Skript ausführen
+
+```bash
+sudo bash rpi/setup.sh
+```
+
+Das Skript erledigt vollautomatisch:
+
+| Schritt | Aktion |
+|---------|--------|
+| 1 | User `ptp` anlegen (Home `/home/ptp`, Gruppen `audio`, `video`, `input`; Passwort gesperrt) |
+| 2 | System-Pakete installieren: `chromium`, `xorg`, `openbox`, `linuxptp`, `chrony`, `libltc-dev`, `ethtool`, … |
+| 3 | `alsaltc` aus Quellen kompilieren und nach `/usr/local/bin/` installieren |
+| 4 | `/opt/time-reference-monitor/` anlegen, Python-venv erstellen, Abhängigkeiten installieren |
+| 5 | `/etc/asound.conf` installieren (dsnoop-Config für LTC-Capture) |
+| 6 | `/etc/chrony/chrony.conf` installieren (NTP-only, kein PTP-Refclock) |
+| 7 | `/etc/linuxptp/ptp4l.conf` installieren; **Hardware-Timestamping automatisch erkennen** via `ethtool -T eth0` — CM5/RPi5: `time_stamping hardware` + `hwts_filter full`; RPi4: `time_stamping software` |
+| 8 | `/etc/X11/Xwrapper.config` schreiben (`needs_root_rights=yes` für rootless Xorg auf VT7) |
+| 9 | systemd-Dienste installieren und aktivieren |
+| 10 | sudoers-Regeln für `ptp` (reboot, poweroff, nmcli, timedatectl, …) |
+| 11 | WirePlumber maskieren (falls installiert — belegt sonst das ALSA-Device) |
+| 12 | `/etc/time-reference-monitor.conf` erstellen (Kiosk-Konfiguration) |
+| 13 | HDMI-Modus in `config.txt` setzen (Standard: 1080i50 für SDI-Konverter) |
+| 14 | Console-Autologin auf VT1 konfigurieren (Fallback) |
+
+#### Schritt 5 — Konfiguration anpassen
+
+**PTP-Interface** (Standard: `eth0`):
+```bash
+sudo nano /etc/time-reference-monitor.conf
+# PTP_IFACE=eth0   ← nur anpassen wenn abweichend
+sudo systemctl daemon-reload
+sudo systemctl restart ptp4l time-reference-monitor
+```
+
+**LTC-Soundkarte** (Standard: Tascam US-2x2HR):
+```bash
+arecord -l        # vorhandene Karten auflisten
+# Zeile: "card 1: US2x2HR [TASCAM US-2x2HR], device 0: ..."
+sudo nano /etc/asound.conf    # pcm "hw:US2x2HR,0" → anpassen
+```
+
+**LTC-Framerate** (Standard: 25 fps):
+```bash
+sudo nano /etc/systemd/system/time-reference-monitor.service
+# --ltc-fps 25  →  29 für 29.97/30 fps
+sudo systemctl daemon-reload && sudo systemctl restart time-reference-monitor
+```
+
+**HDMI-Modus** (Standard: 1080i50 für SDI-Konverter):
+```bash
+sudo nano /etc/time-reference-monitor.conf
+# HDMI_MODE=sdi-1080i50   ← Optionen: sdi-1080i50, sdi-1080p50, auto
+sudo bash rpi/update.sh   # aktualisiert config.txt und startet Dienste neu
+```
+
+**PTP-Domain** (Standard: 0):
+```bash
+sudo nano /etc/systemd/system/time-reference-monitor.service
+# --domain 0  →  anpassen
+```
+Oder zur Laufzeit: **Settings → PTP Domain → Aktiv & Speichern** (kein Neustart nötig).
+
+#### Schritt 6 — SSH-Key für `ptp`-User hinterlegen
+
+Da der `ptp`-User kein Passwort hat, ist SSH-Key-Authentifizierung erforderlich:
+
+```bash
+sudo mkdir -p /home/ptp/.ssh
+sudo sh -c 'echo "ssh-ed25519 AAAA...dein-public-key" >> /home/ptp/.ssh/authorized_keys'
+sudo chown -R ptp:ptp /home/ptp/.ssh
+sudo chmod 700 /home/ptp/.ssh && sudo chmod 600 /home/ptp/.ssh/authorized_keys
+```
+
+#### Schritt 7 — Neustart und Verifikation
+
+```bash
+sudo reboot
+```
+
+Nach dem Neustart:
+
+```bash
+# Dienste prüfen
+ssh ptp@<ip>
+systemctl status time-reference-monitor ptp4l chrony chromium-kiosk
+
+# PTP-Offset prüfen
+journalctl -fu time-reference-monitor | grep offset
+
+# Hardware-Timestamping prüfen (CM5/RPi5)
+ethtool -T eth0
+# → "PTP Hardware Clock: 0" = Hardware-Timestamps aktiv
+# → "PTP Hardware Clock: none" = Software-Timestamps (RPi4 normal)
+
+# Web-Interface
+curl http://localhost:8088/api/status | python3 -m json.tool
+```
+
+Das Chromium-Kiosk öffnet automatisch `http://localhost:8088/` auf dem HDMI-Ausgang.
+
+---
+
+### Installation (Zusammenfassung)
 
 ```bash
 # Einmalig als root ausführen:
 sudo bash rpi/setup.sh
 ```
 
-Das Skript:
-1. Legt den User `ptp` an (falls nicht vorhanden)
-2. Installiert alle System-Pakete (`chromium`, `xorg`, `openbox`, `libltc-dev`, …)
-3. Kompiliert `alsaltc` aus den Quellen für ARM
-4. Legt `/opt/time-reference-monitor/` mit Python-venv an
-5. Installiert `/etc/asound.conf` (dsnoop-Config)
-6. Installiert `/etc/chrony/chrony.conf` (NTP-only, pool.ntp.org)
-7. Installiert `/etc/linuxptp/ptp4l.conf` (Monitor-Modus: `free_running 1`, `slaveOnly 1`)
-8. Schreibt `/etc/X11/Xwrapper.config` (VT-Zugriff für rootless Xorg → chromium-kiosk)
-9. Aktiviert systemd-Dienste
-
-Nach dem Setup:
-
-```bash
-# 1. PTP-Interface setzen (Standard: eth0):
-sudo nano /etc/time-reference-monitor.conf   # PTP_IFACE=eth0 → anpassen
-sudo systemctl daemon-reload
-
-# 2. LTC-Karte prüfen und ggf. anpassen:
-arecord -l
-sudo nano /etc/asound.conf          # Kartennamen anpassen (Standard: hw:US2x2HR,0)
-
-# 3. Weitere Monitor-Parameter (Domain, LTC-FPS …):
-sudo nano /etc/systemd/system/time-reference-monitor.service
-sudo systemctl daemon-reload
-
-sudo reboot
-```
+Vollständige Anleitung: siehe **Erstinstallation — Schritt für Schritt** oben.
 
 ### Netzwerk-Interface konfigurieren
 
@@ -1235,6 +1345,10 @@ Liest direkt aus dem zirkulären In-Memory-Puffer — **bleibt erreichbar auch w
 | POST | `/api/settings/timezone` | `{"timezone":"Europe/Zurich"}` | `{"ok":true,"message":"…"}` |
 | GET | `/api/settings/location` | — | `{"location":"Regie Studio 3"}` |
 | POST | `/api/settings/location` | `{"location":"Regie Studio 3, Rack B"}` | `{"ok":true,"message":"…"}` |
+| GET | `/api/settings/api-access` | — | `{"entries":["192.168.1.0/24","10.0.0.5"]}` — leer = alle erlaubt |
+| POST | `/api/settings/api-access` | `{"entries":["192.168.1.0/24"]}` | `{"ok":true,"message":"1 Eintrag gespeichert."}` |
+
+**API-Zugriffskontrolle:** Wird via `before_request`-Hook in Flask durchgesetzt. `127.0.0.1` und `::1` (Loopback) sind immer erlaubt — das lokale Kiosk kann sich nie aussperren. Nicht erlaubte Anfragen erhalten HTTP 403. Persistenz: `/var/lib/time-reference-monitor/api_allowlist.json`.
 
 Alle Schreiboperationen (`POST`) rufen `nmcli`, `timedatectl` bzw. `tee` über `sudo` auf — die notwendigen sudoers-Regeln werden von `setup.sh` / `update.sh` angelegt.
 
