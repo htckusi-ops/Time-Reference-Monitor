@@ -1,4 +1,5 @@
 from __future__ import annotations
+import queue as _queue
 import sqlite3
 import threading
 from typing import Optional, Dict, Any
@@ -12,12 +13,24 @@ def utc_iso_ms() -> str:
 
 
 class DBWriter:
+    """SQLite event writer with async queue.
+
+    All INSERT/COMMIT operations run in a dedicated background thread so that
+    SQLite I/O (which can stall on SD-card stress) never holds StatusBus._lock.
+    insert_event() is non-blocking: it enqueues and returns immediately.
+    """
+
     def __init__(self, path: str, max_events: int):
         self.path = path
         self.max_events = int(max_events)
         self._lock = threading.Lock()
         self._conn: Optional[sqlite3.Connection] = None
         self._inserts = 0
+        self._drops = 0
+        # Bounded queue: 500 events ≈ typical burst; writer thread drains rapidly.
+        # Events are dropped (not blocking) when full — prevents StatusBus stall.
+        self._queue: _queue.Queue = _queue.Queue(maxsize=500)
+        self._worker: Optional[threading.Thread] = None
 
     def open(self) -> None:
         with self._lock:
@@ -38,8 +51,37 @@ class DBWriter:
                 """
             )
             self._conn.commit()
+        self._worker = threading.Thread(
+            target=self._write_worker, daemon=True, name="db-writer"
+        )
+        self._worker.start()
+
+    def _write_worker(self) -> None:
+        """Background thread: drain queue and write to SQLite."""
+        while True:
+            item = self._queue.get()
+            if item is None:  # sentinel from close()
+                break
+            ts_utc, severity, type_, message, suppressed = item
+            try:
+                with self._lock:
+                    if self._conn is None:
+                        continue
+                    self._conn.execute(
+                        "INSERT INTO events(ts_utc,severity,type,message,suppressed) VALUES (?,?,?,?,?)",
+                        (ts_utc, severity, type_, message, 1 if suppressed else 0),
+                    )
+                    self._conn.commit()
+                    self._inserts += 1
+                    if self.max_events > 0 and (self._inserts % config.DB_TRIM_EVERY_N_INSERTS == 0):
+                        self._trim_locked()
+            except Exception:
+                pass
 
     def close(self) -> None:
+        self._queue.put(None)  # signal worker to stop
+        if self._worker:
+            self._worker.join(timeout=5.0)
         with self._lock:
             if self._conn:
                 self._conn.commit()
@@ -47,39 +89,38 @@ class DBWriter:
                 self._conn = None
 
     def insert_event(self, ts_utc: str, severity: str, type_: str, message: str, suppressed: bool) -> None:
+        """Enqueue an event for async writing. Never blocks the caller."""
         if not self._conn:
             return
-        with self._lock:
-            assert self._conn is not None
-            self._conn.execute(
-                "INSERT INTO events(ts_utc,severity,type,message,suppressed) VALUES (?,?,?,?,?)",
-                (ts_utc, severity, type_, message, 1 if suppressed else 0),
-            )
-            self._conn.commit()
-            self._inserts += 1
+        try:
+            self._queue.put_nowait((ts_utc, severity, type_, message, suppressed))
+        except _queue.Full:
+            self._drops += 1  # approximate; GIL makes simple int increment safe
 
-            if self.max_events > 0 and (self._inserts % config.DB_TRIM_EVERY_N_INSERTS == 0):
-                self.trim_events()
+    def _trim_locked(self) -> None:
+        """Trim old events. Caller must already hold self._lock."""
+        assert self._conn is not None
+        self._conn.execute(
+            """
+            DELETE FROM events
+            WHERE id NOT IN (
+              SELECT id FROM events ORDER BY id DESC LIMIT ?
+            )
+            """,
+            (self.max_events,),
+        )
+        self._conn.commit()
 
     def trim_events(self) -> None:
         if not self._conn or self.max_events <= 0:
             return
         with self._lock:
-            assert self._conn is not None
-            # keep newest max_events by id
-            self._conn.execute(
-                """
-                DELETE FROM events
-                WHERE id NOT IN (
-                  SELECT id FROM events ORDER BY id DESC LIMIT ?
-                )
-                """,
-                (self.max_events,),
-            )
-            self._conn.commit()
+            self._trim_locked()
 
     def meta(self) -> Dict[str, Any]:
         return {
             "db_path": self.path,
             "db_max_events": self.max_events,
+            "db_queue_depth": self._queue.qsize(),
+            "db_event_drops": self._drops,
         }

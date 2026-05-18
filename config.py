@@ -34,7 +34,7 @@ DEFAULT_NTP_STALE_THRESHOLD_S = 1200
 PMC_TIMEOUT_S = 1.5
 
 LTC_ALSA_DEVICE = "ltc_left_mono"
-LTC_LEVEL_CHANNELS = 2
+LTC_LEVEL_CHANNELS = 1
 # Spectrum (on-demand) – uses RAM tmp dir to avoid SD writes
 SPECTRUM_TMP_DIR = "/dev/shm"
 SPECTRUM_DEFAULT_DEVICE = "ltc_left_mono"

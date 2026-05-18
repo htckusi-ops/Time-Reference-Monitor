@@ -86,6 +86,8 @@ def ui_html() -> str:
     .led.peak{{opacity:.55; box-shadow:inset 0 0 0 1px rgba(0,0,0,.25), 0 0 6px rgba(255,255,255,.06);}}
     .led.rms{{opacity:1; box-shadow:inset 0 0 0 1px rgba(0,0,0,.15), 0 0 10px rgba(255,255,255,.10);}}
     .ledText{{font-size:12px; color:var(--muted); font-family:var(--mono); white-space:nowrap;}}
+    .tzBadge{{font-family:var(--mono); font-size:11px; color:var(--muted); letter-spacing:.02em; line-height:1.2;}}
+    .tzBadge.active{{color:#60a5fa;}}
   </style>
 </head>
 <body>
@@ -123,15 +125,24 @@ def ui_html() -> str:
 
       <div class="bigtime" id="ptpBox">
         <div class="timeLabel">PTP</div>
-        <div class="timeStatus alarm" id="ptpStatusBadge">NO PTP SYNC</div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <div class="timeStatus alarm" id="ptpStatusBadge">NO PTP SYNC</div>
+          <div class="tzBadge" id="ptpTzBadge">—</div>
+        </div>
         <div class="seg-wrap" id="ptpTimeSegs" style="opacity:0.18">00:00:00.00</div>
 
         <div class="timeLabel">NTP</div>
-        <div class="timeStatus muted" id="ntpStatusBadge">—</div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <div class="timeStatus muted" id="ntpStatusBadge">—</div>
+          <div class="tzBadge" id="ntpTzBadge">—</div>
+        </div>
         <div class="seg-wrap" id="ntpTimeSegs" style="opacity:0.18">00:00:00.00</div>
 
         <div class="timeLabel">LTC</div>
-        <div class="timeStatus muted" id="ltcStatusBadge">—</div>
+        <div style="display:flex;flex-direction:column;gap:3px;">
+          <div class="timeStatus muted" id="ltcStatusBadge">—</div>
+          <div class="tzBadge" id="ltcTzBadge">—</div>
+        </div>
         <div class="seg-wrap" id="ltcTimeSegs" style="opacity:0.18">00:00:00:00</div>
       </div>
 
@@ -448,21 +459,26 @@ function renderLedMeter(ledPeak){{
 
   function updateEvents(events){{
     const tb = els('evtTable').querySelector('tbody');
-    tb.innerHTML = '';
-    let shown = 0;
-    for(const ev of (events||[])){{
+    const evArr = (events || []).slice(0, {config.EVENTS_UI_MAX});
+    // Reuse existing rows instead of destroying/recreating them every poll.
+    // innerHTML='' + full createElement every 150 ms creates ~1500 DOM nodes/s
+    // that V8 must GC — causes renderer CPU runaway after days of uptime.
+    while (tb.children.length < evArr.length) {{
       const tr = document.createElement('tr');
-      const td1 = document.createElement('td'); td1.textContent = ev.ts_utc || '—';
-      const td2 = document.createElement('td'); td2.textContent = ev.severity || '—'; 
-      td2.className = 'sev ' + (ev.severity || 'INFO');
-      const td3 = document.createElement('td'); td3.textContent = ev.type || '—'; td3.className = 'mono';
-      const td4 = document.createElement('td'); 
-      td4.textContent = (ev.suppressed ? '[startup] ' : '') + (ev.message || '');
-      tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
+      for (let i = 0; i < 4; i++) tr.appendChild(document.createElement('td'));
       tb.appendChild(tr);
-      shown++;
-      if(shown >= {config.EVENTS_UI_MAX}) break;
     }}
+    while (tb.children.length > evArr.length) tb.removeChild(tb.lastChild);
+    const trs = tb.querySelectorAll('tr');
+    evArr.forEach((ev, idx) => {{
+      const tds = trs[idx].querySelectorAll('td');
+      tds[0].textContent = ev.ts_utc || '—';
+      tds[1].textContent = ev.severity || '—';
+      tds[1].className   = 'sev ' + (ev.severity || 'INFO');
+      tds[2].textContent = ev.type || '—';
+      tds[2].className   = 'mono';
+      tds[3].textContent = (ev.suppressed ? '[startup] ' : '') + (ev.message || '');
+    }});
   }}
 
   function applyApi(data){{
@@ -580,7 +596,9 @@ function renderLedMeter(ledPeak){{
       const tzH = parseInt(ltc.ltc_tz.slice(1, 3), 10);
       const tzM = parseInt(ltc.ltc_tz.slice(3, 5), 10);
       _ltcInferredTzMs = tzSign * (tzH * 3600000 + tzM * 60000);
-      els('ltcInferredTzLine').textContent = 'UTC' + ltc.ltc_tz.charAt(0) + pad2(tzH) + ':' + pad2(tzM);
+      const _ltcTzStr = 'UTC' + ltc.ltc_tz.charAt(0) + pad2(tzH) + ':' + pad2(tzM);
+      els('ltcInferredTzLine').textContent = _ltcTzStr;
+      {{const _lb=els('ltcTzBadge'); if(_lb){{_lb.textContent=_ltcTzStr; _lb.className='tzBadge active';}}}}
     }} else if (ltc.ltc_date && ltc.timecode && st.ptp_valid && st.ptp_time_utc_iso) {{
       // Fallback: infer offset by treating LTC date+time as UTC, subtract PTP UTC.
       const _tm = ltc.timecode.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}})/);
@@ -595,34 +613,26 @@ function renderLedMeter(ledPeak){{
       if (_ltcInferredTzMs !== null) {{
         const _s = _ltcInferredTzMs >= 0 ? '+' : '-';
         const _a = Math.abs(_ltcInferredTzMs);
-        els('ltcInferredTzLine').textContent = 'UTC' + _s + pad2(Math.floor(_a/3600000)) + ':' + pad2(Math.floor((_a%3600000)/60000));
+        const _ltcTzStr2 = 'UTC' + _s + pad2(Math.floor(_a/3600000)) + ':' + pad2(Math.floor((_a%3600000)/60000));
+        els('ltcInferredTzLine').textContent = _ltcTzStr2;
+        {{const _lb=els('ltcTzBadge'); if(_lb){{_lb.textContent=_ltcTzStr2; _lb.className='tzBadge active';}}}}
       }} else {{
         els('ltcInferredTzLine').textContent = '—';
+        {{const _lb=els('ltcTzBadge'); if(_lb){{_lb.textContent='—'; _lb.className='tzBadge';}}}}
       }}
     }} else {{
       els('ltcInferredTzLine').textContent = '—';
+      {{const _lb=els('ltcTzBadge'); if(_lb){{_lb.textContent='—'; _lb.className='tzBadge';}}}}
     }}
 
-    // LTC 7-segment: show HH:MM:SS:FF (frames, not centiseconds).
-    // If TZ known → convert to UTC equivalent, then reconstruct frame number.
+    // LTC 7-segment: raw timecode from stream (HH:MM:SS:FF).
+    // LTC encodes local time by convention — display as-is.
+    // PTP and NTP also display local time now, so all three are directly comparable.
     if(ltc.enabled && ltc.present && tc && tc !== '—') {{
       const tcm = tc.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}}):(\d{{2}})$/);
       if(tcm) {{
-        const fpsN = Math.max(1, Number(ltc.fps) || 25);
-        const ff   = parseInt(tcm[4], 10);
-        if (_ltcInferredTzMs !== null) {{
-          // Include frame as fractional ms so UTC wraps correctly at midnight.
-          const lMs = parseInt(tcm[1])*3600000 + parseInt(tcm[2])*60000
-                    + parseInt(tcm[3])*1000 + Math.round(ff / fpsN * 1000);
-          const uMs = ((lMs - _ltcInferredTzMs) % 86400000 + 86400000) % 86400000;
-          const uff = Math.min(fpsN - 1, Math.floor((uMs % 1000) / 1000 * fpsN));
-          renderSevenSeg(els('ltcTimeSegs'),
-            pad2(Math.floor(uMs/3600000))+':'+pad2(Math.floor((uMs%3600000)/60000))+':'+
-            pad2(Math.floor((uMs%60000)/1000))+':'+pad2(uff), '00:00:00:00');
-        }} else {{
-          renderSevenSeg(els('ltcTimeSegs'),
-            tcm[1]+':'+tcm[2]+':'+tcm[3]+':'+pad2(ff), '00:00:00:00');
-        }}
+        renderSevenSeg(els('ltcTimeSegs'),
+          tcm[1]+':'+tcm[2]+':'+tcm[3]+':'+pad2(parseInt(tcm[4], 10)), '00:00:00:00');
       }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
     }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
 
@@ -712,21 +722,23 @@ function renderLedMeter(ledPeak){{
 
     if(ntpNow) {{
       _smNtpMs = _smNtpMs == null ? ntpNow.getTime() : 0.25 * ntpNow.getTime() + 0.75 * _smNtpMs;
-      const dispNtp = new Date(_smNtpMs);
-      const nh = dispNtp.getUTCHours(), nm = dispNtp.getUTCMinutes(), ns2 = dispNtp.getUTCSeconds();
-      const ncs = Math.floor(dispNtp.getUTCMilliseconds() / 10);
+      // Shift by server timezone offset to display local time instead of UTC.
+      const srvTzOffS = (meta.tz_offset_s != null) ? meta.tz_offset_s : 0;
+      const dispNtpLocal = new Date(_smNtpMs + srvTzOffS * 1000);
+      const nh = dispNtpLocal.getUTCHours(), nm = dispNtpLocal.getUTCMinutes(), ns2 = dispNtpLocal.getUTCSeconds();
+      const ncs = Math.floor(dispNtpLocal.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
-      _dateNtp = ntpNow.toISOString().slice(0,10); _updDate();
-      // TZ offset from RPi server (meta.tz_offset_s); falls back to browser TZ if unavailable
-      const srvTzOffS = meta.tz_offset_s != null ? meta.tz_offset_s : null;
-      const tzOffMin = srvTzOffS != null ? Math.round(srvTzOffS / 60) : -srvNow.getTimezoneOffset();
+      _dateNtp = dispNtpLocal.toISOString().slice(0,10); _updDate();
+      const tzOffMin = Math.round(srvTzOffS / 60);
       const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
-      els('ntpTzLine').textContent = 'NTP TZ: UTC' + (tzOffMin>=0?'+':'-') + pad2(tzH)+':'+pad2(tzM);
+      els('ntpTzLine').textContent = 'TZ: UTC' + (tzOffMin>=0?'+':'-') + pad2(tzH)+':'+pad2(tzM);
+      {{const _nb=els('ntpTzBadge'); if(_nb){{_nb.textContent='UTC'+(tzOffMin>=0?'+':'-')+pad2(tzH)+':'+pad2(tzM); _nb.className=srvTzOffS!==0?'tzBadge active':'tzBadge';}}}}
     }} else {{
       _smNtpMs = null;
       renderSevenSeg(els('ntpTimeSegs'), null);
       _dateNtp = '—'; _updDate();
-      els('ntpTzLine').textContent = 'NTP TZ: —';
+      els('ntpTzLine').textContent = 'TZ: —';
+      {{const _nb=els('ntpTzBadge'); if(_nb){{_nb.textContent='—'; _nb.className='tzBadge';}}}}
     }}
 
     const ltc = lastApi ? (lastApi.ltc || {{}}) : {{}};
@@ -756,7 +768,7 @@ function renderLedMeter(ledPeak){{
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-      els('ltcTzLine').textContent = 'System TZ (PTP): —';
+      els('ltcTzLine').textContent = 'System TZ: —';
       return;
     }}
 
@@ -769,15 +781,22 @@ function renderLedMeter(ledPeak){{
       : 0;
     const ptpNow = srvNow ? new Date(srvNow.getTime() + ptpDeltaMs) : null;
 
-    _datePtp = (st.ptp_valid && st.ptp_time_utc_iso) ? st.ptp_time_utc_iso.slice(0,10) : '—';
+    {{
+      const _tzOff = (meta.tz_offset_s != null) ? meta.tz_offset_s : 0;
+      _datePtp = (st.ptp_valid && st.ptp_time_utc_iso)
+        ? new Date(new Date(st.ptp_time_utc_iso).getTime() + _tzOff * 1000).toISOString().slice(0, 10)
+        : '—';
+    }}
     _updDate();
 
     if(ptpCanTick && ptpNow) {{
       _smPtpMs = _smPtpMs == null ? ptpNow.getTime() : 0.25 * ptpNow.getTime() + 0.75 * _smPtpMs;
-      const dispPtp = new Date(_smPtpMs);
-      const ph = dispPtp.getUTCHours(), pm = dispPtp.getUTCMinutes(), ps = dispPtp.getUTCSeconds();
-      const pcs = Math.floor(dispPtp.getUTCMilliseconds() / 10);
+      const srvTzOffS = (meta.tz_offset_s != null) ? meta.tz_offset_s : 0;
+      const dispPtpLocal = new Date(_smPtpMs + srvTzOffS * 1000);
+      const ph = dispPtpLocal.getUTCHours(), pm = dispPtpLocal.getUTCMinutes(), ps = dispPtpLocal.getUTCSeconds();
+      const pcs = Math.floor(dispPtpLocal.getUTCMilliseconds() / 10);
       renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
+      {{const _pb=els('ptpTzBadge'); if(_pb){{const _to=(meta.tz_offset_s!=null)?meta.tz_offset_s:0; const _tm=Math.round(_to/60),_th=Math.floor(Math.abs(_tm)/60),_tmm=Math.abs(_tm)%60; _pb.textContent='UTC'+(_tm>=0?'+':'-')+pad2(_th)+':'+pad2(_tmm); _pb.className=_to!==0?'tzBadge active':'tzBadge';}}}}
 
       // Δ(NTP-PTP) = NTP_time - PTP_time
       // When chrony system_offset_s is available: Δ = ntpOffsetMs - ptpDeltaMs
@@ -810,27 +829,32 @@ function renderLedMeter(ledPeak){{
           _emaDeltaLtcRaw = _ema(_emaDeltaLtcRaw, wrapDeltaMs(ltcCorr - ptpTodUtc));
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + _emaDeltaLtcAdj.toFixed(3) + ' ms';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + _emaDeltaLtcRaw.toFixed(3) + ' ms';
-          els('ltcTzLine').textContent = 'System TZ (PTP): ' + (srvTzMs/1000).toFixed(0) + ' s (' + srvTzMs.toFixed(0) + ' ms)';
+          {{
+            const _tzM2 = Math.round(srvTzMs / 60000);
+            const _tzH2 = Math.floor(Math.abs(_tzM2)/60), _tzMM2 = Math.abs(_tzM2)%60;
+            els('ltcTzLine').textContent = 'System TZ: UTC' + (_tzM2>=0?'+':'-') + pad2(_tzH2)+':'+pad2(_tzMM2);
+          }}
         }} else {{
           _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
           els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
           els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-          els('ltcTzLine').textContent = 'System TZ (PTP): —';
+          els('ltcTzLine').textContent = 'System TZ: —';
         }}
       }} else {{
         _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
         els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
         els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-        els('ltcTzLine').textContent = 'System TZ (PTP): —';
+        els('ltcTzLine').textContent = 'System TZ: —';
       }}
     }} else {{
       _smPtpMs = null;
       _emaDeltaNtpPtp = null; _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
       renderSevenSeg(els('ptpTimeSegs'), null);
+      {{const _pb=els('ptpTzBadge'); if(_pb){{_pb.textContent='—'; _pb.className='tzBadge';}}}}
       els('deltaLine').textContent = 'Δ(NTP-PTP): —';
       els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
       els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
-      els('ltcTzLine').textContent = 'System TZ (PTP): —';
+      els('ltcTzLine').textContent = 'System TZ: —';
     }}
   }}
 
@@ -898,6 +922,10 @@ pollLtcLevel();
 
 
 def spectrum_html() -> str:
+    _dur_opts = "\n".join(
+        f'          <option value="{d}">{d} s</option>'
+        for d in config.SPECTRUM_ALLOWED_DURATIONS_S
+    )
     return f"""<!doctype html>
 <html>
 <head>
@@ -962,11 +990,7 @@ def spectrum_html() -> str:
         <input id="dev" value="{config.LTC_ALSA_DEVICE}" size="20"/>
         <label>Duration</label>
         <select id=\"dur\">
-          <option value=\"5\">5 s</option>
-          <option value=\"10\">10 s</option>
-          <option value=\"20\">20 s</option>
-          <option value=\"30\">30 s</option>
-          <option value=\"60\">60 s</option>
+{_dur_opts}
         </select>
         <button class=\"btn\" id=\"gen\">GENERATE</button>
         <span id=\"state\" class=\"muted\">—</span>

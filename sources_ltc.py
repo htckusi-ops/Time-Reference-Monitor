@@ -1,7 +1,9 @@
 from __future__ import annotations
 import collections
 import dataclasses
+import os
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -36,6 +38,53 @@ _UB_RE = re.compile(r"\|\s*(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1,2})\s+(\d{1
 # alsaltc appends 8 hex nibbles at end of every line: "... AABBCCDD"
 # Used as fallback when no other pattern captured user bits.
 _UB_TAIL_RE = re.compile(r"\s([0-9A-Fa-f]{8})\s*$")
+
+# If the subprocess produces no stdout for this many seconds it is killed and
+# restarted.  Catches the case where alsaltc is stuck in a blocking kernel call
+# (e.g. snd_pcm_readi never returns) and cannot exit on its own.
+_SUBPROCESS_WATCHDOG_S = 60.0
+
+
+def _drain_pipe(pipe) -> None:
+    """Read and discard all output from *pipe* — prevents pipe-buffer fill without blocking."""
+    try:
+        for _ in pipe:
+            pass
+    except Exception:
+        pass
+
+
+def _kill_pgroup(proc: subprocess.Popen) -> None:
+    """Send SIGTERM to the whole process group, wait, then SIGKILL if needed.
+
+    Using a process group (set via os.setsid in Popen) ensures that the child
+    shell AND the alsaltc grandchild are both terminated.  Without this,
+    proc.terminate() only kills the shell; alsaltc becomes an orphan that holds
+    the ALSA handle and eventually fills the pipe buffer — causing a hang.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=2.0)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    try:
+        proc.wait(timeout=2.0)
+    except Exception:
+        pass
 
 
 def _nibbles_to_ub(n: list) -> str:
@@ -221,10 +270,12 @@ class LTCMonitor:
         self._last_tc_frames: Optional[int] = None
         self._last_tc_mono: Optional[float] = None
         self._jump_roll = RollingCounter(rolling_window_s)
-        self._alsa_probed = False   # retry flag: probe again on first LTC frame if initial probe fails
+        # False until the ALSA delay has been probed at least once from _mark_present().
+        # Allows one retry on the first LTC frame if the construction-time probe failed.
+        self._alsa_probed = False
 
-        # Probe ALSA capture delay once at construction time.
-        # May return None if the device is not yet ready; will retry on first LTC frame.
+        # Probe ALSA capture delay at construction time (before alsaltc starts).
+        # May return None if the device is not ready yet; _mark_present() will retry once.
         alsa_delay: Optional[float] = None
         if self.enabled:
             alsa_delay = _probe_alsa_delay_ms(self.device)
@@ -275,11 +326,15 @@ class LTCMonitor:
                 self._status.no_ltc_since_utc = utc_iso_ms()
 
     def _mark_present(self, tc: str, raw: str) -> None:
-        # Retry ALSA delay probe if the initial probe failed (device not ready at startup)
+        # One-shot retry: probe ALSA delay if the initial probe at construction failed.
+        # _alsa_probed is set True immediately (before calling) so this runs at most
+        # once per LTCMonitor lifetime.  Without this guard the probe ran on EVERY LTC
+        # frame (25+/s), spawning arecord subprocesses that competed with alsaltc for
+        # the dsnoop device — exhausting ALSA resources within seconds of boot.
         if not self._alsa_probed:
+            self._alsa_probed = True
             delay = _probe_alsa_delay_ms(self.device)
             if delay is not None:
-                self._alsa_probed = True
                 with self._lock:
                     self._status.alsa_delay_ms = delay
         # Parse date + timezone + raw user bits, tried in order:
@@ -355,28 +410,56 @@ class LTCMonitor:
             self._raw_seq += 1
 
     def _run(self) -> None:
+        # Restart backoff: doubles on each quick exit (< 5 s), resets on long-lived run.
+        # Prevents rapid open/close cycles from destabilising the USB audio driver.
+        _restart_backoff = 0.5
 
         while not self._stop.is_set():
+            proc: Optional[subprocess.Popen] = None
+            _proc_start = time.monotonic()
             try:
                 proc = subprocess.Popen(
                     self.cmd,
                     shell=True,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                    # stderr MUST be separate from stdout.  alsaltc writes ALSA error
+                    # messages ("ALSA read error: …") to stderr.  If those reach the
+                    # stdout pipe (via STDOUT redirect) Python reads them as regular
+                    # lines and resets last_output_mono — silently bypassing the 60 s
+                    # watchdog.  Separated stderr is drained by a background thread so
+                    # the pipe buffer never fills and blocks alsaltc.
+                    stderr=subprocess.PIPE,
                     text=True,
                     bufsize=1,
+                    # New process group so _kill_pgroup() reaches alsaltc even when
+                    # shell=True spawns an intermediate /bin/sh.  Without this,
+                    # proc.terminate() only kills the shell; alsaltc becomes an
+                    # orphan that holds the ALSA handle indefinitely.
+                    preexec_fn=os.setsid,
                 )
+                # Drain stderr in a daemon thread — prevents pipe-buffer fill.
+                threading.Thread(
+                    target=_drain_pipe, args=(proc.stderr,),
+                    daemon=True, name="ltc-stderr-drain",
+                ).start()
                 assert proc.stdout is not None
 
                 # Reset per-process state
                 self._last_tc_frames = None
                 self._last_tc_mono = None
                 dropout_marked = False
+                last_output_mono = time.monotonic()  # watchdog reset point
+                _restart_backoff = 0.5               # reset on each successful start
 
                 while not self._stop.is_set():
                     # Periodic timeout so we can detect dropouts even if no output arrives
                     r, _, _ = select.select([proc.stdout], [], [], 0.2)
                     now = time.monotonic()
+
+                    # Subprocess watchdog: if no stdout for _SUBPROCESS_WATCHDOG_S seconds,
+                    # alsaltc is likely stuck in a blocking kernel call — kill and restart.
+                    if now - last_output_mono > _SUBPROCESS_WATCHDOG_S:
+                        break
 
                     # Dropout watchdog (Python-side)
                     if self.dropout_timeout_ms > 0 and self._last_tc_mono is not None:
@@ -389,6 +472,7 @@ class LTCMonitor:
                         line = proc.stdout.readline()
                         if not line:
                             break
+                        last_output_mono = now  # stdout resets watchdog (LTC output only)
                         line = line.strip()
                         if not line:
                             continue
@@ -423,24 +507,31 @@ class LTCMonitor:
                                     with self._lock:
                                         self._status.jumps_total += 1
                                         self._jump_roll.add()
-                                    # Mark as present anyway, but keep raw line for diagnostics
                         self._last_tc_frames = _tc_to_frames(tc, self._fps_i) or self._last_tc_frames
                         self._last_tc_mono = now
                         dropout_marked = False
 
                         self._mark_present(tc, line)
 
-                # Process ended or stream closed -> absent
-                try:
-                    proc.terminate()
-                except Exception:
-                    pass
-                self._mark_absent()
-                time.sleep(0.5)
-
             except Exception:
                 with self._lock:
                     self._status.decode_errors_total += 1
                     self._err_roll.add()
-                self._mark_absent()
-                time.sleep(1.0)
+
+            finally:
+                # Kill the entire process group (shell + alsaltc grandchild).
+                # proc.wait() reaps the zombie so it does not accumulate.
+                if proc is not None:
+                    _kill_pgroup(proc)
+
+            self._mark_absent()
+
+            # Adaptive backoff: if the process exited quickly (ALSA error storm causes
+            # the C-level 500-error exit after ~10 s), increase the wait exponentially
+            # up to 30 s.  This prevents rapid open/close cycles from destabilising
+            # the USB audio driver (Tascam US-2x2HR / kernel snd-usb-audio).
+            if time.monotonic() - _proc_start < 5.0:
+                _restart_backoff = min(_restart_backoff * 2, 30.0)
+            else:
+                _restart_backoff = 0.5
+            self._stop.wait(timeout=_restart_backoff)

@@ -206,6 +206,67 @@ def set_ntp_server(server: str) -> Tuple[bool, str]:
     return True, f"NTP-Server auf {server} gesetzt."
 
 
+# ── timezone ──────────────────────────────────────────────────────────────────
+
+_tz_list_cache: list = []
+_tz_offset_cache: dict = {"offset_s": 0, "expires": 0.0}
+
+
+def get_timezone() -> str:
+    r = _run("timedatectl", "show", "--property=Timezone", "--value")
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip()
+    try:
+        with open("/etc/timezone") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def get_tz_offset_s() -> int:
+    """Return current timezone UTC offset in seconds, cached for 30 s.
+
+    Spawns `date +%z` in a fresh process — always reads the current
+    /etc/localtime regardless of the Python process startup timezone.
+    (time.localtime().tm_gmtoff stays at startup timezone after timedatectl
+    changes /etc/localtime; a subprocess always sees the current value.)
+    """
+    import time as _t
+    now = _t.monotonic()
+    if now < _tz_offset_cache["expires"]:
+        return _tz_offset_cache["offset_s"]
+    offset_s = 0
+    try:
+        r = _run("date", "+%z")           # e.g. "+0100", "-0530", "+0000"
+        tz_str = r.stdout.strip()          # always 5 chars: ±HHMM
+        if len(tz_str) == 5 and tz_str[0] in ('+', '-'):
+            sign = 1 if tz_str[0] == '+' else -1
+            offset_s = sign * (int(tz_str[1:3]) * 3600 + int(tz_str[3:5]) * 60)
+    except Exception:
+        pass
+    _tz_offset_cache.update({"offset_s": offset_s, "expires": now + 30.0})
+    return offset_s
+
+
+def list_timezones() -> list:
+    global _tz_list_cache
+    if _tz_list_cache:
+        return _tz_list_cache
+    r = _run("timedatectl", "list-timezones", timeout=15)
+    if r.returncode == 0:
+        _tz_list_cache = [z for z in r.stdout.splitlines() if z.strip()]
+    return _tz_list_cache
+
+
+def set_timezone(tz: str) -> Tuple[bool, str]:
+    r = _sudo("timedatectl", "set-timezone", tz, timeout=10)
+    if r.returncode != 0:
+        return False, f"Timezone konnte nicht gesetzt werden: {(r.stderr or r.stdout).strip()}"
+    # Invalidate offset cache so next meta_provider() call picks up the new offset.
+    _tz_offset_cache["expires"] = 0.0
+    return True, f"Timezone auf {tz} gesetzt."
+
+
 # ── write ────────────────────────────────────────────────────────────────────
 
 def apply_static(

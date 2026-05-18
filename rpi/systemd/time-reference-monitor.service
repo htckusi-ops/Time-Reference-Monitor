@@ -36,9 +36,9 @@ ExecStart=/opt/time-reference-monitor/venv/bin/python3 run.py \
     --ui-refresh-ms 20 \
     --ui-api-poll-ms 150 \
     --ltc \
-    --ltc-device dsnoop_ltc \
+    --ltc-device ltc_left_mono \
     --ltc-fps 25 \
-    --ltc-cmd "/usr/local/bin/alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800 --format S16_LE" \
+    --ltc-cmd "/usr/local/bin/alsaltc -d ltc_left_mono -r 48000 -c 1 -f 25 --dropout-ms 800 --format S32_LE" \
     --ltc-dropout-timeout-ms 800 \
     --ltc-jump-tolerance-frames 8 \
     --ltc-refresh-s 0.1 \
@@ -47,6 +47,7 @@ ExecStart=/opt/time-reference-monitor/venv/bin/python3 run.py \
 
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
 

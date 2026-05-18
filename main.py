@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Tuple
 
 import config
+import mem_log
 from db import DBWriter
 from models import LTCStatus
 from sources_ntp import read_chrony_tracking
@@ -96,6 +97,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     args.display_decimals = max(0, min(6, int(args.display_decimals)))
+
+    mem_log.setup()  # in-memory circular log + SIGUSR2 thread-dump handler
 
     dbw = None
     if args.db and args.db.strip():
@@ -223,9 +226,11 @@ def main() -> None:
     def meta_provider():
         with _src_lock:
             active = "mock" if _src["mock"] else "real"
-        from network_mgr import get_device_location
-        # Override static meta["domain"] with the live (possibly user-changed) value
-        return {**meta, "tz_offset_s": time.localtime().tm_gmtoff, "source": active,
+        from network_mgr import get_device_location, get_tz_offset_s
+        # Override static meta["domain"] with the live (possibly user-changed) value.
+        # get_tz_offset_s() uses zoneinfo so it reflects timedatectl changes immediately
+        # (time.localtime().tm_gmtoff would stay at the startup timezone until restart).
+        return {**meta, "tz_offset_s": get_tz_offset_s(), "source": active,
                 "domain": get_ptp_domain(), "device_location": get_device_location()}
 
     def ptp_loop():
@@ -322,7 +327,13 @@ def main() -> None:
     else:
         bus.update_ltc(LTCStatus(enabled=False, present=False))
 
-    spectrum = SpectrumManager()
+    spectrum = SpectrumManager(
+        sample_rate=config.SPECTRUM_SAMPLE_RATE,
+        channels=config.SPECTRUM_CHANNELS,
+        fmt=config.SPECTRUM_FORMAT,
+        max_duration_s=config.SPECTRUM_MAX_DURATION_S,
+        tmp_dir=config.SPECTRUM_TMP_DIR,
+    )
 
     if args.http:
         app = create_app(

@@ -31,6 +31,7 @@ from network_mgr import (
     get_wifi_status, set_wifi,
     get_ntp_server, set_ntp_server,
     get_device_location, set_device_location,
+    get_timezone, list_timezones, set_timezone,
 )
 from config import LTC_ALSA_DEVICE
 
@@ -171,6 +172,19 @@ def create_app(
         if not server:
             return jsonify({"ok": False, "message": "Kein Server angegeben."}), 400
         ok, msg = set_ntp_server(server)
+        return jsonify({"ok": ok, "message": msg})
+
+    @app.get("/api/settings/timezone")
+    def api_settings_tz_get() -> Response:
+        return jsonify({"timezone": get_timezone(), "zones": list_timezones()})
+
+    @app.post("/api/settings/timezone")
+    def api_settings_tz_post() -> Response:
+        body = request.get_json(silent=True) or {}
+        tz = str(body.get("timezone", "")).strip()
+        if not tz:
+            return jsonify({"ok": False, "message": "Keine Timezone angegeben."}), 400
+        ok, msg = set_timezone(tz)
         return jsonify({"ok": ok, "message": msg})
 
     @app.get("/api/settings/location")
@@ -314,7 +328,7 @@ def create_app(
 
         if not device:
             return jsonify({"ok": False, "message": "Missing 'device'.", "ts_utc": _utc_iso_ms()}), 400
-        if duration_s <= 0 or duration_s > 120:
+        if duration_s <= 0 or duration_s > spectrum.max_duration_s:
             return jsonify({"ok": False, "message": "Invalid 'duration_s'.", "ts_utc": _utc_iso_ms()}), 400
 
         out = spectrum.generate(duration_s=duration_s, device=device)
@@ -349,6 +363,18 @@ def create_app(
             download_name="ltc_capture.wav",
             as_attachment=False,
         )
+
+    # ---------------------------
+    # Debug / diagnostics
+    # ---------------------------
+
+    @app.get("/api/debug/logs")
+    def api_debug_logs() -> Response:
+        # Reads directly from the in-memory deque — no locks, no StatusBus.
+        # Stays reachable even when /api/status is deadlocked.
+        import mem_log as _ml
+        n = min(int(request.args.get("n", 200)), 500)
+        return jsonify({"lines": _ml.get_lines(n), "total_buffered": len(_ml._buffer)})
 
     # ---------------------------
     # System control (kiosk)

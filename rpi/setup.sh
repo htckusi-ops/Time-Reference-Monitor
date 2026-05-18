@@ -243,12 +243,30 @@ ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/chrony.conf
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/tcpdump
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/sbin/tcpdump
 ${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/killall
+${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/timedatectl set-timezone *
 SUDOEOF
     chmod 440 "$rule_file"
     info "Sudoers rule installed: ${rule_file}"
 }
 
-# ── 7. Kiosk-Konfigurationsdatei ─────────────────────────────────────────────
+# ── 7a. WirePlumber masking ───────────────────────────────────────────────────
+# Debian Trixie installs WirePlumber (PipeWire session manager) which auto-claims
+# ALSA audio devices — including the Tascam US-2x2HR used for LTC capture.
+# WirePlumber holding the device in SETUP/PREPARED state prevents arecord/alsaltc
+# from opening it directly.  This kiosk has no audio output; mask WirePlumber.
+mask_wireplumber() {
+    if dpkg-query -W -f='${Status}' wireplumber 2>/dev/null | grep -q "install ok installed"; then
+        local wp_dir="/home/${APP_USER}/.config/systemd/user"
+        mkdir -p "$wp_dir"
+        ln -sf /dev/null "${wp_dir}/wireplumber.service"
+        chown -R "${APP_USER}:${APP_USER}" "$wp_dir"
+        info "WirePlumber maskiert für ${APP_USER} (kein Audio-Output nötig; LTC via ALSA direkt)."
+    else
+        info "WirePlumber nicht installiert – kein Masking nötig."
+    fi
+}
+
+# ── 7b. Kiosk-Konfigurationsdatei ─────────────────────────────────────────────
 install_kiosk_conf() {
     local dest="/etc/time-reference-monitor.conf"
     if [ -f "$dest" ]; then
@@ -341,6 +359,7 @@ configure_chrony
 configure_ptp4l
 install_services
 configure_sudoers
+mask_wireplumber
 install_kiosk_conf
 configure_hdmi_sdi
 configure_autologin

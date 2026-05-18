@@ -40,12 +40,14 @@ class SpectrumManager:
         sample_rate: int = 48000,
         channels: int = 1,
         fmt: str = "S32_LE",
-        max_duration_s: int = 120,
+        max_duration_s: int = 60,
+        tmp_dir: str = "/dev/shm",
     ) -> None:
         self.sample_rate = int(sample_rate)
         self.channels = int(channels)
         self.fmt = str(fmt)
         self.max_duration_s = int(max_duration_s)
+        self.tmp_dir = str(tmp_dir)
 
         self._lock = threading.Lock()
         self._status = SpectrumStatus()
@@ -104,7 +106,7 @@ class SpectrumManager:
         wav_path = None
         png_path = None
         try:
-            with tempfile.TemporaryDirectory(prefix="ptpmon_spectrum_") as td:
+            with tempfile.TemporaryDirectory(prefix="ptpmon_spectrum_", dir=self.tmp_dir) as td:
                 wav_path = os.path.join(td, "ltc.wav")
                 png_path = os.path.join(td, "spectrum.png")
 

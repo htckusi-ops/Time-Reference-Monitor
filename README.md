@@ -39,6 +39,125 @@ Andernfalls Fallback auf `offset_ns / 1e6` allein (= Δ(Systemclock − PTP)).
 
 ---
 
+## Architektur
+
+### Systemaufbau
+
+Die drei Zeitquellen werden unabhängig voneinander abgetastet und im gemeinsamen `StatusBus` zusammengeführt. Flask dient ausschliesslich als Read-Only-API — alle Messungen laufen in Hintergrund-Threads.
+
+```mermaid
+flowchart TB
+    subgraph ext["Externe Zeitquellen"]
+        GM["PTP-Grandmaster<br/>(GPS / Switch)"]
+        NTP_SRV["NTP-Server<br/>(pool.ntp.org)"]
+        LTC_GEN["LTC-Generator"]
+    end
+
+    subgraph rpi["Raspberry Pi"]
+        ptp4l["ptp4l<br/>(Monitor-Modus)"]
+        chrony["chrony"]
+
+        subgraph alsa["ALSA — Tascam US-2x2HR"]
+            dsnoop["dsnoop_ltc<br/>Shared Capture"]
+            plug["ltc_left_mono<br/>plug · mono · Kanal 0"]
+        end
+
+        subgraph backend["Python-Backend (run.py)"]
+            ptp_poll["PTP-Poller<br/>pmc · 0.25 s"]
+            ntp_poll["NTP-Poller<br/>chronyc · 0.25 s"]
+            ltc_mon["LTCMonitor<br/>alsaltc subprocess"]
+            ltc_lvl["LtcLevelPoller<br/>arecord · 150 ms"]
+            spec["SpectrumManager<br/>on-demand"]
+            bus["StatusBus"]
+            db[("SQLite Events")]
+            flask["Flask :8088"]
+        end
+    end
+
+    subgraph clients["Clients"]
+        kiosk["Chromium-Kiosk<br/>VT7"]
+        browser["Browser<br/>Netzwerk"]
+        led["LED-Matrix<br/>optional"]
+    end
+
+    GM -->|"PTP v2"| ptp4l
+    NTP_SRV -->|"NTP"| chrony
+    LTC_GEN -->|"Audio"| dsnoop
+    dsnoop --> plug
+
+    ptp4l -->|"pmc socket"| ptp_poll
+    chrony -->|"chronyc tracking"| ntp_poll
+    plug -->|"S32_LE · 48 kHz"| ltc_mon
+    plug -->|"S32_LE · 48 kHz"| ltc_lvl
+    plug -.->|"on-demand"| spec
+
+    ptp_poll --> bus
+    ntp_poll --> bus
+    ltc_mon --> bus
+    bus --> db
+    bus --> flask
+    ltc_lvl --> flask
+    spec --> flask
+
+    flask -->|"HTTP"| kiosk
+    flask -->|"HTTP"| browser
+    flask -->|"/api/status"| led
+```
+
+### LTC-Signalfluss
+
+Drei parallele ALSA-Clients greifen auf dasselbe physische Interface zu. `dsnoop_ltc` serialisiert den Hardware-Zugriff; `ltc_left_mono` (type plug) übernimmt Format- und Kanalkonvertierung. `stderr` des alsaltc-Subprozesses wird im separaten Drain-Thread verworfen — ALSA-Fehlermeldungen erreichen so nicht den stdout-Watchdog und blockieren ihn nicht.
+
+```mermaid
+flowchart LR
+    LTC_GEN["LTC-Generator"]
+
+    subgraph usb["USB-Audio (Tascam US-2x2HR)"]
+        HW["hw:US2x2HR,0<br/>S32_LE · 48 kHz · 2ch"]
+    end
+
+    subgraph asound["/etc/asound.conf"]
+        DSNOOP["dsnoop_ltc<br/>Shared Capture"]
+        PLUG["ltc_left_mono<br/>plug · Kanal 0 · mono"]
+    end
+
+    subgraph ltc_box["LTCMonitor — sources_ltc.py"]
+        ALSALTC["alsaltc<br/>libltc · SMPTE 309M"]
+        WDOG["stdout-Watchdog<br/>60 s Silence → killpg()"]
+        DRAIN["stderr-Drain<br/>Daemon-Thread"]
+        BACKOFF["Restart-Backoff<br/>0.5 s → 30 s"]
+    end
+
+    subgraph lvl_box["LtcLevelPoller — ltc_level.py"]
+        AREC["arecord<br/>150 ms · gecacht"]
+        LVL_BO["Fehler-Backoff<br/>bis 30 s"]
+    end
+
+    subgraph spec_box["SpectrumManager — spectrum.py"]
+        SAREC["arecord<br/>5–60 s · on-demand"]
+        SOX["sox<br/>FFT → PNG · /dev/shm"]
+    end
+
+    LTC_GEN -->|"Audio (XLR)"| HW
+    HW -->|"USB"| DSNOOP
+    DSNOOP --> PLUG
+
+    PLUG -->|"S32_LE · 48 kHz"| ALSALTC
+    ALSALTC -->|"stdout: HH:MM:SS:FF<br/>Datum · TZ · User Bits<br/>NO_LTC"| WDOG
+    ALSALTC -->|"stderr: ALSA-Fehler"| DRAIN
+    WDOG -->|"Timeout"| BACKOFF
+    BACKOFF -.->|"Neustart"| ALSALTC
+
+    PLUG -->|"S32_LE · 48 kHz"| AREC
+    AREC -.->|"schnelle Fehler"| LVL_BO
+    LVL_BO -.->|"Backoff"| AREC
+
+    PLUG -.->|"on-demand"| SAREC
+    SAREC --> SOX
+```
+
+---
+
 ## Web-Interface & Analysetools
 
 Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fünf Seiten:
@@ -62,6 +181,7 @@ Das Dashboard zeigt alle drei Zeitquellen gleichzeitig in Echtzeit.
 - Kein Rückläufer bei Netzwerk-Jitter (neue Serverzeit wird nur übernommen wenn ≥ aktuelle interpolierte Zeit)
 - Stabile Spaltenbreite durch Platzhalter `00:00:00.00` (Seg7-Schrift hat gleiche Zeichenbreite für Ziffern und `0`)
 - Status-Spalte mit fixer Breite (140 px); lange Texte wie `present 25fps` oder `stale 200s` umbrechen innerhalb der Spalte ohne Layout-Verschiebung
+- **TZ-Badge** direkt unter dem Status-Indikator jeder Quelle: zeigt den effektiven UTC-Offset, der auf die angezeigte Zeit angewendet wird (`UTC+02:00` in Blau wenn TZ-Korrektur aktiv, gedämpft wenn UTC, `—` wenn keine Daten). LTC zeigt den aus dem Stream stammenden Offset (unabhängig von der System-Timezone).
 
 **PTP-Status** (zweispaltig):
 
@@ -90,7 +210,7 @@ Zusätzliche PTP-Felder werden aus `GET TIME_PROPERTIES_DATA_SET` (via `pmc`) ge
 |---|---|
 | Timecode (raw, HH:MM:SS:FF), Frame rate, ALSA delay, Update age | Date (YYYY-MM-DD), Timezone (UTC±HH:MM), User Bits (Hex, z.B. `64 26 04 08`) |
 
-Wenn Timezone bekannt (direkt aus LTC User Bits oder aus Datum-vs.-PTP-Inferenz), zeigt die LTC-7-Seg-Anzeige die **UTC-äquivalente Zeit** statt der lokalen LTC-Zeit. Die Screen Clock zeigt ebenfalls die UTC-Zeit, wenn ein Timezone-Offset bekannt ist.
+Die LTC-7-Seg-Anzeige zeigt den rohen Timecode des LTC-Generators — LTC kodiert nach Konvention **Lokalzeit**. Wenn die Timezone aus den User Bits bekannt ist (SMPTE 309M) oder aus dem Datum-vs.-PTP-Vergleich abgeleitet wurde, erscheint der erkannte UTC-Offset als Badge direkt unter dem `present`-Statusindikator.
 
 `alsaltc` dekodiert Datum und Timezone via `ltc_frame_to_time(..., LTC_USE_DATE)` (libltc SMPTE 309M) und gibt sie als `YYYY-MM-DD ±HHMM HH:MM:SS:FF` aus — dasselbe Format wie `ltcdump -d -F`. Fallback-Parser-Kette für alle ltcdump-Ausgabeformate vorhanden (siehe Konzept).
 
@@ -630,6 +750,96 @@ Chromium muss nicht neugestartet werden — es lädt das UI automatisch neu, sob
 
 ---
 
+### Debian-System-Upgrade (z.B. Bookworm → Trixie)
+
+Ein vollständiges Betriebssystem-Upgrade erfordert nach dem `apt dist-upgrade` einige manuelle Nachschritte, da sich Python-Version und Systembibliotheken ändern.
+
+#### 1. Upgrade durchführen
+
+```bash
+sudo apt update && sudo apt full-upgrade
+sudo apt dist-upgrade
+sudo reboot
+```
+
+Während des Upgrades können dpkg-Konflikte bei Konfigurationsdateien auftreten. Empfehlung:
+
+| Datei | Aktion | Begründung |
+|-------|--------|-----------|
+| `/etc/chromium/master_preferences` | **`Y` (Maintainer-Version)** | Kiosk-Konfiguration steckt in `kiosk.sh`, nicht in dieser Datei |
+| `/etc/X11/Xwrapper.config` | **`N` (eigene Version behalten)** | Enthält `needs_root_rights=yes` — wird sonst zurückgesetzt und Kiosk startet nicht |
+| `/etc/asound.conf` | **`N` (eigene Version behalten)** | Enthält `dsnoop_ltc` / `ltc_left_mono` Gerätedefinitionen |
+| `/etc/chrony/chrony.conf` | **`N` (eigene Version behalten)** | NTP-only Konfiguration ohne PTP-Refclock |
+
+#### 2. Python-venv neu aufbauen
+
+Nach einem Debian-Upgrade ändert sich die Python-Version (z.B. 3.11 → 3.13). Das bestehende venv ist danach unbrauchbar und muss neu erstellt werden:
+
+```bash
+cd /home/ptp/git/Time-Reference-Monitor
+
+# Neuesten Code holen
+git pull origin claude/setup-raspberry-pi-kiosk-1sK3G   # oder main
+
+# Altes venv entfernen und neu erstellen
+rm -rf venv
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+```
+
+#### 3. alsaltc neu kompilieren
+
+```bash
+cd /home/ptp/git/Time-Reference-Monitor/alsaltc-v02
+make clean && make
+sudo make install   # → /usr/local/bin/alsaltc
+```
+
+#### 4. Service-Dateien deployen
+
+```bash
+sudo cp rpi/systemd/time-reference-monitor.service /etc/systemd/system/
+sudo cp rpi/systemd/chromium-kiosk.service /etc/systemd/system/
+sudo systemctl daemon-reload
+```
+
+#### 5. Xwrapper.config prüfen
+
+Das Paket `xserver-xorg-legacy` überschreibt `/etc/X11/Xwrapper.config` gelegentlich beim Upgrade. Prüfen:
+
+```bash
+cat /etc/X11/Xwrapper.config
+# Muss enthalten:
+#   allowed_users=anybody
+#   needs_root_rights=yes
+```
+
+Falls nicht vorhanden oder falsch:
+```bash
+printf 'allowed_users=anybody\nneeds_root_rights=yes\n' | sudo tee /etc/X11/Xwrapper.config
+```
+
+#### 6. Dienste neu starten
+
+```bash
+sudo systemctl restart time-reference-monitor chromium-kiosk
+```
+
+#### 7. Verifizieren
+
+```bash
+# Backend antwortet?
+curl -s --max-time 5 http://localhost:8088/api/status | head -c 200
+
+# Dienste aktiv?
+sudo systemctl status time-reference-monitor chromium-kiosk --no-pager
+
+# venv zeigt richtige Python-Version?
+venv/bin/python3 --version
+```
+
+---
+
 ### PTP-Synchronisation lokal testen (Software-Grandmaster)
 
 Um PTP-Synchronisation unabhängig von einem externen Grandmaster zu testen, kann `ptp4l` auf dem RPi selbst als Grandmaster betrieben werden (Software-Timestamps, ohne dedizierte PTP-Hardware):
@@ -793,43 +1003,511 @@ Im Haupt-Dashboard sind zwei Buttons **REBOOT** und **SHUTDOWN** vorhanden (rot 
 
 Voraussetzung: Die sudoers-Regel aus `setup.sh` muss installiert sein (`/etc/sudoers.d/time-reference-monitor`), damit der `ptp`-User `sudo /sbin/reboot` und `sudo /sbin/poweroff` ohne Passwort ausführen darf.
 
-### Beispiel `/api/status`
+---
+
+## API-Referenz
+
+Alle Endpunkte sind über HTTP auf Port 8088 erreichbar. Alle Antworten sind JSON (`Content-Type: application/json`). Schreibende Endpunkte (POST) erwarten `Content-Type: application/json` im Request-Body.
+
+### `GET /api/status` — Haupt-Monitoringendpunkt
+
+Liefert einen vollständigen Snapshot aller Zeitquellen und Metadaten. Wird vom Dashboard alle 250 ms (konfigurierbar) abgefragt.
 
 ```json
 {
   "meta": {
-    "ts_utc": "2026-04-01T10:00:00.123+00:00",
-    "tz_offset_s": 7200
+    "ts_utc":              "2026-04-01T10:00:00.123+00:00",
+    "iface":               "eth0",
+    "domain":              0,
+    "source":              "real",
+    "poll_s":              0.25,
+    "stale_threshold_ms":  2000,
+    "tz_offset_s":         7200,
+    "device_location":     "Regie Studio 3, Rack B",
+    "startup_active":      false,
+    "paused":              false,
+    "summaries": {
+      "errors_total":             12,
+      "warnings_total":            8,
+      "alarms_total":              2,
+      "gm_changes_total":          1,
+      "ptp_loss_total":            0,
+      "ntp_flaps_total":           3,
+      "ltc_loss_total":            0,
+      "ltc_decode_errors_total":   0,
+      "ltc_jumps_total":           0
+    },
+    "summaries_rolling": {
+      "errors_rolling":            0,
+      "warnings_rolling":          0,
+      "alarms_rolling":            0,
+      "gm_changes_rolling":        0,
+      "ptp_loss_rolling":          0,
+      "ntp_flaps_rolling":         0,
+      "ltc_loss_rolling":          0,
+      "ltc_decode_errors_rolling": 0,
+      "ltc_jumps_rolling":         0
+    }
   },
   "status": {
-    "ptp_valid": true,
-    "port_state": "SLAVE",
-    "gm_identity": "AC-DE-48-FF-FE-12-34-56",
-    "offset_ns": -5234,
-    "mean_path_delay_ns": 8978,
-    "ptp_time_utc_iso": "2026-04-01T10:00:00.118+00:00"
+    "ptp_valid":             true,
+    "gm_present":            true,
+    "port_state":            "SLAVE",
+    "ptp_versions":          "v2",
+    "gm_identity":           "AC-DE-48-FF-FE-12-34-56",
+    "parent_port_identity":  "AC-DE-48-FF-FE-12-34-56-1",
+    "offset_ns":             -523,
+    "mean_path_delay_ns":    8978,
+    "ptp_time_utc_iso":      "2026-04-01T10:00:00.118+00:00",
+    "poll_age_ms":           248,
+    "no_ptp_since_utc":      null,
+    "gm_priority1":          128,
+    "gm_priority2":          128,
+    "gm_clock_class":        6,
+    "gm_clock_accuracy":     "0x21",
+    "time_source":           "GPS",
+    "time_traceable":        true,
+    "frequency_traceable":   true,
+    "utc_offset":            37,
+    "ptp_timescale":         true
   },
   "ntp": {
-    "status": "synced",
-    "stratum": 2,
-    "ref": "195.148.127.77",
-    "system_offset_s": 0.000023456
+    "status":               "synced",
+    "stratum":              2,
+    "ref":                  "195.148.127.77",
+    "last_update_utc":      "2026-04-01T09:58:43.000+00:00",
+    "last_update_age_s":    77.4,
+    "system_offset_s":      0.000023456,
+    "rms_offset_s":         0.000008123,
+    "frequency_ppm":        -1.234
   },
   "ltc": {
-    "present": true,
-    "timecode": "12:00:12:08",
-    "fps": "25",
-    "alsa_delay_ms": 85.3,
-    "jumps_total": 0
-  }
+    "enabled":              true,
+    "present":              true,
+    "timecode":             "12:00:12:08",
+    "fps":                  "25",
+    "alsa_delay_ms":        85.3,
+    "ltc_date":             "2026-04-01",
+    "ltc_tz":               "+0200",
+    "user_bits":            "64 26 04 08",
+    "last_update_age_s":    0.04,
+    "decode_errors_total":  0,
+    "jumps_total":          0
+  },
+  "events": [
+    {
+      "ts_utc":     "2026-04-01T09:45:12.000+00:00",
+      "severity":   "INFO",
+      "type":       "START",
+      "message":    "Started (source=real, iface=eth0, domain=0)",
+      "suppressed": false
+    }
+  ]
 }
 ```
 
-**Schlüsselfelder:**
-- `meta.tz_offset_s` — UTC-Offset des RPi-Systemclocks in Sekunden (z.B. 7200 = UTC+2); wird für Δ(LTC-PTP) adj und NTP-TZ-Anzeige genutzt
-- `status.ptp_time_utc_iso` — PTP-Grandmaster-Zeit: `Systemclock − offsetFromMaster` (Vorzeichen korrigiert)
-- `ntp.system_offset_s` — chrony-Offset: NTP_Zeit = Systemclock + system_offset_s (positiv = System geht nach)
-- `ltc.alsa_delay_ms` — ALSA-Capture-Latenz in ms (aus `period_size / sample_rate`); wird von allen LTC-Deltas abgezogen
+#### Feldbeschreibungen `meta`
+
+| Feld | Typ | Beschreibung |
+|------|-----|-------------|
+| `ts_utc` | ISO-8601 | Zeitstempel des Snapshots (RPi-Systemclock) |
+| `tz_offset_s` | int | UTC-Offset des RPi in Sekunden; via `date +%z`, 30-s-Cache; 7200 = UTC+2 |
+| `device_location` | string | Standortbeschreibung aus `/var/lib/time-reference-monitor/device_location` |
+| `startup_active` | bool | `true` während Startphase (~6 s bis erster PTP-Lock); WARN/ALARM in dieser Phase als `suppressed` markiert |
+| `paused` | bool | `true` wenn manuell pausiert (Zeit-Interpolation eingefroren, API antwortet weiter) |
+| `summaries` | object | Kumulierte Gesamtzähler seit Start (werden nicht zurückgesetzt) |
+| `summaries_rolling` | object | Zähler im konfigurierten Zeitfenster (`--error-window-s`, Standard 1 h); werden durch `POST /api/reset-summaries` auf 0 gesetzt |
+
+#### Feldbeschreibungen `status` (PTP)
+
+| Feld | Typ | Beschreibung |
+|------|-----|-------------|
+| `ptp_valid` | bool | PTP-Sync aktiv und innerhalb Stale-Threshold |
+| `port_state` | string | ptp4l Port-State: `SLAVE`, `MASTER`, `LISTENING`, `FAULTY`, `UNCALIBRATED`, `UNKNOWN` |
+| `gm_present` | bool | Grandmaster in Announce-Daten vorhanden |
+| `offset_ns` | int\|null | `offsetFromMaster` in ns; positiv = Slave ist zu schnell |
+| `mean_path_delay_ns` | int\|null | Mittlere Pfad-Latenz in ns (Delay_Req/Resp-Messung) |
+| `ptp_time_utc_iso` | ISO-8601\|null | Berechnete Grandmaster-UTC-Zeit: `Systemclock − offsetFromMaster` |
+| `poll_age_ms` | int\|null | Millisekunden seit letztem erfolgreichen pmc-Poll |
+| `gm_identity` | string\|null | EUI-64 des Grandmasters (z.B. `AC-DE-48-FF-FE-12-34-56`) |
+| `time_source` | string\|null | `GET TIME_PROPERTIES_DATA_SET`: `GPS`, `NTP`, `ATOMIC_CLOCK`, `HAND_SET`, … |
+| `gm_clock_class` | int\|null | Clock Class des Grandmasters: 6 = GPS-locked (höchste Güte), 135 = unbekannt |
+| `utc_offset` | int\|null | TAI−UTC Offset in Sekunden (aktuell 37 s seit Jan 2017) |
+| `time_traceable` | bool\|null | Zeit ist rückverfolgbar zur primären Referenz (GPS) |
+
+#### Feldbeschreibungen `ntp`
+
+| Feld | Typ | Beschreibung |
+|------|-----|-------------|
+| `status` | string | `synced` / `stale` / `unsynced` / `unknown` |
+| `stratum` | int\|null | Stratum-Stufe; 1 = direkte Hardwareuhr, 2 = via Stratum-1-Server |
+| `ref` | string\|null | NTP-Referenz-IP oder Kürzel (z.B. `PPS`, `GPS`) |
+| `last_update_utc` | ISO-8601\|null | `Ref time (UTC)` aus chronyc — letztes NTP-Update der Systemuhr |
+| `last_update_age_s` | float\|null | Sekunden seit `last_update_utc`; > 1200 s löst `stale` aus |
+| `system_offset_s` | float\|null | `NTP_Zeit − Systemclock`; positiv = Systemclock geht nach; aus `chronyc tracking` |
+| `rms_offset_s` | float\|null | RMS-Offset (Jitter-Mass der letzten chrony-Messungen) |
+| `frequency_ppm` | float\|null | Frequenzfehler der Systemuhr in ppm; positiv = Uhr geht langsam |
+
+#### Feldbeschreibungen `ltc`
+
+| Feld | Typ | Beschreibung |
+|------|-----|-------------|
+| `enabled` | bool | LTC-Dekodierung aktiviert (`--ltc` Flag) |
+| `present` | bool | LTC-Signal aktuell vorhanden (innerhalb `--ltc-dropout-timeout-ms`) |
+| `timecode` | string\|null | Roher SMPTE-Timecode `HH:MM:SS:FF` — Lokalzeit des LTC-Generators |
+| `fps` | string\|null | Framerate des LTC-Signals: `"25"`, `"29"`, `"30"` |
+| `alsa_delay_ms` | float\|null | ALSA-Capture-Latenz (`period_size / sample_rate`); von allen Δ(LTC-*) subtrahiert |
+| `ltc_date` | string\|null | Datum aus SMPTE 309M User Bits: `YYYY-MM-DD` |
+| `ltc_tz` | string\|null | Timezone aus SMPTE 309M User Bits: `+0200`, `-0500` etc. |
+| `user_bits` | string\|null | Rohe User Bits als Hex: `"64 26 04 08"` |
+| `decode_errors_total` | int | Gesamtzahl LTC-Dekodierungsfehler seit Start |
+| `jumps_total` | int | Anzahl erkannter Zeitsprünge > `--ltc-jump-tolerance-frames` |
+
+#### Feldbeschreibungen `events` (Array)
+
+| Feld | Typ | Beschreibung |
+|------|-----|-------------|
+| `ts_utc` | ISO-8601 | Zeitstempel des Ereignisses |
+| `severity` | string | `INFO` / `WARN` / `ALARM` |
+| `type` | string | Ereignistyp: `START`, `PTP_LOST`, `PTP_OK`, `GM_CHANGED`, `NTP_STALE`, `NTP_LOST`, `NTP_OK`, `LTC_LOST`, `LTC_OK`, `LTC_JUMP`, `LTC_DECODE_ERROR`, `DOMAIN_CHANGED`, `SOURCE_CHANGED`, … |
+| `message` | string | Lesbare Beschreibung |
+| `suppressed` | bool | `true` wenn während Startphase aufgetreten (zählt nicht in rollende Fehlerzähler) |
+
+---
+
+### `GET /api/ltc/level` — Audio-Pegel
+
+Liefert den aktuellen LTC-Audiopegel (Hintergrund-Poller, 200-ms-Intervall, gecacht).
+
+**Query-Parameter:**
+- `device` — ALSA-Gerät (Standard: konfiguriertes LTC-Gerät)
+- `duration_ms` — Messdauer (Standard: 100 ms, ignoriert vom Cache-Poller)
+
+**Antwort:**
+```json
+{ "dbfs_peak": -18.3, "dbfs_rms": -24.1 }
+```
+
+| Feld | Beschreibung |
+|------|-------------|
+| `dbfs_peak` | Peak-Pegel in dBFS (0 = Vollaussteuerung) |
+| `dbfs_rms` | RMS-Pegel in dBFS |
+
+---
+
+### `GET /api/events` — Ereignisliste
+
+Liefert das Ereignisarray aus dem letzten `/api/status`-Snapshot (identisches Format). Nützlich wenn nur Ereignisse benötigt werden.
+
+---
+
+### `GET /api/domain/current` — Aktive PTP-Domain
+
+```json
+{ "domain": 0 }
+```
+
+---
+
+### `GET /api/debug/logs` — In-Memory-Log
+
+Liest direkt aus dem zirkulären In-Memory-Puffer — **bleibt erreichbar auch wenn `/api/status` blockiert ist** (z.B. bei Deadlock-Diagnose).
+
+**Query:** `?n=200` (max. 500 Zeilen)
+
+```json
+{ "lines": ["2026-04-01 10:00:00 [ptp-loop] …"], "total_buffered": 500 }
+```
+
+---
+
+### Einstellungs-API (`/api/settings/*`)
+
+| Methode | Endpunkt | Request-Body | Antwort |
+|---------|---------|-------------|---------|
+| GET | `/api/settings/network?iface=eth0` | — | Aktueller Netzwerkstatus (IP, Prefix, GW, DNS, Methode) |
+| POST | `/api/settings/network` | `{"method":"dhcp"}` oder `{"method":"static","ip":"…","mask":"…","gateway":"…","dns":"…"}` | `{"ok":true,"message":"…"}` |
+| GET | `/api/settings/wifi` | — | `{"enabled":true}` |
+| POST | `/api/settings/wifi` | `{"enabled":false}` | `{"ok":true,"message":"…"}` |
+| GET | `/api/settings/ntp` | — | `{"server":"pool.ntp.org"}` |
+| POST | `/api/settings/ntp` | `{"server":"ntp.example.com"}` | `{"ok":true,"message":"…"}` |
+| GET | `/api/settings/timezone` | — | `{"timezone":"Europe/Zurich","zones":["Africa/Abidjan",…]}` |
+| POST | `/api/settings/timezone` | `{"timezone":"Europe/Zurich"}` | `{"ok":true,"message":"…"}` |
+| GET | `/api/settings/location` | — | `{"location":"Regie Studio 3"}` |
+| POST | `/api/settings/location` | `{"location":"Regie Studio 3, Rack B"}` | `{"ok":true,"message":"…"}` |
+
+Alle Schreiboperationen (`POST`) rufen `nmcli`, `timedatectl` bzw. `tee` über `sudo` auf — die notwendigen sudoers-Regeln werden von `setup.sh` / `update.sh` angelegt.
+
+---
+
+### Simulations-API
+
+| Methode | Endpunkt | Beispiel-Body | Beschreibung |
+|---------|---------|--------------|-------------|
+| GET | `/api/ptp-source` | — | `{"source":"real","params":null,"preset_names":["clean","jitter",…]}` |
+| POST | `/api/ptp-source` | `{"source":"real"}` | Zurück auf echten ptp4l |
+| POST | `/api/ptp-source` | `{"source":"mock","preset":"dropout"}` | Mock mit Preset |
+| POST | `/api/ptp-source` | `{"source":"mock","preset":"custom","jitter_ns":5000,"dropout_every_s":30}` | Benutzerdefiniert |
+| GET | `/api/ntp-source` | — | Analog PTP |
+| POST | `/api/ntp-source` | `{"source":"mock","preset":"jitter"}` | NTP-Mock |
+
+**PTP-Presets:** `clean`, `jitter`, `wander`, `dropout`, `gm_flap`, `drift`, `step`, `combo_gm`, `combo_drift`, `combo_storm`
+
+**NTP-Presets:** `clean`, `jitter`, `drift`, `step`, `ref_flap`, `unsynced`, `combo`
+
+---
+
+### Domain-API
+
+| Methode | Endpunkt | Body / Params | Beschreibung |
+|---------|---------|--------------|-------------|
+| GET | `/api/domain/current` | — | `{"domain":0}` |
+| POST | `/api/domain/apply` | `{"domain":4,"persist":true}` | Wechselt PTP-Domain sofort; `persist:true` schreibt nach `/var/lib/time-reference-monitor/ptp_domain` |
+| POST | `/api/domain-scan/start` | `{"iface":"eth0","duration_s":10}` | Startet Scan nach PTP-Paketen (tcpdump) |
+| GET | `/api/domain-scan/status` | — | `{"state":"scanning","elapsed_s":3,"duration_s":10,"domains":{"0":42}}` |
+| POST | `/api/domain-scan/stop` | — | Bricht laufenden Scan ab |
+
+---
+
+### Steuerungs-API
+
+| Methode | Endpunkt | Beschreibung |
+|---------|---------|-------------|
+| POST | `/api/reset-summaries` | Setzt alle rollenden Fehlerzähler auf 0 |
+| POST | `/api/pause` | Friert Zeitinterpolation ein (API antwortet weiter) |
+| POST | `/api/resume` | Hebt Pause auf |
+| POST | `/api/system/reboot` | Raspberry Pi neu starten (`sudo reboot`) |
+| POST | `/api/system/shutdown` | Raspberry Pi herunterfahren (`sudo poweroff`) |
+
+---
+
+### Diagnose-API (Werkzeuge)
+
+| Methode | Endpunkt | Beschreibung |
+|---------|---------|-------------|
+| GET | `/api/ltc/raw-lines?since=<seq>` | Rohe LTC-Decoder-Ausgabe (Ring-Buffer, Long-Poll-kompatibel) |
+| GET | `/api/tcpdump/status` | Capture-State: `idle`, `capturing`, `done` |
+| POST | `/api/tcpdump/start` | `{"iface":"eth0"}` — startet tcpdump |
+| POST | `/api/tcpdump/stop` | Stoppt tcpdump |
+| GET | `/api/tcpdump/lines?since=<seq>` | Live-Ausgabe-Zeilen |
+| GET | `/api/tcpdump/download` | PCAP-Datei als Binary-Download |
+| POST | `/api/spectrum/generate` | `{"device":"dsnoop_ltc","duration_s":5}` — startet Spektrum-Aufnahme |
+| GET | `/api/spectrum/status` | `{"state":"done","has_image":true,"has_audio":true}` |
+| GET | `/api/spectrum/image` | PNG-Bild als Binary |
+| GET | `/api/spectrum/audio` | WAV-Datei als Binary |
+| GET | `/api/debug/logs?n=200` | In-Memory-Log (unabhängig von StatusBus) |
+
+---
+
+## PRTG-Integration
+
+PRTG Network Monitor kann den Time Reference Monitor über den HTTP-API-Endpunkt `/api/status` überwachen. Die wichtigsten Monitoring-Werte sind direkt als JSON verfügbar.
+
+### Welche Felder sind relevant
+
+#### PTP — Primärquelle
+
+| Feld | JSON-Pfad | Monitoring-Nutzen |
+|------|-----------|-------------------|
+| Sync-Status | `status.ptp_valid` | Grundlegender Alarmierungspunkt: `false` = kein PTP-Sync |
+| Port-Status | `status.port_state` | `SLAVE` = korrekt; `MASTER`/`FAULTY` = Konfigurationsproblem |
+| Offset | `status.offset_ns` | Präzision gegenüber Grandmaster; typisch ±50 ns (Hardware-TS) bis ±50 µs (Software-TS) |
+| Pfad-Latenz | `status.mean_path_delay_ns` | Sprung deutet auf Netzwerkänderung / Routenwechsel hin |
+| Grandmaster-Wechsel | `meta.summaries_rolling.gm_changes_rolling` | > 0 im Rollfenster = Grandmaster-Instabilität |
+| PTP-Verbindungsabbrüche | `meta.summaries_rolling.ptp_loss_rolling` | Verbindungsabbrüche im Zeitfenster |
+| Clock Class | `status.gm_clock_class` | 6 = GPS-locked (höchste Güte); 135 = unbekannt/freiwillig |
+| Zeitquelle GM | `status.time_source` | `GPS` erwünscht; `NTP` oder `HAND_SET` = degradierter GM |
+
+#### NTP — Sekundärquelle / Systemclock-Drift
+
+| Feld | JSON-Pfad | Monitoring-Nutzen |
+|------|-----------|-------------------|
+| Sync-Status | `ntp.status` | `synced` = OK; `stale` = Warn; `unsynced` = Alarm |
+| Stratum | `ntp.stratum` | ≤ 3 = nah am GPS-Master; > 5 = viele Hop-Stufen |
+| System-Offset | `ntp.system_offset_s` | Abweichung der Systemuhr vom NTP-Server (in ms × 1000) |
+| RMS-Offset | `ntp.rms_offset_s` | Jitter-Mass der NTP-Messungen; sollte stabil sein |
+| Update-Alter | `ntp.last_update_age_s` | > 1200 s = chrony im langen Poll-Zyklus (ggf. Verbindungsproblem) |
+| NTP-Referenzwechsel | `meta.summaries_rolling.ntp_flaps_rolling` | Häufige Referenzwechsel = instabiler NTP-Server |
+
+#### LTC — Timecode-Signal
+
+| Feld | JSON-Pfad | Monitoring-Nutzen |
+|------|-----------|-------------------|
+| Signal vorhanden | `ltc.present` | Alarm wenn `false` und LTC-Quelle konfiguriert ist |
+| Capture-Latenz | `ltc.alsa_delay_ms` | Sprung deutet auf ALSA-Konfigurationsproblem hin |
+| Dekodierungsfehler | `meta.summaries_rolling.ltc_decode_errors_rolling` | Pegel zu leise, Kabeldefekt, Rauschen |
+| Zeitsprünge | `meta.summaries_rolling.ltc_jumps_rolling` | LTC-Generator hat Timecode-Sprung produziert |
+
+#### System-Gesamtstatus
+
+| Feld | JSON-Pfad | Monitoring-Nutzen |
+|------|-----------|-------------------|
+| Gesamtalarme | `meta.summaries_rolling.alarms_rolling` | Sammel-Alarm im Rollfenster |
+| Startphase | `meta.startup_active` | `true` ~ 6 s nach Start — Alarme ignorieren |
+| Backend erreichbar | HTTP-Statuscode 200 | Monitor-Prozess läuft |
+
+### PRTG HTTP Advanced Sensor (eingebaut)
+
+PRTG kann `/api/status` mit dem integrierten **HTTP Advanced Sensor** direkt abfragen. Dieser unterstützt JSON-Pfade für Zahlenwerte. Konfiguration:
+
+- **URL:** `http://<host>:8088/api/status`
+- **Methode:** GET
+- **Authentifizierung:** keine (internes Netz)
+- **Timeout:** 5 s
+
+Empfohlene Kanäle (JSON-Pfad → Kanal):
+
+| Kanal | JSON-Pfad | Einheit | Warn-Grenze | Alarm-Grenze |
+|-------|-----------|---------|------------|-------------|
+| PTP Valid | `status.ptp_valid` | Custom | — | < 1 |
+| PTP Offset | `status.offset_ns` | Custom (ns) | ±1 000 | ±10 000 |
+| PTP Path Delay | `status.mean_path_delay_ns` | Custom (ns) | — | — |
+| NTP Synced | *(Script, s.u.)* | Custom | — | = 0 |
+| NTP Offset | *(Script, s.u.)* | ms | ±1 | ±10 |
+| NTP Stratum | `ntp.stratum` | Custom | > 5 | — |
+| NTP Update Age | `ntp.last_update_age_s` | s | > 600 | > 1200 |
+| LTC Present | `ltc.present` | Custom | — | < 1 |
+| Alarms Rolling | `meta.summaries_rolling.alarms_rolling` | Custom | — | > 0 |
+| PTP Losses | `meta.summaries_rolling.ptp_loss_rolling` | Custom | > 0 | > 3 |
+| GM Changes | `meta.summaries_rolling.gm_changes_rolling` | Custom | > 1 | > 5 |
+
+> **Hinweis:** PRTG HTTP Advanced unterstützt keine direkte Arithmetik auf JSON-Werten. Für `ntp.system_offset_s × 1000` (→ ms) oder String-zu-Zahl-Konversionen (`ntp.status` → 0/1) empfiehlt sich ein Script-Sensor.
+
+### PRTG Custom Python-Sensor (EXE/Script Advanced)
+
+Vollständiges Script für einen PRTG EXE/Script Advanced Sensor. Deploy nach: `%PRTG%\Custom Sensors\EXEXML\prtg_time_reference.py`
+
+```python
+#!/usr/bin/env python3
+"""
+prtg_time_reference.py  –  PRTG Custom Sensor for Time Reference Monitor
+Sensor type:  EXE/Script Advanced
+Parameters:   %host %8088
+"""
+import json, sys, urllib.request, urllib.error
+
+HOST = sys.argv[1] if len(sys.argv) > 1 else "localhost"
+PORT = sys.argv[2] if len(sys.argv) > 2 else "8088"
+URL  = f"http://{HOST}:{PORT}/api/status"
+
+def out_err(msg):
+    print(json.dumps({"prtg": {"error": "1", "text": msg}}))
+    sys.exit(1)
+
+try:
+    with urllib.request.urlopen(URL, timeout=5) as r:
+        d = json.load(r)
+except Exception as e:
+    out_err(f"API not reachable: {e}")
+
+st   = d.get("status", {})
+ntp  = d.get("ntp", {})
+ltc  = d.get("ltc", {})
+roll = d.get("meta", {}).get("summaries_rolling", {})
+
+# ntp.status → 1 (synced), 0.5 (stale), 0 (unsynced/unknown)
+ntp_ok = {"synced": 1, "stale": 0.5}.get(ntp.get("status", ""), 0)
+
+channels = [
+    {
+        "channel": "PTP Valid",
+        "value": 1 if st.get("ptp_valid") else 0,
+        "unit": "Custom", "CustomUnit": "bool",
+        "LimitMode": 1, "LimitMinError": 1
+    },
+    {
+        "channel": "PTP Offset",
+        "value": st.get("offset_ns") or 0,
+        "unit": "Custom", "CustomUnit": "ns", "Float": 1,
+        "LimitMode": 1,
+        "LimitMaxWarning": 1000,  "LimitMinWarning": -1000,
+        "LimitMaxError":   10000, "LimitMinError":   -10000
+    },
+    {
+        "channel": "PTP Path Delay",
+        "value": st.get("mean_path_delay_ns") or 0,
+        "unit": "Custom", "CustomUnit": "ns", "Float": 1
+    },
+    {
+        "channel": "NTP Status",
+        "value": ntp_ok,
+        "unit": "Custom", "Float": 1,
+        "LimitMode": 1, "LimitMinWarning": 0.5, "LimitMinError": 1
+    },
+    {
+        "channel": "NTP Offset",
+        "value": round((ntp.get("system_offset_s") or 0) * 1000, 4),
+        "unit": "Custom", "CustomUnit": "ms", "Float": 1,
+        "LimitMode": 1,
+        "LimitMaxWarning": 1, "LimitMinWarning": -1,
+        "LimitMaxError":  10, "LimitMinError":  -10
+    },
+    {
+        "channel": "NTP Stratum",
+        "value": ntp.get("stratum") or 0,
+        "unit": "Custom",
+        "LimitMode": 1, "LimitMaxWarning": 5
+    },
+    {
+        "channel": "NTP Update Age",
+        "value": round(ntp.get("last_update_age_s") or 0),
+        "unit": "TimeSeconds",
+        "LimitMode": 1, "LimitMaxWarning": 600, "LimitMaxError": 1200
+    },
+    {
+        "channel": "LTC Present",
+        "value": 1 if ltc.get("present") else 0,
+        "unit": "Custom", "CustomUnit": "bool"
+    },
+    {
+        "channel": "Alarms Rolling",
+        "value": roll.get("alarms_rolling") or 0,
+        "unit": "Custom",
+        "LimitMode": 1, "LimitMaxError": 0
+    },
+    {
+        "channel": "PTP Losses Rolling",
+        "value": roll.get("ptp_loss_rolling") or 0,
+        "unit": "Custom",
+        "LimitMode": 1, "LimitMaxWarning": 0, "LimitMaxError": 3
+    },
+    {
+        "channel": "GM Changes Rolling",
+        "value": roll.get("gm_changes_rolling") or 0,
+        "unit": "Custom",
+        "LimitMode": 1, "LimitMaxWarning": 1, "LimitMaxError": 5
+    },
+    {
+        "channel": "NTP Flaps Rolling",
+        "value": roll.get("ntp_flaps_rolling") or 0,
+        "unit": "Custom"
+    },
+    {
+        "channel": "LTC Losses Rolling",
+        "value": roll.get("ltc_loss_rolling") or 0,
+        "unit": "Custom"
+    },
+]
+
+# Nur gültige Felder ausgeben (None-Werte ausblenden)
+channels = [c for c in channels if c.get("value") is not None]
+print(json.dumps({"prtg": {"result": channels}}))
+```
+
+**Verwendung als PRTG-Sensor:**
+1. Script nach `%PRTG%\Custom Sensors\EXEXML\` kopieren
+2. Neuen Sensor anlegen: **EXE/Script Advanced**
+3. Script: `prtg_time_reference.py`
+4. Parameter: `%host 8088`
+5. Timeout: 10 s
+
+**Typische Schwellwert-Empfehlungen je nach Umgebung:**
+
+| Szenario | PTP Offset Warn | PTP Offset Alarm | NTP Offset Warn | Hinweis |
+|----------|----------------|-----------------|-----------------|---------|
+| RPi 4 (Software-TS) | ±10 µs | ±100 µs | ±1 ms | Software-TS: höhere Varianz normal |
+| RPi CM4 (Hardware-TS) | ±1 µs | ±10 µs | ±1 ms | Direktverbindung zum GM |
+| Broadcast-Netz (Switch) | ±5 µs | ±50 µs | ±1 ms | Latenz durch managed Switches |
 
 ---
 

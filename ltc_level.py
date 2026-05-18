@@ -153,15 +153,28 @@ class LtcLevelPoller:
 
     def _loop(self) -> None:
         dur_ms = max(50, int(self._interval_s * 900))  # slightly shorter than interval
+        _fail_streak = 0
         while True:
             t0 = time.monotonic()
             try:
                 r = read_ltc_level(self._device, duration_ms=dur_ms)
+                elapsed_ms = (time.monotonic() - t0) * 1000.0
                 with self._lock:
                     self._result = r
                     self._ts = time.monotonic()
+                # A call that finishes in < 50% of dur_ms means arecord failed early
+                # (ALSA error or D-state exit).  Count these to trigger backoff.
+                if elapsed_ms < dur_ms * 0.5:
+                    _fail_streak += 1
+                else:
+                    _fail_streak = 0
             except Exception:
-                pass
-            remaining = self._interval_s - (time.monotonic() - t0)
+                _fail_streak += 1
+
+            # Adaptive backoff: after 4+ consecutive quick failures, add extra wait
+            # (up to 30 s) so rapid arecord open/close cycles don't destabilise the
+            # USB audio driver (Tascam US-2x2HR / snd-usb-audio).
+            extra_s = min((_fail_streak - 3) * 2.0, 30.0) if _fail_streak > 3 else 0.0
+            remaining = self._interval_s - (time.monotonic() - t0) + extra_s
             if remaining > 0:
                 time.sleep(remaining)

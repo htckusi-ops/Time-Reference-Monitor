@@ -306,6 +306,7 @@ class StatusBus:
             self._sum = Summaries()
 
     def snapshot(self, meta: Dict[str, Any]) -> Dict[str, Any]:
+        db_meta = self._db.meta() if self._db else None
         with self._lock:
             roll = dataclasses.replace(self._sum)
             roll.errors_rolling = self._roll_err.count()
@@ -327,7 +328,7 @@ class StatusBus:
                     "pause_ts_utc": self._pause_ts_utc,
                     "summaries": dataclasses.asdict(self._sum),
                     "summaries_rolling": dataclasses.asdict(roll),
-                    "db": (self._db.meta() if self._db else None),
+                    "db": db_meta,
                 },
                 "status": dataclasses.asdict(self._ptp),
                 "ntp": dataclasses.asdict(self._ntp),

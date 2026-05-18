@@ -212,7 +212,7 @@ _HTML = """<!doctype html>
     </div>
   </div>
 
-  <!-- ── NTP Server ── -->
+  <!-- ── NTP Server + Timezone ── -->
   <div class="card">
     <h2>NTP-Server (chrony)</h2>
     <div class="field">
@@ -227,6 +227,21 @@ _HTML = """<!doctype html>
     DHCP-Lease in chrony.conf schreiben.</p>
     <button class="btn btn-primary" id="btnSaveNtp">NTP speichern</button>
     <div class="msg" id="msgNtp"></div>
+
+    <hr style="margin:16px 0;border:none;border-top:1px solid #333">
+    <h3 style="margin:0 0 10px;font-size:1em;font-weight:600">Zeitzone</h3>
+    <div class="field">
+      <label>Zeitzone (Region / Stadt)</label>
+      <select id="tzSelect">
+        <option value="">— Lade Zeitzonen…</option>
+      </select>
+    </div>
+    <p class="hint">Setzt die System-Zeitzone via <code>timedatectl set-timezone</code>.
+    Die Zeitzone bestimmt die lokale Zeitanzeige im Dashboard (NTP TZ / System TZ).<br>
+    <strong>Hinweis:</strong> Nach dem Speichern dauert es bis zu 30 Sekunden, bis der neue UTC-Offset
+    im Dashboard übernommen wird (Cache-Intervall).</p>
+    <button class="btn btn-primary" id="btnSaveTz">Zeitzone speichern</button>
+    <div class="msg" id="msgTz"></div>
   </div>
 
   <!-- ── WiFi ── -->
@@ -516,6 +531,63 @@ _HTML = """<!doctype html>
       showMsg('msgNtp', false, 'Fehler: ' + e.message);
     }} finally {{
       $('btnSaveNtp').disabled = false;
+    }}
+  }});
+
+  // ── Timezone ──────────────────────────────────────────────────────────────
+  async function loadTimezone() {{
+    try {{
+      const r = await fetch('/api/settings/timezone', {{cache:'no-store'}});
+      const d = await r.json();
+      const sel = $('tzSelect');
+      const currentTz = d.timezone || '';
+      // Group timezones by region (text before first '/') for usability.
+      const groups = {{}};
+      for (const z of (d.zones || [])) {{
+        const slash = z.indexOf('/');
+        const region = slash >= 0 ? z.slice(0, slash) : 'Other';
+        if (!groups[region]) groups[region] = [];
+        groups[region].push(z);
+      }}
+      sel.innerHTML = '';
+      // If current TZ is not in the list (unusual), add it as first option.
+      const allZones = d.zones || [];
+      if (currentTz && !allZones.includes(currentTz)) {{
+        const o = document.createElement('option');
+        o.value = currentTz; o.textContent = currentTz; o.selected = true;
+        sel.appendChild(o);
+      }}
+      for (const region of Object.keys(groups).sort()) {{
+        const og = document.createElement('optgroup');
+        og.label = region;
+        for (const z of groups[region]) {{
+          const o = document.createElement('option');
+          o.value = z;
+          // Show full IANA name (e.g. "Europe/Zurich") with underscores as spaces.
+          o.textContent = z.replace(/_/g, ' ');
+          if (z === currentTz) o.selected = true;
+          og.appendChild(o);
+        }}
+        sel.appendChild(og);
+      }}
+    }} catch(e) {{}}
+  }}
+
+  $('btnSaveTz').addEventListener('click', async () => {{
+    const tz = $('tzSelect').value;
+    if (!tz) {{ showMsg('msgTz', false, 'Keine Timezone angegeben.'); return; }}
+    $('btnSaveTz').disabled = true;
+    try {{
+      const r = await fetch('/api/settings/timezone', {{
+        method: 'POST', headers: {{'Content-Type':'application/json'}},
+        body: JSON.stringify({{ timezone: tz }}),
+      }});
+      const d = await r.json();
+      showMsg('msgTz', d.ok, d.message);
+    }} catch(e) {{
+      showMsg('msgTz', false, 'Fehler: ' + e.message);
+    }} finally {{
+      $('btnSaveTz').disabled = false;
     }}
   }});
 
@@ -846,6 +918,7 @@ _HTML = """<!doctype html>
   loadLocation();
   loadNet();
   loadNtp();
+  loadTimezone();
   loadWifi();
   loadPtpSource();
   loadNtpSource();
