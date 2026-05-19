@@ -226,12 +226,13 @@ def main() -> None:
     def meta_provider():
         with _src_lock:
             active = "mock" if _src["mock"] else "real"
-        from network_mgr import get_device_location, get_tz_offset_s, get_ptp_timestamping
+        from network_mgr import get_device_location, get_tz_offset_s, get_ptp_timestamping, get_rtc_battery
         # Override static meta["domain"] with the live (possibly user-changed) value.
         # get_tz_offset_s() uses zoneinfo so it reflects timedatectl changes immediately
         # (time.localtime().tm_gmtoff would stay at the startup timezone until restart).
         return {**meta, "tz_offset_s": get_tz_offset_s(),
                 "ptp_timestamping": get_ptp_timestamping(),
+                "rtc_battery": get_rtc_battery(),
                 "source": active,
                 "domain": get_ptp_domain(), "device_location": get_device_location()}
 

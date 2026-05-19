@@ -230,6 +230,8 @@ def ui_html() -> str:
 
         <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
         <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
+
+        <div class="smalltime" id="battLine" style="grid-column:1/-1">RTC Battery: —</div>
       </div>
       <div class="smalltime">LTC Audio Level ({config.LTC_ALSA_DEVICE})</div>
       <div class="ledWrap">
@@ -460,6 +462,10 @@ function renderLedMeter(ledPeak){{
     if((roll.warnings_rolling ?? 0) > 0 || (roll.errors_rolling ?? 0) > 0
        || (roll.ltc_decode_errors_rolling ?? 0) > 0) return 'WARN';
 
+    // RTC battery: alarm or warn → WARN in top badge (maintenance, not timing)
+    const bat = meta.rtc_battery;
+    if(bat && (bat.status === 'alarm' || bat.status === 'warn')) return 'WARN';
+
     return 'OK';
   }}
 
@@ -561,6 +567,24 @@ function renderLedMeter(ledPeak){{
     els('ntpSysOffLine').textContent  = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpRmsOffLine').textContent  = (ntp.rms_offset_s != null) ? (ntp.rms_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpFreqLine').textContent    = (ntp.frequency_ppm != null) ? ntp.frequency_ppm.toFixed(3)+' ppm' : '—';
+
+    // RTC battery (CR2032) — null when not available (e.g. RPi 4 without battery)
+    {{
+      const bat = meta.rtc_battery;
+      const battEl = els('battLine');
+      if(battEl) {{
+        if(!bat) {{
+          battEl.textContent = 'RTC Battery: not available';
+          battEl.style.color = 'var(--muted)';
+        }} else {{
+          const vStr = bat.voltage_v != null ? bat.voltage_v.toFixed(2) + ' V' : '—';
+          const labels = {{ok:'OK', warn:'LOW — replace soon', alarm:'CRITICAL — replace now'}};
+          const cols   = {{ok:'var(--ok)', warn:'var(--warn)', alarm:'var(--alarm)'}};
+          battEl.textContent = 'RTC Battery: ' + vStr + ' ' + (labels[bat.status] || bat.status);
+          battEl.style.color = cols[bat.status] || 'var(--muted)';
+        }}
+      }}
+    }}
 
     // System TZ — always visible regardless of PTP/NTP state
     {{
