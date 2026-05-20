@@ -427,6 +427,41 @@ _HTML = """<!doctype html>
   </div>
 </div>
 
+<!-- ── PTP Offset-Grafik ── -->
+<div class="card">
+  <div class="card-body">
+    <h2>PTP Offset-Grafik</h2>
+    <p class="hint" style="margin-bottom:10px;">
+      Konfiguration der Verlaufsanzeige im Dashboard (offset_ns von ptp4l).
+      Werte werden im Browser gespeichert.
+    </p>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-end;">
+      <div>
+        <label class="label" for="chartIntervalSel">Abtastintervall</label>
+        <select id="chartIntervalSel" class="input" style="width:140px;">
+          <option value="2000">2 Sekunden</option>
+          <option value="5000">5 Sekunden</option>
+          <option value="10000" selected>10 Sekunden</option>
+          <option value="30000">30 Sekunden</option>
+          <option value="60000">1 Minute</option>
+        </select>
+      </div>
+      <div>
+        <label class="label" for="chartSamplesSel">Anzahl Balken</label>
+        <select id="chartSamplesSel" class="input" style="width:120px;">
+          <option value="30">30</option>
+          <option value="60" selected>60</option>
+          <option value="120">120</option>
+        </select>
+      </div>
+      <div>
+        <button class="btn btn-primary" id="btnSaveChart">Speichern</button>
+        <div class="msg" id="msgChart"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 (async () => {{
   // ── helpers ──────────────────────────────────────────────────────────────
@@ -971,6 +1006,24 @@ _HTML = """<!doctype html>
     }}
   }});
 
+  // ── PTP Offset-Grafik ────────────────────────────────────────────────────
+  function loadChartSettings() {{
+    const interval = localStorage.getItem('ptpChartIntervalMs') || '10000';
+    const samples  = localStorage.getItem('ptpChartSamples')    || '60';
+    const iSel = $('chartIntervalSel');
+    const sSel = $('chartSamplesSel');
+    if(iSel) {{ const opt = iSel.querySelector(`option[value="${{interval}}"]`); if(opt) opt.selected = true; }}
+    if(sSel) {{ const opt = sSel.querySelector(`option[value="${{samples}}"]`);  if(opt) opt.selected = true; }}
+  }}
+
+  $('btnSaveChart').addEventListener('click', () => {{
+    const interval = $('chartIntervalSel').value;
+    const samples  = $('chartSamplesSel').value;
+    localStorage.setItem('ptpChartIntervalMs', interval);
+    localStorage.setItem('ptpChartSamples',    samples);
+    showMsg('msgChart', true, 'Gespeichert.');
+  }});
+
   // ── init ─────────────────────────────────────────────────────────────────
   loadLocation();
   loadNet();
@@ -981,6 +1034,7 @@ _HTML = """<!doctype html>
   loadNtpSource();
   loadDomainCurrent();
   loadApiAccess();
+  loadChartSettings();
 }})();
 </script>
 </body>

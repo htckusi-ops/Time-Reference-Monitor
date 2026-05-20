@@ -184,6 +184,15 @@ def ui_html() -> str:
         </div>
       </div>
 
+      <!-- PTP offset chart -->
+      <div style="margin:10px 0 4px 0;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;">
+          <span class="muted" style="font-size:11px;font-family:var(--mono);">Offset history</span>
+          <span class="muted" style="font-size:11px;font-family:var(--mono);" id="ptpChartLabel">—</span>
+        </div>
+        <canvas id="ptpOffsetChart" style="width:100%;height:68px;display:block;border-radius:6px;background:rgba(0,0,0,.18);"></canvas>
+      </div>
+
       <div class="hr"></div>
       <h3 style="margin-bottom:8px;">NTP</h3>
       <div class="kv2">
@@ -315,6 +324,87 @@ def ui_html() -> str:
   let _emaDeltaLtcNtp = null;
   let _emaDeltaLtcAdj = null;
   let _emaDeltaLtcRaw = null;
+
+  // PTP offset chart ring buffer
+  let _offsetSamples    = [];
+  let _lastChartSampleMs = 0;
+  let _chartIntervalMs  = parseInt(localStorage.getItem('ptpChartIntervalMs') || '10000', 10);
+  let _chartMaxSamples  = parseInt(localStorage.getItem('ptpChartSamples')    || '60',    10);
+
+  function _fmtNs(ns) {{
+    const abs = Math.abs(ns);
+    if(abs >= 1e9) return (ns/1e9).toFixed(2)  + ' s';
+    if(abs >= 1e6) return (ns/1e6).toFixed(2)  + ' ms';
+    if(abs >= 1e3) return (ns/1e3).toFixed(1)  + ' µs';
+    return ns.toFixed(0) + ' ns';
+  }}
+
+  function _niceScale(maxAbs) {{
+    if(maxAbs === 0) return 1000;
+    const steps = [500,1000,2000,5000,10000,20000,50000,100000,200000,500000,
+                   1000000,2000000,5000000,10000000,50000000,100000000,500000000,1000000000];
+    for(const s of steps) if(s >= maxAbs) return s;
+    return maxAbs;
+  }}
+
+  function _drawOffsetChart() {{
+    const canvas = document.getElementById('ptpOffsetChart');
+    if(!canvas) return;
+    const dpr  = window.devicePixelRatio || 1;
+    const cssW = canvas.offsetWidth  || 300;
+    const cssH = canvas.offsetHeight || 68;
+    canvas.width  = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, cssW, cssH);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(0, 0, cssW, cssH);
+    const validSamples = _offsetSamples.filter(v => v != null);
+    if(validSamples.length === 0) {{
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.font = '11px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('no data', cssW / 2, cssH / 2);
+      return;
+    }}
+    const maxAbs = _niceScale(Math.max(...validSamples.map(v => Math.abs(v))));
+    const midY   = cssH / 2;
+    const scaleY = (midY - 3) / maxAbs;
+    // zero line
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(cssW, midY); ctx.stroke();
+    // bars — always fill from the right, oldest on left
+    const n       = Math.min(_offsetSamples.length, _chartMaxSamples);
+    const samples = _offsetSamples.slice(-n);
+    const slotW   = cssW / _chartMaxSamples;
+    const barW    = Math.max(1, slotW - 1);
+    const startX  = cssW - samples.length * slotW;
+    for(let i = 0; i < samples.length; i++) {{
+      const v = samples[i];
+      if(v == null) continue;
+      const h = Math.min(Math.abs(v) * scaleY, midY - 1);
+      const x = startX + i * slotW + (slotW - barW) / 2;
+      const y = v >= 0 ? midY - h : midY;
+      ctx.fillStyle = v >= 0 ? 'rgba(80,200,120,0.85)' : 'rgba(255,110,80,0.85)';
+      ctx.fillRect(x, y, barW, h);
+    }}
+    const labelEl = document.getElementById('ptpChartLabel');
+    if(labelEl) labelEl.textContent = '±' + _fmtNs(maxAbs);
+  }}
+
+  function _maybeSampleOffset(offsetNs) {{
+    if(offsetNs == null) return;
+    const now = Date.now();
+    if(now - _lastChartSampleMs < _chartIntervalMs) return;
+    _lastChartSampleMs = now;
+    _offsetSamples.push(offsetNs);
+    if(_offsetSamples.length > _chartMaxSamples * 2)
+      _offsetSamples = _offsetSamples.slice(-_chartMaxSamples);
+    _drawOffsetChart();
+  }}
 
   // Very light EMA on 7-seg display timestamps to damp second-boundary flicker.
   // α=0.25 at 20 ms refresh → time constant ≈ 60 ms; visually imperceptible lag.
@@ -542,6 +632,7 @@ function renderLedMeter(ledPeak){{
     _emaPtpDelayNs = (st.mean_path_delay_ns  != null) ? _ema(_emaPtpDelayNs, st.mean_path_delay_ns)  : null;
     els('offLine').textContent   = (_emaPtpOffNs   != null) ? _emaPtpOffNs.toFixed(0)   + ' ns' : '—';
     els('delayLine').textContent = (_emaPtpDelayNs != null) ? _emaPtpDelayNs.toFixed(0) + ' ns' : '—';
+    _maybeSampleOffset(st.offset_ns ?? null);
     els('ageLine').textContent = (st.poll_age_ms != null) ? String(st.poll_age_ms) : '—';
     els('noPtpLine').textContent = st.no_ptp_since_utc || '—';
     els('gmChgLine').textContent = String(roll.gm_changes_rolling ?? '—');
@@ -943,6 +1034,10 @@ function renderLedMeter(ledPeak){{
   setInterval(uiTick, uiRefreshMs);
   setInterval(pollApi, apiPollMs);
   setInterval(pollLtcLevel, 200);
+
+  const _chartCanvas = document.getElementById('ptpOffsetChart');
+  if(_chartCanvas && window.ResizeObserver)
+    new ResizeObserver(() => _drawOffsetChart()).observe(_chartCanvas);
 
 initLedMeter();
 pollApi();
