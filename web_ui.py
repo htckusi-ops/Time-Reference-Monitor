@@ -20,7 +20,12 @@ def ui_html() -> str:
     }}
     body{{margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);}}
     .wrap{{max-width:1900px; margin:0 auto; padding:18px;}}
-    .hdr{{display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:14px;}}
+    .hdr{{display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:14px; position:relative;}}
+    @keyframes _connPulse{{0%,100%{{opacity:1;box-shadow:0 0 0 0 rgba(255,80,80,.4);}} 50%{{opacity:.55;box-shadow:0 0 0 6px rgba(255,80,80,0);}}}}
+    .conn-lost{{display:none; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+      background:rgba(180,20,20,.28); border:1px solid rgba(255,80,80,.55); border-radius:999px;
+      padding:5px 16px; font-family:var(--mono); font-size:12px; color:rgba(255,130,130,1);
+      animation:_connPulse 1.4s ease-in-out infinite; pointer-events:none; white-space:nowrap; z-index:20;}}
     .title{{font-size:22px; font-weight:700; letter-spacing:.2px;}}
     .subtitle{{color:var(--muted); font-size:13px; margin-top:4px;}}
     .pill{{font-family:var(--mono); font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.03); color:var(--muted);}}
@@ -106,6 +111,7 @@ def ui_html() -> str:
       <div class="title">{config.APP_TITLE}</div>
       <div class="subtitle">{config.APP_SUBTITLE}</div>
     </div>
+    <div id="connLost" class="conn-lost">&#9888;&nbsp;CONNECTION LOST</div>
     <div class="row">
       <div class="pill" id="pillMeta">—</div>
       <div class="badge"><span class="dot" id="dotState"></span><span id="txtState">—</span></div>
@@ -349,6 +355,7 @@ def ui_html() -> str:
   let srvBaseMs  = null;   // RPi UTC ms at last API receipt
   let srvLocalMs = null;   // browser Date.now() when API was received (monotonic guard)
   let lastApiMs  = null;   // browser Date.now() on every successful API response
+  const _pageLoadMs = Date.now();
   let ptpCanTick = false;
 
   // EMA smoothing for rapidly-changing display values (α=0.05 ≈ 20-sample window)
@@ -952,6 +959,12 @@ function renderLedMeter(ledPeak){{
   }}
 
   function uiTick(){{
+    // Connection-lost badge: show when no successful API response for >4 s
+    {{
+      const elapsed = Date.now() - (lastApiMs ?? _pageLoadMs);
+      const cl = document.getElementById('connLost');
+      if(cl) cl.style.display = elapsed > 4000 ? '' : 'none';
+    }}
     // RPi system clock interpolated from last API response.
     // If the backend has been unreachable longer than the stale threshold,
     // treat srvNow as null so all time displays grey out (not just PTP badge).
