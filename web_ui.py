@@ -19,13 +19,18 @@ def ui_html() -> str:
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
     }}
     body{{margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);}}
-    .wrap{{max-width:1200px; margin:0 auto; padding:18px;}}
+    .wrap{{max-width:1900px; margin:0 auto; padding:18px;}}
     .hdr{{display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:14px;}}
     .title{{font-size:22px; font-weight:700; letter-spacing:.2px;}}
     .subtitle{{color:var(--muted); font-size:13px; margin-top:4px;}}
     .pill{{font-family:var(--mono); font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.03); color:var(--muted);}}
-    .grid{{display:grid; grid-template-columns: 1.1fr .9fr; gap:12px;}}
-    @media (max-width: 980px){{ .grid{{grid-template-columns:1fr;}} }}
+    .grid{{display:grid; grid-template-columns: 430px 380px 1fr; gap:12px;}}
+    @media (max-width: 1200px){{ .grid{{grid-template-columns: 1.1fr .9fr;}} }}
+    @media (max-width: 980px){{  .grid{{grid-template-columns:1fr;}} }}
+    .chart-panel{{display:flex; flex-direction:column; gap:0;}}
+    .chart-section{{padding:10px 0 6px 0;}}
+    .chart-section:not(:last-child){{border-bottom:1px solid var(--line); margin-bottom:10px;}}
+    .chart-section h4{{margin:0 0 8px 0; font-size:12px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
     .card{{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow: 0 10px 24px rgba(0,0,0,.25);}}
     .card h3{{margin:0 0 10px 0; font-size:13px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
     @font-face{{font-family:'Seg7';src:url('/font/Segment7Standard.otf') format('opentype');font-weight:400;font-style:normal;}}
@@ -184,15 +189,6 @@ def ui_html() -> str:
         </div>
       </div>
 
-      <!-- PTP offset chart -->
-      <div style="margin:10px 0 4px 0;">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;">
-          <span class="muted" style="font-size:11px;font-family:var(--mono);">Offset history</span>
-          <span class="muted" style="font-size:11px;font-family:var(--mono);" id="ptpChartLabel">—</span>
-        </div>
-        <canvas id="ptpOffsetChart" style="width:100%;height:68px;display:block;border-radius:6px;background:rgba(0,0,0,.18);"></canvas>
-      </div>
-
       <div class="hr"></div>
       <h3 style="margin-bottom:8px;">NTP</h3>
       <div class="kv2">
@@ -242,11 +238,6 @@ def ui_html() -> str:
 
         <div class="smalltime" id="battLine" style="grid-column:1/-1">RTC Battery: —</div>
       </div>
-      <div class="smalltime">LTC Audio Level ({config.LTC_ALSA_DEVICE})</div>
-      <div class="ledWrap">
-        <div id="ltcLedMeter" class="ledMeter"></div>
-        <div id="ltcLevelText" class="ledText">—</div>
-      </div>
       <div class="hr"></div>
       <div class="split">
         <h3>Rolling Error Summary</h3>
@@ -294,6 +285,39 @@ def ui_html() -> str:
           style="white-space:pre-wrap;"></span>
       </div>
     </div>
+
+    <!-- ── Charts panel ── -->
+    <div class="card chart-panel">
+
+      <div class="chart-section">
+        <h4>PTP — Offset history</h4>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
+          <span class="muted" style="font-size:11px;font-family:var(--mono);">offset_ns</span>
+          <span class="muted" style="font-size:11px;font-family:var(--mono);" id="ptpChartLabel">—</span>
+        </div>
+        <canvas id="ptpOffsetChart" style="width:100%;height:120px;display:block;border-radius:6px;background:rgba(0,0,0,.18);"></canvas>
+      </div>
+
+      <div class="chart-section">
+        <h4>NTP</h4>
+        <div class="muted" style="font-size:11px;font-family:var(--mono);padding:18px 0;text-align:center;">
+          weitere Grafiken folgen
+        </div>
+      </div>
+
+      <div class="chart-section">
+        <h4>LTC — Audio Level</h4>
+        <div class="smalltime" style="margin-bottom:6px;">{config.LTC_ALSA_DEVICE}</div>
+        <div class="ledWrap">
+          <div id="ltcLedMeter" class="ledMeter"></div>
+          <div id="ltcLevelText" class="ledText">—</div>
+        </div>
+        <div class="muted" style="font-size:11px;font-family:var(--mono);padding:18px 0;text-align:center;">
+          weitere Grafiken folgen
+        </div>
+      </div>
+
+    </div>
   </div>
 
   <div class="foot">
@@ -328,7 +352,7 @@ def ui_html() -> str:
   // PTP offset chart ring buffer
   let _offsetSamples    = [];
   let _lastChartSampleMs = 0;
-  let _chartIntervalMs  = parseInt(localStorage.getItem('ptpChartIntervalMs') || '10000', 10);
+  let _chartIntervalMs  = parseInt(localStorage.getItem('ptpChartIntervalMs') || '1000', 10);
   let _chartMaxSamples  = parseInt(localStorage.getItem('ptpChartSamples')    || '60',    10);
 
   function _fmtNs(ns) {{

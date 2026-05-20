@@ -439,9 +439,11 @@ _HTML = """<!doctype html>
       <div>
         <label class="label" for="chartIntervalSel">Abtastintervall</label>
         <select id="chartIntervalSel" class="input" style="width:140px;">
+          <option value="500">0.5 Sekunden</option>
+          <option value="1000" selected>1 Sekunde</option>
           <option value="2000">2 Sekunden</option>
           <option value="5000">5 Sekunden</option>
-          <option value="10000" selected>10 Sekunden</option>
+          <option value="10000">10 Sekunden</option>
           <option value="30000">30 Sekunden</option>
           <option value="60000">1 Minute</option>
         </select>
