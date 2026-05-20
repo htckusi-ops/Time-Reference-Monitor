@@ -32,6 +32,9 @@ def ui_html() -> str:
     .chart-section{{padding:10px 0 6px 0;}}
     .chart-section:not(:last-child){{border-bottom:1px solid var(--line); margin-bottom:10px;}}
     .chart-section h4{{margin:0 0 8px 0; font-size:12px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
+    .chart-sub{{font-size:11px; color:var(--muted); font-family:var(--mono); margin:10px 0 3px 0; opacity:.7;}}
+    .chart-hdr{{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px;}}
+    .chart-hdr span{{font-size:10px; color:var(--muted); font-family:var(--mono);}}
     .card{{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow: 0 10px 24px rgba(0,0,0,.25);}}
     .card h3{{margin:0 0 10px 0; font-size:13px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
     @font-face{{font-family:'Seg7';src:url('/font/Segment7Standard.otf') format('opentype');font-weight:400;font-style:normal;}}
@@ -291,31 +294,39 @@ def ui_html() -> str:
     <div class="card chart-panel">
 
       <div class="chart-section">
-        <h4>PTP — Offset history</h4>
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;">
-          <span class="muted" style="font-size:11px;font-family:var(--mono);">offset_ns</span>
-          <span class="muted" style="font-size:11px;font-family:var(--mono);" id="ptpChartLabel">—</span>
-        </div>
-        <canvas id="ptpOffsetChart" style="width:100%;height:120px;display:block;border-radius:6px;background:rgba(0,0,0,.18);"></canvas>
+        <h4>PTP</h4>
+        <div class="chart-sub">Offset (offset_ns)</div>
+        <div class="chart-hdr"><span>ns</span><span id="ptpChartLabel">—</span></div>
+        <canvas id="ptpOffsetChart" style="width:100%;height:100px;display:block;border-radius:6px;"></canvas>
       </div>
 
       <div class="chart-section">
         <h4>NTP</h4>
-        <div class="muted" style="font-size:11px;font-family:var(--mono);padding:18px 0;text-align:center;">
-          weitere Grafiken folgen
-        </div>
+        <div class="chart-sub">System Offset</div>
+        <div class="chart-hdr"><span>system_offset_s</span><span id="ntpOffLabel">—</span></div>
+        <canvas id="ntpOffsetChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
+        <div class="chart-sub">Frequency Error</div>
+        <div class="chart-hdr"><span>frequency_ppm</span><span id="ntpFreqLabel">—</span></div>
+        <canvas id="ntpFreqChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
       </div>
 
       <div class="chart-section">
-        <h4>LTC — Audio Level</h4>
+        <h4>Δ Cross-Source</h4>
+        <div class="chart-sub">Δ(NTP − PTP)</div>
+        <div class="chart-hdr"><span>ms</span><span id="deltaChartLabel">—</span></div>
+        <canvas id="deltaNtpPtpChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
+      </div>
+
+      <div class="chart-section">
+        <h4>LTC</h4>
         <div class="smalltime" style="margin-bottom:6px;">{config.LTC_ALSA_DEVICE}</div>
         <div class="ledWrap">
           <div id="ltcLedMeter" class="ledMeter"></div>
           <div id="ltcLevelText" class="ledText">—</div>
         </div>
-        <div class="muted" style="font-size:11px;font-family:var(--mono);padding:18px 0;text-align:center;">
-          weitere Grafiken folgen
-        </div>
+        <div class="chart-sub">Audio Level History (RMS)</div>
+        <div class="chart-hdr"><span>dBFS</span><span id="ltcLevelLabel">—</span></div>
+        <canvas id="ltcLevelChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
       </div>
 
     </div>
@@ -350,85 +361,163 @@ def ui_html() -> str:
   let _emaDeltaLtcAdj = null;
   let _emaDeltaLtcRaw = null;
 
-  // PTP offset chart ring buffer
-  let _offsetSamples    = [];
-  let _lastChartSampleMs = 0;
-  let _chartIntervalMs  = parseInt(localStorage.getItem('ptpChartIntervalMs') || '1000', 10);
-  let _chartMaxSamples  = parseInt(localStorage.getItem('ptpChartSamples')    || '60',    10);
+  // ── Chart system ─────────────────────────────────────────────────────────
+  let _chartIntervalMs = parseInt(localStorage.getItem('ptpChartIntervalMs') || '1000', 10);
+  let _chartMaxSamples = parseInt(localStorage.getItem('ptpChartSamples')    || '60',    10);
+
+  function _makeChart(canvasId, labelId, opts) {{
+    return {{ canvasId, labelId, opts: opts || {{}}, samples: [], lastMs: 0 }};
+  }}
 
   function _fmtNs(ns) {{
-    const abs = Math.abs(ns);
-    if(abs >= 1e9) return (ns/1e9).toFixed(2)  + ' s';
-    if(abs >= 1e6) return (ns/1e6).toFixed(2)  + ' ms';
-    if(abs >= 1e3) return (ns/1e3).toFixed(1)  + ' µs';
+    const a = Math.abs(ns);
+    if(a >= 1e9) return (ns/1e9).toFixed(2) + ' s';
+    if(a >= 1e6) return (ns/1e6).toFixed(2) + ' ms';
+    if(a >= 1e3) return (ns/1e3).toFixed(1) + ' µs';
     return ns.toFixed(0) + ' ns';
   }}
 
-  function _niceScale(maxAbs) {{
-    if(maxAbs === 0) return 1000;
-    const steps = [500,1000,2000,5000,10000,20000,50000,100000,200000,500000,
-                   1000000,2000000,5000000,10000000,50000000,100000000,500000000,1000000000];
-    for(const s of steps) if(s >= maxAbs) return s;
-    return maxAbs;
+  function _fmtMs(ms) {{
+    const a = Math.abs(ms);
+    if(a >= 1000)  return (ms/1000).toFixed(3) + ' s';
+    if(a >= 1)     return ms.toFixed(3)         + ' ms';
+    if(a >= 0.001) return (ms*1000).toFixed(1)  + ' µs';
+    return (ms*1e6).toFixed(0) + ' ns';
   }}
 
-  function _drawOffsetChart() {{
-    const canvas = document.getElementById('ptpOffsetChart');
+  function _niceNs(x) {{
+    if(x === 0) return 1000;
+    const s = [500,1000,2000,5000,10000,20000,50000,100000,200000,500000,1000000,
+               2000000,5000000,10000000,50000000,100000000,500000000,1000000000,5000000000];
+    for(const v of s) if(v >= x) return v; return x;
+  }}
+
+  function _niceMs(x) {{
+    if(x === 0) return 1;
+    const s = [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10,20,50,
+               100,200,500,1000,2000,5000,10000,50000];
+    for(const v of s) if(v >= x) return v; return x;
+  }}
+
+  function _nicePpm(x) {{
+    if(x === 0) return 0.1;
+    const s = [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10,20,50,100,200,500];
+    for(const v of s) if(v >= x) return v; return x;
+  }}
+
+  const _cPtpOff  = _makeChart('ptpOffsetChart',   'ptpChartLabel',   {{
+    centerZero:true,  niceScaleFn:_niceNs,  fmtScale:_fmtNs }});
+  const _cNtpOff  = _makeChart('ntpOffsetChart',   'ntpOffLabel',     {{
+    centerZero:true,  niceScaleFn:_niceMs,  fmtScale:_fmtMs }});
+  const _cNtpFreq = _makeChart('ntpFreqChart',     'ntpFreqLabel',    {{
+    centerZero:true,  niceScaleFn:_nicePpm,
+    fmtScale: v => v.toFixed(2) + 'p',
+    colorFn:  v => v >= 0 ? 'rgba(80,160,255,.85)' : 'rgba(255,160,40,.85)' }});
+  const _cDelta   = _makeChart('deltaNtpPtpChart', 'deltaChartLabel', {{
+    centerZero:true,  niceScaleFn:_niceMs,  fmtScale:_fmtMs }});
+  const _cLtcDb   = _makeChart('ltcLevelChart',    'ltcLevelLabel',   {{
+    centerZero:false, fixedMin:-60, fixedMax:0,
+    fmtScale: v => v.toFixed(0),
+    colorFn:  v => v >= -6 ? 'rgba(255,80,80,.85)' : v >= -20 ? 'rgba(255,200,50,.85)' : 'rgba(80,200,120,.85)' }});
+
+  function _sampleChart(chart, value) {{
+    if(value == null || !isFinite(value)) return false;
+    const now = Date.now();
+    if(now - chart.lastMs < _chartIntervalMs) return false;
+    chart.lastMs = now;
+    chart.samples.push(value);
+    if(chart.samples.length > _chartMaxSamples * 2)
+      chart.samples = chart.samples.slice(-_chartMaxSamples);
+    _drawBarChart(chart);
+    return true;
+  }}
+
+  function _drawBarChart(chart) {{
+    const o = chart.opts;
+    const canvas = document.getElementById(chart.canvasId);
     if(!canvas) return;
     const dpr  = window.devicePixelRatio || 1;
     const cssW = canvas.offsetWidth  || 300;
-    const cssH = canvas.offsetHeight || 68;
+    const cssH = canvas.offsetHeight || 80;
     canvas.width  = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, cssW, cssH);
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    const ML = 46, MT = 7, MB = 5;
+    const plotW = cssW - ML, plotH = cssH - MT - MB;
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
     ctx.fillRect(0, 0, cssW, cssH);
-    const validSamples = _offsetSamples.filter(v => v != null);
-    if(validSamples.length === 0) {{
-      ctx.fillStyle = 'rgba(255,255,255,0.25)';
-      ctx.font = '11px monospace';
+    // compute Y range
+    const valid = chart.samples.filter(v => v != null);
+    let rMin, rMax;
+    if(o.fixedMin != null && o.fixedMax != null) {{
+      rMin = o.fixedMin; rMax = o.fixedMax;
+    }} else if(o.centerZero) {{
+      const rawMax = valid.length ? Math.max(...valid.map(v => Math.abs(v))) : 0;
+      const ma = o.niceScaleFn ? o.niceScaleFn(rawMax) : rawMax || 1;
+      rMin = -ma; rMax = ma;
+    }} else {{ rMin = 0; rMax = 1; }}
+    const range = rMax - rMin || 1;
+    const yFor  = v => MT + plotH * (1 - (v - rMin) / range);
+    // grid lines + Y-axis labels
+    ctx.save();
+    ctx.setLineDash([2, 3]);
+    ctx.lineWidth = 0.75;
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    for(let i = 0; i <= 4; i++) {{
+      const gv = rMin + range * i / 4;
+      const gy = yFor(gv);
+      const z  = Math.abs(gv) < range * 1e-4;
+      ctx.strokeStyle = z ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.11)';
+      ctx.beginPath(); ctx.moveTo(ML, gy); ctx.lineTo(cssW, gy); ctx.stroke();
+      if(o.fmtScale) {{
+        ctx.fillStyle = z ? 'rgba(255,255,255,0.62)' : 'rgba(255,255,255,0.40)';
+        ctx.textBaseline = i === 0 ? 'bottom' : (i === 4 ? 'top' : 'middle');
+        ctx.fillText(o.fmtScale(gv), ML - 3, gy);
+      }}
+    }}
+    ctx.restore();
+    // "no data" text
+    if(valid.length === 0) {{
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.font = '10px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('no data', cssW / 2, cssH / 2);
+      ctx.fillText('no data', ML + plotW / 2, cssH / 2);
       return;
     }}
-    const maxAbs = _niceScale(Math.max(...validSamples.map(v => Math.abs(v))));
-    const midY   = cssH / 2;
-    const scaleY = (midY - 3) / maxAbs;
-    // zero line
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(cssW, midY); ctx.stroke();
-    // bars — always fill from the right, oldest on left
-    const n       = Math.min(_offsetSamples.length, _chartMaxSamples);
-    const samples = _offsetSamples.slice(-n);
-    const slotW   = cssW / _chartMaxSamples;
-    const barW    = Math.max(1, slotW - 1);
-    const startX  = cssW - samples.length * slotW;
-    for(let i = 0; i < samples.length; i++) {{
-      const v = samples[i];
-      if(v == null) continue;
-      const h = Math.min(Math.abs(v) * scaleY, midY - 1);
-      const x = startX + i * slotW + (slotW - barW) / 2;
-      const y = v >= 0 ? midY - h : midY;
-      ctx.fillStyle = v >= 0 ? 'rgba(80,200,120,0.85)' : 'rgba(255,110,80,0.85)';
-      ctx.fillRect(x, y, barW, h);
+    // bars (newest on right, oldest scrolls off left)
+    const n     = Math.min(chart.samples.length, _chartMaxSamples);
+    const segs  = chart.samples.slice(-n);
+    const slotW = plotW / _chartMaxSamples;
+    const barW  = Math.max(1, slotW - 1);
+    const sx    = ML + plotW - segs.length * slotW;
+    const zeroY = yFor(0);
+    for(let i = 0; i < segs.length; i++) {{
+      const v = segs[i]; if(v == null) continue;
+      const vY = yFor(v);
+      const x  = sx + i * slotW + (slotW - barW) / 2;
+      let barY, barH;
+      if(o.centerZero) {{
+        barY = v >= 0 ? vY : zeroY; barH = v >= 0 ? zeroY - vY : vY - zeroY;
+      }} else {{
+        const bY = yFor(rMin); barY = Math.min(vY, bY); barH = Math.abs(vY - bY);
+      }}
+      barH = Math.max(1, barH);
+      ctx.fillStyle = o.colorFn ? o.colorFn(v) : (v >= 0 ? 'rgba(80,200,120,.85)' : 'rgba(255,110,80,.85)');
+      ctx.fillRect(x, barY, barW, barH);
     }}
-    const labelEl = document.getElementById('ptpChartLabel');
-    if(labelEl) labelEl.textContent = '±' + _fmtNs(maxAbs);
+    // scale label (top-right span)
+    const lEl = chart.labelId ? document.getElementById(chart.labelId) : null;
+    if(lEl && o.fmtScale) lEl.textContent = o.fixedMin != null
+      ? o.fmtScale(o.fixedMax) + '/' + o.fmtScale(o.fixedMin) + ' dB'
+      : '±' + o.fmtScale(rMax);
   }}
 
-  function _maybeSampleOffset(offsetNs) {{
-    if(offsetNs == null) return;
-    const now = Date.now();
-    if(now - _lastChartSampleMs < _chartIntervalMs) return;
-    _lastChartSampleMs = now;
-    _offsetSamples.push(offsetNs);
-    if(_offsetSamples.length > _chartMaxSamples * 2)
-      _offsetSamples = _offsetSamples.slice(-_chartMaxSamples);
-    _drawOffsetChart();
+  function _redrawAllCharts() {{
+    _drawBarChart(_cPtpOff); _drawBarChart(_cNtpOff);  _drawBarChart(_cNtpFreq);
+    _drawBarChart(_cDelta);  _drawBarChart(_cLtcDb);
   }}
 
   // Very light EMA on 7-seg display timestamps to damp second-boundary flicker.
@@ -657,7 +746,7 @@ function renderLedMeter(ledPeak){{
     _emaPtpDelayNs = (st.mean_path_delay_ns  != null) ? _ema(_emaPtpDelayNs, st.mean_path_delay_ns)  : null;
     els('offLine').textContent   = (_emaPtpOffNs   != null) ? _emaPtpOffNs.toFixed(0)   + ' ns' : '—';
     els('delayLine').textContent = (_emaPtpDelayNs != null) ? _emaPtpDelayNs.toFixed(0) + ' ns' : '—';
-    _maybeSampleOffset(st.offset_ns ?? null);
+    _sampleChart(_cPtpOff, st.offset_ns ?? null);
     els('ageLine').textContent = (st.poll_age_ms != null) ? String(st.poll_age_ms) : '—';
     els('noPtpLine').textContent = st.no_ptp_since_utc || '—';
     els('gmChgLine').textContent = String(roll.gm_changes_rolling ?? '—');
@@ -683,6 +772,8 @@ function renderLedMeter(ledPeak){{
     els('ntpSysOffLine').textContent  = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpRmsOffLine').textContent  = (ntp.rms_offset_s != null) ? (ntp.rms_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpFreqLine').textContent    = (ntp.frequency_ppm != null) ? ntp.frequency_ppm.toFixed(3)+' ppm' : '—';
+    _sampleChart(_cNtpOff,  ntp.system_offset_s != null ? ntp.system_offset_s * 1000 : null);
+    _sampleChart(_cNtpFreq, ntp.frequency_ppm ?? null);
 
     // RTC battery (CR2032) — null when not available (e.g. RPi 4 without battery)
     {{
@@ -971,6 +1062,7 @@ function renderLedMeter(ledPeak){{
       }}
       els('deltaLine').textContent = _emaDeltaNtpPtp != null
         ? 'Δ(NTP-PTP): ' + _emaDeltaNtpPtp.toFixed(3) + ' ms' : 'Δ(NTP-PTP): —';
+      if(st.ptp_valid) _sampleChart(_cDelta, _emaDeltaNtpPtp);
 
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
@@ -1049,8 +1141,10 @@ function renderLedMeter(ledPeak){{
       if (!txt) return;
 
       const dbPeak = (typeof j.dbfs_peak === 'number') ? j.dbfs_peak : -120;
+      const dbRms  = (typeof j.dbfs_rms  === 'number') ? j.dbfs_rms  : null;
       renderLedMeter(dbToLedCountCeil(dbPeak));
       txt.textContent = (typeof j.dbfs_peak === 'number') ? dbPeak.toFixed(1) + ' dBFS' : '—';
+      _sampleChart(_cLtcDb, dbRms);
     }} catch (e) {{
       // ignore
     }}
@@ -1060,9 +1154,11 @@ function renderLedMeter(ledPeak){{
   setInterval(pollApi, apiPollMs);
   setInterval(pollLtcLevel, 200);
 
-  const _chartCanvas = document.getElementById('ptpOffsetChart');
-  if(_chartCanvas && window.ResizeObserver)
-    new ResizeObserver(() => _drawOffsetChart()).observe(_chartCanvas);
+  if(window.ResizeObserver) {{
+    const _ro = new ResizeObserver(() => _redrawAllCharts());
+    ['ptpOffsetChart','ntpOffsetChart','ntpFreqChart','deltaNtpPtpChart','ltcLevelChart']
+      .forEach(id => {{ const el = document.getElementById(id); if(el) _ro.observe(el); }});
+  }}
 
 initLedMeter();
 pollApi();
