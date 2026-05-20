@@ -53,7 +53,6 @@ install -m 0755 "${REPO_DIR}/rpi/scripts/kiosk.sh" "${INSTALL_DIR}/rpi/scripts/k
 
 # ── 3. Python dependencies ────────────────────────────────────────────────────
 info "Updating Python dependencies…"
-sudo -u "$APP_USER" "${INSTALL_DIR}/venv/bin/pip" install -q --upgrade pip
 sudo -u "$APP_USER" "${INSTALL_DIR}/venv/bin/pip" install -q -r "${INSTALL_DIR}/requirements.txt"
 
 # ── 4. Recompile alsaltc if source changed (hash-based) ──────────────────────

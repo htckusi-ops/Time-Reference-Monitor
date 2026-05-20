@@ -92,7 +92,6 @@ install_app() {
 
     info "Creating Python virtual environment…"
     sudo -u "$APP_USER" python3 -m venv "${INSTALL_DIR}/venv"
-    sudo -u "$APP_USER" "${INSTALL_DIR}/venv/bin/pip" install -q --upgrade pip
     sudo -u "$APP_USER" "${INSTALL_DIR}/venv/bin/pip" install -q -r "${INSTALL_DIR}/requirements.txt"
 
     info "Creating data directory ${DATA_DIR}…"
