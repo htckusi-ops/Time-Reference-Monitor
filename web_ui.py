@@ -24,8 +24,9 @@ def ui_html() -> str:
     .title{{font-size:22px; font-weight:700; letter-spacing:.2px;}}
     .subtitle{{color:var(--muted); font-size:13px; margin-top:4px;}}
     .pill{{font-family:var(--mono); font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.03); color:var(--muted);}}
-    .grid{{display:grid; grid-template-columns: 430px 380px 1fr; gap:12px;}}
-    @media (max-width: 1200px){{ .grid{{grid-template-columns: 1.1fr .9fr;}} }}
+    .grid{{display:grid; grid-template-columns: 634px 518px minmax(260px, 1fr); gap:12px;}}
+    /* On screens too narrow for 3 columns, chart panel wraps to a full-width row below */
+    @media (max-width: 1440px){{ .grid{{grid-template-columns: 1.1fr .9fr;}} .chart-panel{{grid-column:1/-1;}} }}
     @media (max-width: 980px){{  .grid{{grid-template-columns:1fr;}} }}
     .chart-panel{{display:flex; flex-direction:column; gap:0;}}
     .chart-section{{padding:10px 0 6px 0;}}
