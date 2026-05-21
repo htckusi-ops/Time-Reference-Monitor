@@ -164,7 +164,7 @@ Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fü
 
 | Seite | URL | Funktion |
 |-------|-----|----------|
-| **Haupt-Dashboard** | `/` | PTP/NTP/LTC-Status, 7-Seg-Zeitanzeige, rollende Fehlerzähler, Ereignisprotokoll |
+| **Haupt-Dashboard** | `/` | PTP/NTP/LTC-Status, 7-Seg-Zeitanzeige, 6 historische Balkendiagramme, rollende Fehlerzähler, Ereignisprotokoll |
 | **Screen Clock** | `/ltc-clock` | Vollbild-Uhr (LTC/PTP/Local), konfigurierbare Schrift/Farbe/Breite, Close-Button |
 | **LTC Spektrum** | `/spectrum` | On-Demand-WAV-Aufnahme (arecord) + FFT-Spektrogramm (sox), PNG- und WAV-Download |
 | **LTC Raw Output** | `/ltc-raw` | Live-Ausgabe des LTC-Decoder-Prozesses (`ltcdump`/`alsaltc`), Ring-Buffer 500 Zeilen, Pause-Button, Diagnosewerkzeug |
@@ -174,6 +174,18 @@ Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fü
 ### Haupt-Dashboard (`/`)
 
 Das Dashboard zeigt alle drei Zeitquellen gleichzeitig in Echtzeit.
+
+**Layout — 3-Spalten Full-HD:** Auf Displays ≥ 1440 px Breite (Kiosk: 1920×1080) wird das Dashboard in drei Spalten angeordnet:
+
+| Spalte | Breite | Inhalt |
+|--------|--------|--------|
+| Links | 634 px | PTP- und NTP-Status-Karten |
+| Mitte | 518 px | LTC-Status, Δ-Werte, Fehlerzähler, Ereignisprotokoll |
+| Rechts | flex (≥ 260 px) | Historische Balkendiagramme (Grafik-Panel) |
+
+Unterhalb 1440 px (Laptop, Tablet) wird das Grafik-Panel über die volle Breite gestreckt; unterhalb 980 px wird auf eine einzelne Spalte umgebrochen.
+
+**CONNECTION LOST-Badge:** Wenn das Dashboard länger als 4 Sekunden kein gültiges API-Ergebnis erhält (z.B. Backend nicht erreichbar, Netzwerktimeout), erscheint ein pulsierendes `⚠ CONNECTION LOST`-Badge in der Mitte der Kopfzeile. Das Fetch-Timeout beträgt 3 Sekunden — damit ist die Badge-Reaktionszeit auch bei TCP-Hangup zuverlässig (4 s Anzeigeschwelle > 3 s Fetch-Timeout).
 
 **Header-Navigation:** Ein `☰ Menu`-Button in der Kopfzeile öffnet beim Hover ein Dropdown mit allen Navigationslinks (Screen Clock, LTC Spektrum, PTP Capture, Einstellungen) sowie den Systemaktionen Reload, Reboot und Shutdown. Die Zeitanzeige-Karte wird dadurch von Buttons freigehalten.
 
@@ -216,9 +228,22 @@ Die LTC-7-Seg-Anzeige zeigt den rohen Timecode des LTC-Generators — LTC kodier
 
 **LTC-Pegel:** Kompakter LED-Bargraph (30 Segmente, −60 dBFS bis 0 dBFS) mit inline dBFS-Textanzeige rechts daneben. Farbbereiche: grün (< −18 dBFS), orange (−18 bis −6 dBFS), rot (> −6 dBFS). Peak-Hold 800 ms.
 
-**Rollende Fehlerzähler:** Alle Ereignisse (PTP_LOST, NTP_STALE, NTP_LOST, LTC_LOST, GM_CHANGED, Offset-Sprünge, Drift) fliessen in das Rolling-Error-Summary ein. Ein **Reset-Button** setzt alle Zähler sofort auf 0 zurück. Fehlerfenster konfigurierbar via `--error-window-s` (Standard 1 h).
+**Δ-Werte:** Vier Paare im Delta-Raster: NTP Date / PTP Date, NTP TZ / System TZ (PTP), Δ(NTP-PTP) / Δ(LTC-NTP), Δ(LTC-PTP) adj / Δ(LTC-PTP) raw. ALSA delay wird im LTC-Status-Block angezeigt (nicht im Delta-Raster). Die Δ-Textwerte werden ~1 Hz aktualisiert (unabhängig vom UI-Refresh-Takt), um die Browserlast auf dem Kiosk zu reduzieren.
 
-**Δ-Werte:** Vier Paare im Delta-Raster: NTP Date / PTP Date, NTP TZ / System TZ (PTP), Δ(NTP-PTP) / Δ(LTC-NTP), Δ(LTC-PTP) adj / Δ(LTC-PTP) raw. ALSA delay wird im LTC-Status-Block angezeigt (nicht im Delta-Raster).
+**Historische Balkendiagramme (rechtes Panel):** Sechs kontinuierlich mitlaufende Balkendiagramme visualisieren die Zeitquell-Metriken. Alle Diagramme haben eine Y-Achsen-Skala mit Rasterlinien (4 Intervalle) und automatischer Einheitenskalierung:
+
+| Diagramm | Quelle | Einheit | Farbe |
+|----------|--------|---------|-------|
+| **PTP Offset** | `status.offset_ns` | ns / µs / ms (auto) | positiv blau, negativ orange |
+| **NTP Offset** | `ntp.system_offset_s` | ms / µs (auto) | positiv blau, negativ orange |
+| **NTP Frequenz** | `ntp.frequency_ppm` | ppm | positiv blau, negativ orange |
+| **Δ(NTP−PTP)** | berechnet | ms / µs (auto) | positiv blau, negativ orange |
+| **LTC Pegel** | `/api/ltc/level` dBFS RMS | dBFS | grün < −18, orange −18…−6, rot > −6 |
+| **Δ(LTC−PTP)** | berechnet (delay-kompensiert) | ms / µs (auto) | positiv blau, negativ orange |
+
+Abtastintervall und Anzahl Balken sind in **Einstellungen → Offset-Grafik** konfigurierbar (Standard: 1 s / 60 Balken). Die Einstellungen werden im Browser-LocalStorage gespeichert und gelten pro Gerät. Ein neuer Balken wird nur hinzugefügt wenn das konfigurierte Intervall abgelaufen ist — unabhängig vom allgemeinen UI-Refresh-Takt.
+
+**Rollende Fehlerzähler:** Alle Ereignisse (PTP_LOST, NTP_STALE, NTP_LOST, LTC_LOST, GM_CHANGED, Offset-Sprünge, Drift) fliessen in das Rolling-Error-Summary ein. Ein **Reset-Button** setzt alle rollenden Zähler sofort auf 0 zurück. Nach einem Reset werden die internen LTC-Basis-Zähler (`ltc_jumps_total`, `ltc_decode_errors_total`) auf die aktuellen akkumulierten Werte neu gesetzt — damit löst der Reset selbst keinen `LTC_JUMP`- oder `LTC_DECODE_ERROR`-Folgeevent aus. Fehlerfenster konfigurierbar via `--error-window-s` (Standard 1 h).
 
 **Ereignisprotokoll:** Alle Statusübergänge mit UTC-Timestamp, Schweregrad (INFO/WARN/ALARM) und Typ.
 
@@ -278,6 +303,7 @@ Die Einstellungsseite bündelt alle Konfigurationsoptionen, die zur Laufzeit ge�
 | **API-Zugriff** | IP/Subnet-Allowlist für Web-Interface und API; leer = alle erlaubt; `127.0.0.1`/`::1` immer erlaubt |
 | **NTP-Simulation** | Synthetischen NTP-Ausfall oder -Sprung simulieren |
 | **PTP-Simulation** | Synthetische PTP-Fehler erzeugen (GM-Flap, Dropout, Offset-Sprung, Wander, Drift) |
+| **Offset-Grafik** | Abtastintervall der historischen Diagramme (0.5 s / **1 s** / 2 s / 5 s / 10 s / 30 s / 1 min) und Anzahl Balken (**60** / 30 / 120); Einstellungen werden im Browser-LocalStorage gespeichert |
 
 #### PTP-Simulation (Mock-Modus)
 
@@ -670,6 +696,21 @@ sudo systemctl restart time-reference-monitor
 | `--ltc-jump-tolerance-frames` | `5` | Bei 25 fps: 1 Frame = 40 ms → 5 Frames = 200 ms Toleranz. Einzelne Ausreisser bis 200 ms lösen keine `LTC_JUMP`-Warnung aus; nur echte Sprünge > 5 Frames werden gemeldet. |
 | `--db` | `/var/lib/time-reference-monitor/events.sqlite` | |
 
+### Performance-Tuning (Kiosk)
+
+Die Browser-seitigen Refresh-Intervalle sind auf den Kiosk-Betrieb auf einem Raspberry Pi optimiert:
+
+| Parameter | Default | Beschreibung |
+|-----------|---------|-------------|
+| `--ui-refresh-ms` | `100` ms | Takt der UI-Animation und Zeitinterpolation (10 Hz). Niedrigere Werte erhöhen die Canvas-Render-Last erheblich. |
+| `--ui-api-poll-ms` | `1000` ms | Wie oft der Browser `/api/status` abfragt (1 Hz). |
+
+Der LTC-Audiopegel (`/api/ltc/level`) wird browser-seitig alle 500 ms abgefragt.
+
+Delta-Textwerte (NTP−PTP, LTC−PTP usw.) werden im Browser ~1 Hz in den DOM geschrieben, unabhängig vom `ui-refresh-ms`-Takt — dadurch bleibt der Canvas-Takt flüssig, ohne den DOM mit zu vielen Writes zu belasten.
+
+Auf einem Raspberry Pi 4 kann ein zu niedriges `--ui-refresh-ms` (< 50 ms) den Kiosk-Chromium-Prozess bis an die CPU-Grenze bringen und zu Stocken führen.
+
 ### Dienste
 
 | Dienst | Beschreibung |
@@ -843,7 +884,7 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 
 1. `git pull` im Repository
 2. Rsync der Applikationsdateien nach `/opt/time-reference-monitor/`
-3. Python-Abhängigkeiten aktualisieren (`pip install -r requirements.txt`)
+3. Python-Abhängigkeiten aktualisieren (`pip install -r requirements.txt`; kein `pip install --upgrade pip` — das löst auf Raspberry Pi OS oft SSL-Zertifikatswarnungen aus und ist nicht nötig)
 4. `alsaltc` neu kompilieren — **nur wenn der C-Source neuer als das installierte Binary ist**
 5. Systemd-Service-Dateien aktualisieren + `daemon-reload` (Kiosk-Restart nur bei Änderung)
 6. ptp4l Drop-Ins aktualisieren (`uds-permissions.conf`, `time-reference-monitor.conf`)
@@ -1287,7 +1328,7 @@ Liefert einen vollständigen Snapshot aller Zeitquellen und Metadaten. Wird vom 
 
 ### `GET /api/ltc/level` — Audio-Pegel
 
-Liefert den aktuellen LTC-Audiopegel (Hintergrund-Poller, 200-ms-Intervall, gecacht).
+Liefert den aktuellen LTC-Audiopegel (Hintergrund-Poller, 500-ms-Intervall browser-seitig, gecacht).
 
 **Query-Parameter:**
 - `device` — ALSA-Gerät (Standard: konfiguriertes LTC-Gerät)
