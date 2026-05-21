@@ -537,6 +537,8 @@ def ui_html() -> str:
   // α=0.25 at 20 ms refresh → time constant ≈ 60 ms; visually imperceptible lag.
   let _smPtpMs = null;
   let _smNtpMs = null;
+  let ltcBaseToD   = null;   // ToD-ms from last received LTC timecode (for interpolation)
+  let ltcBaseLocal = null;   // browser Date.now() when ltcBaseToD was stored
 
   // LTC timezone inferred from ltc_date vs PTP UTC (ms offset, null = unknown).
   // Rounded to nearest 15 min. When set, 7-seg shows UTC = LTC_local - TZ.
@@ -891,16 +893,13 @@ function renderLedMeter(ledPeak){{
       {{const _lb=els('ltcTzBadge'); if(_lb){{_lb.textContent='—'; _lb.className='tzBadge';}}}}
     }}
 
-    // LTC 7-segment: raw timecode from stream (HH:MM:SS:FF).
-    // LTC encodes local time by convention — display as-is.
-    // PTP and NTP also display local time now, so all three are directly comparable.
+    // LTC 7-segment: store base for client-side interpolation in uiTick().
+    // Direct rendering here caused visible 1-second jumps at the 1 Hz API poll rate.
     if(ltc.enabled && ltc.present && tc && tc !== '—') {{
-      const tcm = tc.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}}):(\d{{2}})$/);
-      if(tcm) {{
-        renderSevenSeg(els('ltcTimeSegs'),
-          tcm[1]+':'+tcm[2]+':'+tcm[3]+':'+pad2(parseInt(tcm[4], 10)), '00:00:00:00');
-      }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
-    }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
+      const _fpsN = Math.max(1, parseInt(ltc.fps || '25', 10) || 25);
+      const _todMs = parseTcToTodMs(tc, _fpsN);
+      if(_todMs != null) {{ ltcBaseToD = _todMs; ltcBaseLocal = Date.now(); }}
+    }} else {{ ltcBaseToD = null; ltcBaseLocal = null; }}
 
     // rolling summary
     const eR = Number(roll.errors_rolling ?? 0);
@@ -1020,6 +1019,24 @@ function renderLedMeter(ledPeak){{
 
     const ltc = lastApi ? (lastApi.ltc || {{}}) : {{}};
     const alsaDelayMs = (ltc.alsa_delay_ms != null) ? Number(ltc.alsa_delay_ms) : 0;
+
+    // ── LTC time (interpolated) ───────────────────────────────────────────────
+    // ltcBaseToD / ltcBaseLocal are set in applyApi(); interpolating here makes
+    // the LTC clock tick at uiRefreshMs rate instead of jumping once per API poll.
+    {{
+      const _ltcOk = ltcBaseToD != null && ltcBaseLocal != null && apiAgeMs <= staleTh + 1000;
+      if(_ltcOk) {{
+        const _fpsN = Math.max(1, parseInt(ltc.fps || '25', 10) || 25);
+        const _totalMs = Math.round((ltcBaseToD + (Date.now() - ltcBaseLocal)) % (24 * 3600000));
+        const _hh = Math.floor(_totalMs / 3600000) % 24;
+        const _mm = Math.floor(_totalMs / 60000) % 60;
+        const _ss = Math.floor(_totalMs / 1000) % 60;
+        const _ff = Math.floor((_totalMs % 1000) * _fpsN / 1000);
+        renderSevenSeg(els('ltcTimeSegs'), pad2(_hh)+':'+pad2(_mm)+':'+pad2(_ss)+':'+pad2(_ff), '00:00:00:00');
+      }} else {{
+        renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00');
+      }}
+    }}
 
     // Δ(LTC-NTP): LTC corrected for ALSA delay vs pure NTP time
     if(ntpNow && ltc.enabled && ltc.present && ltc.timecode) {{
