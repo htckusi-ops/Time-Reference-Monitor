@@ -308,11 +308,11 @@ def ui_html() -> str:
 
       <div class="chart-section">
         <h4>NTP</h4>
-        <div class="chart-sub">System Offset</div>
-        <div class="chart-hdr"><span>system_offset_s</span><span id="ntpOffLabel">—</span></div>
+        <div class="chart-sub">System Offset <span style="font-size:9px;opacity:.6;">(system_offset_s)</span></div>
+        <div class="chart-hdr"><span>ms</span><span id="ntpOffLabel">—</span></div>
         <canvas id="ntpOffsetChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
-        <div class="chart-sub">Frequency Error</div>
-        <div class="chart-hdr"><span>frequency_ppm</span><span id="ntpFreqLabel">—</span></div>
+        <div class="chart-sub">Frequency Error <span style="font-size:9px;opacity:.6;">(frequency_ppm)</span></div>
+        <div class="chart-hdr"><span>ppm</span><span id="ntpFreqLabel">—</span></div>
         <canvas id="ntpFreqChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
       </div>
 
@@ -321,11 +321,13 @@ def ui_html() -> str:
         <div class="chart-sub">Δ(NTP − PTP)</div>
         <div class="chart-hdr"><span>ms</span><span id="deltaChartLabel">—</span></div>
         <canvas id="deltaNtpPtpChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
+        <div class="chart-sub">Δ(LTC − PTP) adj</div>
+        <div class="chart-hdr"><span>ms</span><span id="ltcDeltaLabel">—</span></div>
+        <canvas id="ltcDeltaChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
       </div>
 
       <div class="chart-section">
-        <h4>LTC</h4>
-        <div class="smalltime" style="margin-bottom:6px;">{config.LTC_ALSA_DEVICE}</div>
+        <h4>LTC <small style="font-size:9px;font-weight:400;text-transform:none;opacity:.55;">({config.LTC_ALSA_DEVICE})</small></h4>
         <div class="ledWrap">
           <div id="ltcLedMeter" class="ledMeter"></div>
           <div id="ltcLevelText" class="ledText">—</div>
@@ -333,9 +335,6 @@ def ui_html() -> str:
         <div class="chart-sub">Audio Level History (RMS)</div>
         <div class="chart-hdr"><span>dBFS</span><span id="ltcLevelLabel">—</span></div>
         <canvas id="ltcLevelChart" style="width:100%;height:45px;display:block;border-radius:6px;"></canvas>
-        <div class="chart-sub">Δ(LTC − PTP) adj</div>
-        <div class="chart-hdr"><span>ms</span><span id="ltcDeltaLabel">—</span></div>
-        <canvas id="ltcDeltaChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
       </div>
 
     </div>
@@ -427,7 +426,7 @@ def ui_html() -> str:
   const _cDelta   = _makeChart('deltaNtpPtpChart', 'deltaChartLabel', {{
     centerZero:true,  niceScaleFn:_niceMs,  fmtScale:_fmtMs }});
   const _cLtcDb   = _makeChart('ltcLevelChart',    'ltcLevelLabel',   {{
-    centerZero:false, fixedMin:-60, fixedMax:0,
+    centerZero:false, fixedMin:-60, fixedMax:0, gridN:2,
     fmtScale: v => v.toFixed(0),
     colorFn:  v => v >= -6 ? 'rgba(255,80,80,.85)' : v >= -18 ? 'rgba(255,200,50,.85)' : 'rgba(80,200,120,.85)' }});
   const _cLtcDelta = _makeChart('ltcDeltaChart',   'ltcDeltaLabel',   {{
@@ -473,20 +472,21 @@ def ui_html() -> str:
     const range = rMax - rMin || 1;
     const yFor  = v => MT + plotH * (1 - (v - rMin) / range);
     // grid lines + Y-axis labels
+    const gN = o.gridN ?? 4;
     ctx.save();
     ctx.setLineDash([2, 3]);
     ctx.lineWidth = 0.75;
     ctx.font = '9px monospace';
     ctx.textAlign = 'right';
-    for(let i = 0; i <= 4; i++) {{
-      const gv = rMin + range * i / 4;
+    for(let i = 0; i <= gN; i++) {{
+      const gv = rMin + range * i / gN;
       const gy = yFor(gv);
       const z  = Math.abs(gv) < range * 1e-4;
       ctx.strokeStyle = z ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.11)';
       ctx.beginPath(); ctx.moveTo(ML, gy); ctx.lineTo(cssW, gy); ctx.stroke();
       if(o.fmtScale) {{
         ctx.fillStyle = z ? 'rgba(255,255,255,0.62)' : 'rgba(255,255,255,0.40)';
-        ctx.textBaseline = i === 0 ? 'bottom' : (i === 4 ? 'top' : 'middle');
+        ctx.textBaseline = i === 0 ? 'bottom' : (i === gN ? 'top' : 'middle');
         ctx.fillText(o.fmtScale(gv), ML - 3, gy);
       }}
     }}
