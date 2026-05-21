@@ -332,7 +332,10 @@ def ui_html() -> str:
         </div>
         <div class="chart-sub">Audio Level History (RMS)</div>
         <div class="chart-hdr"><span>dBFS</span><span id="ltcLevelLabel">—</span></div>
-        <canvas id="ltcLevelChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
+        <canvas id="ltcLevelChart" style="width:100%;height:45px;display:block;border-radius:6px;"></canvas>
+        <div class="chart-sub">Δ(LTC − PTP) adj</div>
+        <div class="chart-hdr"><span>ms</span><span id="ltcDeltaLabel">—</span></div>
+        <canvas id="ltcDeltaChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
       </div>
 
     </div>
@@ -356,6 +359,7 @@ def ui_html() -> str:
   let srvLocalMs = null;   // browser Date.now() when API was received (monotonic guard)
   let lastApiMs  = null;   // browser Date.now() on every successful API response
   const _pageLoadMs = Date.now();
+  let _slowN = 0;          // slow-tick counter: delta text DOM writes gated to ~1 Hz
   let ptpCanTick = false;
 
   // EMA smoothing for rapidly-changing display values (α=0.05 ≈ 20-sample window)
@@ -425,7 +429,9 @@ def ui_html() -> str:
   const _cLtcDb   = _makeChart('ltcLevelChart',    'ltcLevelLabel',   {{
     centerZero:false, fixedMin:-60, fixedMax:0,
     fmtScale: v => v.toFixed(0),
-    colorFn:  v => v >= -6 ? 'rgba(255,80,80,.85)' : v >= -20 ? 'rgba(255,200,50,.85)' : 'rgba(80,200,120,.85)' }});
+    colorFn:  v => v >= -6 ? 'rgba(255,80,80,.85)' : v >= -18 ? 'rgba(255,200,50,.85)' : 'rgba(80,200,120,.85)' }});
+  const _cLtcDelta = _makeChart('ltcDeltaChart',   'ltcDeltaLabel',   {{
+    centerZero:true,  niceScaleFn:_niceMs,  fmtScale:_fmtMs }});
 
   function _sampleChart(chart, value) {{
     if(value == null || !isFinite(value)) return false;
@@ -524,7 +530,7 @@ def ui_html() -> str:
 
   function _redrawAllCharts() {{
     _drawBarChart(_cPtpOff); _drawBarChart(_cNtpOff);  _drawBarChart(_cNtpFreq);
-    _drawBarChart(_cDelta);  _drawBarChart(_cLtcDb);
+    _drawBarChart(_cDelta);  _drawBarChart(_cLtcDb);   _drawBarChart(_cLtcDelta);
   }}
 
   // Very light EMA on 7-seg display timestamps to damp second-boundary flicker.
@@ -950,15 +956,22 @@ function renderLedMeter(ledPeak){{
   }}
 
   async function pollApi(){{
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), 3000);
     try{{
-      const r = await fetch('/api/status', {{cache:'no-store'}});
+      const r = await fetch('/api/status', {{cache:'no-store', signal:ctrl.signal}});
       if(!r.ok) throw new Error('http '+r.status);
       const data = await r.json();
       applyApi(data);
     }}catch(e){{}}
+    finally{{ clearTimeout(tid); }}
   }}
 
   function uiTick(){{
+    // Slow gate: delta text DOM writes fire ~1 Hz regardless of uiRefreshMs
+    _slowN++;
+    const _slowTick = (_slowN % Math.max(1, Math.round(1000 / uiRefreshMs)) === 0);
+    if(_slowTick) _slowN = 0;
     // Connection-lost badge: show when no successful API response for >4 s
     {{
       const elapsed = Date.now() - (lastApiMs ?? _pageLoadMs);
@@ -1073,7 +1086,7 @@ function renderLedMeter(ledPeak){{
       }} else {{
         _emaDeltaNtpPtp = null;
       }}
-      els('deltaLine').textContent = _emaDeltaNtpPtp != null
+      if(_slowTick) els('deltaLine').textContent = _emaDeltaNtpPtp != null
         ? 'Δ(NTP-PTP): ' + _emaDeltaNtpPtp.toFixed(3) + ' ms' : 'Δ(NTP-PTP): —';
       if(st.ptp_valid) _sampleChart(_cDelta, _emaDeltaNtpPtp);
 
@@ -1091,26 +1104,35 @@ function renderLedMeter(ledPeak){{
           const ltcCorr = ltcTod - alsaDelayMs;
           _emaDeltaLtcAdj = _ema(_emaDeltaLtcAdj, wrapDeltaMs(ltcCorr - ptpTodLocal));
           _emaDeltaLtcRaw = _ema(_emaDeltaLtcRaw, wrapDeltaMs(ltcCorr - ptpTodUtc));
-          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + _emaDeltaLtcAdj.toFixed(3) + ' ms';
-          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + _emaDeltaLtcRaw.toFixed(3) + ' ms';
+          if(_slowTick) {{
+            els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + _emaDeltaLtcAdj.toFixed(3) + ' ms';
+            els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + _emaDeltaLtcRaw.toFixed(3) + ' ms';
+          }}
+          if(st.ptp_valid) _sampleChart(_cLtcDelta, _emaDeltaLtcAdj);
         }} else {{
           _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
-          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+          if(_slowTick) {{
+            els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
+            els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+          }}
         }}
       }} else {{
         _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
-        els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-        els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+        if(_slowTick) {{
+          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
+          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+        }}
       }}
     }} else {{
       _smPtpMs = null;
       _emaDeltaNtpPtp = null; _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
       renderSevenSeg(els('ptpTimeSegs'), null);
       {{const _pb=els('ptpTzBadge'); if(_pb){{_pb.textContent='—'; _pb.className='tzBadge';}}}}
-      els('deltaLine').textContent = 'Δ(NTP-PTP): —';
-      els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-      els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+      if(_slowTick) {{
+        els('deltaLine').textContent = 'Δ(NTP-PTP): —';
+        els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
+        els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+      }}
     }}
   }}
 
@@ -1165,11 +1187,11 @@ function renderLedMeter(ledPeak){{
 
   setInterval(uiTick, uiRefreshMs);
   setInterval(pollApi, apiPollMs);
-  setInterval(pollLtcLevel, 200);
+  setInterval(pollLtcLevel, 500);
 
   if(window.ResizeObserver) {{
     const _ro = new ResizeObserver(() => _redrawAllCharts());
-    ['ptpOffsetChart','ntpOffsetChart','ntpFreqChart','deltaNtpPtpChart','ltcLevelChart']
+    ['ptpOffsetChart','ntpOffsetChart','ntpFreqChart','deltaNtpPtpChart','ltcLevelChart','ltcDeltaChart']
       .forEach(id => {{ const el = document.getElementById(id); if(el) _ro.observe(el); }});
   }}
 

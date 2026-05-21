@@ -304,6 +304,11 @@ class StatusBus:
                        self._roll_ltc_loss, self._roll_ltc_decode, self._roll_ltc_jump):
                 rc._q.clear()
             self._sum = Summaries()
+            # Re-seed LTC delta-tracked totals so the very next update_ltc()
+            # doesn't fire false events for already-counted jumps/decode errors.
+            if self._ltc is not None:
+                self._sum.ltc_decode_errors_total = self._ltc.decode_errors_total
+                self._sum.ltc_jumps_total = int(getattr(self._ltc, "jumps_total", 0))
 
     def snapshot(self, meta: Dict[str, Any]) -> Dict[str, Any]:
         db_meta = self._db.meta() if self._db else None
