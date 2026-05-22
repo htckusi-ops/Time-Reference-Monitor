@@ -1842,6 +1842,306 @@ Das Script kann per Cron (z.B. alle 60 s) oder als systemd-Timer ausgeführt wer
 
 ---
 
+### A11 — PTP-Capture und Wireshark-Analyse
+
+#### Capture starten und PCAP herunterladen
+
+Im TRM-Dashboard auf **«PTP Capture»** klicken (oder direkt `/tcpdump` aufrufen). Das Live-Terminal zeigt PTP-Pakete farblich hervorgehoben in Echtzeit. Sobald ausreichend Daten gesammelt sind (empfohlen: mind. 30–60 s im eingeschwungenen Betrieb), den **«Download PCAP»**-Button klicken.
+
+Die PCAP-Datei enthält:
+- UDP-Port 319 (Event Messages: Sync, Delay_Req, Pdelay_Req/Resp)
+- UDP-Port 320 (General Messages: Announce, Follow_Up, Management)
+- EtherType 0x88F7 (Layer-2 PTP, falls im Netz vorhanden)
+
+#### Wireshark: Öffnen und filtern
+
+```
+# Nur PTP-Traffic anzeigen
+ptp2
+
+# Nur Sync-Nachrichten (messageType == 0)
+ptp2 && ptp.v2.messagetype == 0x0
+
+# Nur Announce-Nachrichten (Grandmaster-Erkennung)
+ptp2 && ptp.v2.messagetype == 0xb
+
+# PTP auf bestimmter Domain
+ptp2 && ptp.v2.domain == 0
+
+# Nur von bestimmter Clock-ID
+ptp2 && ptp.v2.clockidentity == ec:46:70:ff:fe:00:11:22
+
+# Path-Delay-Nachrichten
+ptp2 && (ptp.v2.messagetype == 0x2 || ptp.v2.messagetype == 0x3)
+```
+
+**Nützliche Wireshark-Spalten** (rechtsklick auf Spaltenheader → «Column Preferences»):
+
+| Spalte | Feldname |
+|--------|---------|
+| Relative Time | `frame.time_relative` |
+| Message Type | `ptp.v2.messagetype` |
+| Sequence ID | `ptp.v2.sequenceid` |
+| Domain | `ptp.v2.domain` |
+| Clock ID | `ptp.v2.clockidentity` |
+| Correction Field (ns) | `ptp.v2.correctionfield` |
+
+**Statistics → IO Graph** zeigt Paketrate im Zeitverlauf — Lücken deuten auf Netzwerkprobleme oder GM-Ausfall hin.
+
+**Statistics → Expert Information** listet alle Retransmissions, Resets und Anomalien — bei PTP besonders auf «Out-of-Order» und «Duplicate» achten.
+
+#### tshark: Kommandozeilen-Analyse
+
+```bash
+# Alle PTP-Nachrichten auflisten (Typ, Seq-ID, Timestamp)
+tshark -r capture.pcap -Y ptp2 \
+  -T fields -e frame.time_epoch -e ptp.v2.messagetype -e ptp.v2.sequenceid \
+  -E separator=, -E header=y
+
+# Grandmaster-Identität aller Announce-Nachrichten
+tshark -r capture.pcap -Y "ptp2 && ptp.v2.messagetype==0xb" \
+  -T fields -e frame.time_epoch -e ptp.v2.mm.grandmasteridentity \
+  -E header=y | sort -k2 | uniq -c -f1
+
+# Sync-Intervall-Jitter: Zeitdifferenzen zwischen aufeinanderfolgenden Sync-Paketen
+tshark -r capture.pcap -Y "ptp2 && ptp.v2.messagetype==0x0" \
+  -T fields -e frame.time_epoch | awk 'prev{printf "%.6f\n",$1-prev} {prev=$1}'
+
+# Domains im Capture zählen
+tshark -r capture.pcap -Y ptp2 -T fields -e ptp.v2.domain | sort | uniq -c
+
+# Two-Step-Flag prüfen (Follow_Up nötig → 1, One-Step → 0)
+tshark -r capture.pcap -Y "ptp2 && ptp.v2.messagetype==0x0" \
+  -T fields -e ptp.v2.flags.twostep | sort | uniq -c
+```
+
+#### Python/Scapy: Sync-Jitter-Berechnung
+
+```python
+#!/usr/bin/env python3
+"""ptp_sync_jitter.py — Sync-Intervall-Jitter aus PCAP berechnen"""
+from scapy.all import rdpcap, PTP
+import statistics, sys
+
+pkts = rdpcap(sys.argv[1])
+sync_times = [float(p.time) for p in pkts
+              if p.haslayer(PTP) and p[PTP].messageType == 0]
+
+if len(sync_times) < 2:
+    print("Zu wenige Sync-Pakete"); sys.exit(1)
+
+intervals = [sync_times[i+1] - sync_times[i] for i in range(len(sync_times)-1)]
+intervals_ms = [x * 1000 for x in intervals]
+
+print(f"Sync-Pakete:       {len(sync_times)}")
+print(f"Intervall Mittel:  {statistics.mean(intervals_ms):.3f} ms")
+print(f"Intervall Median:  {statistics.median(intervals_ms):.3f} ms")
+print(f"Std-Abw. (Jitter): {statistics.stdev(intervals_ms):.3f} ms")
+print(f"Min / Max:         {min(intervals_ms):.3f} / {max(intervals_ms):.3f} ms")
+```
+
+```bash
+pip install scapy
+python3 ptp_sync_jitter.py capture.pcap
+```
+
+**Interpretation:** Jitter > 0,5 ms bei IEEE 1588-2008 (1 s Intervall) deutet auf Switch-Überlast oder fehlendes TC/BC hin. Bei Broadcast-Infrastruktur mit BC: Jitter typisch < 50 µs.
+
+---
+
+### A12 — LTC-Signalanalyse mit externen Werkzeugen
+
+#### WAV-Datei herunterladen
+
+Im TRM-Dashboard **«Spectrum…»** öffnen, Dauer wählen (5–60 s), **«Generate»** klicken, dann **«Download WAV»**. Die WAV-Datei enthält die Rohaudiodaten der LTC-Aufnahme (48 kHz, Mono, 16 bit oder je nach `arecord`-Konfiguration).
+
+#### Audacity: Visuelle Analyse
+
+1. **Datei → Öffnen** → WAV importieren
+2. **Ansicht → Zoom In** (Ctrl+1) bis einzelne Bits sichtbar sind — LTC erscheint als Bi-Phase-Mark-Code mit typisch 2400 Nulldurchgängen/s bei 25 fps
+3. **Clipping prüfen:** Waveform-Anzeige → rote Linien am oberen/unteren Rand = Übersteuerung → LTC-Decoder-Fehler wahrscheinlich
+4. **Analysieren → Plot Spectrum:** 
+   - Algorithmus: Welch, Fenstergrösse 4096
+   - LTC bei 25 fps hat Energie zwischen 800 Hz und 2400 Hz (Grundfrequenz = fps × 2 × Bitrate/fps)
+   - Peak bei ~1200 Hz = typisches LTC-Spektrum bei 25 fps
+5. **Analysieren → Stille finden:** Dropouts werden als Stille-Segmente erkannt
+6. **RMS messen:** Spur markieren → Analysieren → Stärke-Statistiken → RMS-Wert (Ziel: −20 bis −6 dBFS)
+
+#### sox: Kommandozeilenanalyse
+
+```bash
+# Grundlegende Statistiken (RMS, Peak, Clipping)
+sox ltc_recording.wav -n stat 2>&1
+
+# Spektrogramm als PNG (X=Zeit, Y=Frequenz, Farbe=Pegel)
+sox ltc_recording.wav -n spectrogram -o ltc_spectrogram.png
+
+# Bandpassfilter auf LTC-Bereich (800–2400 Hz) und Statistik
+sox ltc_recording.wav filtered.wav sinc 800-2400
+sox filtered.wav -n stat 2>&1
+
+# In Segmente aufteilen (hier: 5-Sekunden-Segmente)
+sox ltc_recording.wav segment_%03d.wav trim 0 5 : newfile : restart
+
+# Stille (Dropouts) erkennen: Pause länger als 100 ms unter −40 dBFS
+sox ltc_recording.wav -n silence 1 0.1 -40d 1 0.1 -40d stat 2>&1
+
+# Frequenzanalyse via FFT ausgeben
+sox ltc_recording.wav -n stat -freq 2>&1 | head -40
+```
+
+#### ltcdump: LTC aus WAV dekodieren
+
+```bash
+# ltcdump installieren (Debian/Ubuntu/Raspberry Pi OS)
+sudo apt-get install ltcsmpte
+
+# WAV direkt dekodieren (gibt Timecodes + User Bits aus)
+ltcdump ltc_recording.wav
+
+# Mit expliziter Framerate
+ltcdump -f 25 ltc_recording.wav
+
+# Nur Frames mit Datum (User Bits) ausgeben
+ltcdump ltc_recording.wav | grep -E "^[0-9]{4}-"
+```
+
+#### ffmpeg: Konvertierung und Vorverarbeitung
+
+```bash
+# WAV auf Mono reduzieren (falls Stereo-Aufnahme)
+ffmpeg -i ltc_stereo.wav -ac 1 ltc_mono.wav
+
+# Resample auf 48000 Hz (ltcdump-kompatibel)
+ffmpeg -i ltc_input.wav -ar 48000 ltc_48k.wav
+
+# Aus Audio-Interface direkt aufnehmen (alternativ zu TRM-Spektrum)
+ffmpeg -f alsa -i hw:2,0 -t 30 -ar 48000 -ac 1 ltc_30s.wav
+```
+
+#### Python (numpy/scipy): RMS, FFT und LTC-Band-SNR
+
+```python
+#!/usr/bin/env python3
+"""ltc_analyse.py — RMS, Peak-Frequenz und LTC-Band-SNR aus WAV"""
+import sys, numpy as np, scipy.io.wavfile as wav, scipy.signal as sig
+
+rate, data = wav.read(sys.argv[1])
+if data.ndim > 1:
+    data = data[:, 0]          # Mono: ersten Kanal nehmen
+data = data.astype(np.float64) / np.iinfo(data.dtype).max
+
+# RMS in dBFS
+rms = np.sqrt(np.mean(data**2))
+rms_dbfs = 20 * np.log10(rms) if rms > 0 else -np.inf
+peak_dbfs = 20 * np.log10(np.max(np.abs(data))) if np.max(np.abs(data)) > 0 else -np.inf
+print(f"RMS:        {rms_dbfs:.1f} dBFS")
+print(f"Peak:       {peak_dbfs:.1f} dBFS")
+print(f"Clipping:   {'JA' if peak_dbfs >= -0.1 else 'nein'}")
+
+# FFT: Peak-Frequenz im LTC-Band (800–2400 Hz)
+freqs, psd = sig.welch(data, rate, nperseg=4096)
+ltc_band = (freqs >= 800) & (freqs <= 2400)
+peak_freq = freqs[ltc_band][np.argmax(psd[ltc_band])]
+print(f"Peak-Freq:  {peak_freq:.0f} Hz (LTC-Band 800–2400 Hz)")
+
+# SNR: LTC-Band vs. Rest
+band_power = np.sum(psd[ltc_band])
+noise_power = np.sum(psd[~ltc_band & (freqs > 20)])
+snr = 10 * np.log10(band_power / noise_power) if noise_power > 0 else np.inf
+print(f"Band-SNR:   {snr:.1f} dB")
+print(f"Samplerate: {rate} Hz, Samples: {len(data)}, Dauer: {len(data)/rate:.1f} s")
+```
+
+```bash
+pip install numpy scipy
+python3 ltc_analyse.py ltc_recording.wav
+```
+
+**Interpretation:**
+
+| Messwert | Gut | Warnung | Problem |
+|----------|-----|---------|---------|
+| RMS | −20 bis −6 dBFS | −30 bis −20 dBFS | < −30 oder > −3 dBFS |
+| Peak | < −3 dBFS | −3 bis −1 dBFS | ≥ −1 dBFS (Clipping) |
+| Band-SNR | > 20 dB | 10–20 dB | < 10 dB |
+| Peak-Freq | nahe fps × 96 Hz | ±200 Hz Abweichung | kein klarer Peak |
+
+---
+
+### A13 — KPI-Referenz für Dauerbetrieb
+
+Die folgende Tabelle listet alle empfohlenen KPIs für ein automatisiertes Monitoring (PRTG, Zabbix, Grafana) mit Berechnungsformel, API-Quelle und Schwellwerten.
+
+| KPI | Formel / Quelle | API-Feld | Gut | Warn | Alarm |
+|-----|----------------|----------|-----|------|-------|
+| **PTP Offset** | Absolutwert Offset zu GM | `status.offset_ns` | < 1 µs | 1–10 µs | > 10 µs |
+| **PTP Path Delay** | Mittlere Laufzeit PTP-Pakete | `status.mean_path_delay_ns` | < 10 µs | 10–100 µs | > 100 µs |
+| **PTP Verfügbarkeit** | % Zeit mit `status = "locked"` | `status.status == "locked"` | > 99,9 % | 99–99,9 % | < 99 % |
+| **GM-Stabilität** | Anzahl GM-Wechsel / Stunde | `meta.summaries_rolling.gm_changes_rolling` | 0 | 1–2 | ≥ 3 |
+| **GM Clock-Klasse** | Klasse des Grandmaster | `status.clock_class` | 6 (GPS-locked) | 7–52 | ≥ 135 |
+| **NTP Offset** | Systemoffset zu NTP-Server | `ntp.system_offset_s × 1000` ms | < 5 ms | 5–50 ms | > 50 ms |
+| **NTP Sync-Status** | `status == "synced"` | `ntp.status` | synced | — | not_synced / stale |
+| **NTP Frequency** | Frequenzfehler der Systemuhr | `ntp.frequency_ppm` | < 5 ppm | 5–50 ppm | > 50 ppm |
+| **LTC Präsenz** | LTC dekodierbar | `ltc.present` | true | — | false |
+| **LTC Dropouts / h** | Dropout-Events im Rollfenster | `meta.summaries_rolling.ltc_dropouts_rolling` | 0 | 1–5 | > 5 |
+| **LTC Jump-Rate / h** | Timecode-Sprünge > Toleranz | `meta.summaries_rolling.ltc_jumps_rolling` | 0 | 1–3 | > 3 |
+| **LTC Audio Level** | RMS-Pegel des LTC-Signals | `ltc.level_dbfs` | −20 bis −6 | −30 bis −20 | < −30 oder > −3 |
+| **Δ(NTP − PTP)** | NTP-Systemoffset minus PTP-Offset | `meta.delta_ntp_ptp_ms` | < 5 ms | 5–20 ms | > 20 ms |
+| **Δ(LTC − PTP)** | LTC-Timecode minus PTP-Sekunde | `meta.delta_ltc_ptp_ms` | < 100 ms | 100–500 ms | > 500 ms |
+| **Alarms Rolling** | Alarme im konfigurierten Zeitfenster | `meta.summaries_rolling.alarms_rolling` | 0 | 1–5 | > 5 |
+| **Error Events / h** | Alle Fehlerereignisse | `meta.summaries_rolling.errors_rolling` | 0 | 1–10 | > 10 |
+
+**Hinweise zur Berechnung in PRTG:**
+
+- **Verfügbarkeit:** Per Custom HTTP Sensor + Script über mehrere Intervalle mitteln; alternativ PRTG Uptime-Sensor auf den TRM-Dienst.
+- **GM-Stabilität:** `gm_changes_rolling` zählt Wechsel im konfigurierten Fenster (`--gm-window-s`, Standard 86400 s = 1 Tag). Schwellwert auf > 0 setzen für sofortige Alarmierung.
+- **Δ-Werte:** Nicht immer direkt im API vorhanden — können client-seitig aus `offset_ns` (PTP) und `system_offset_s` (NTP) berechnet werden.
+- **LTC Audio Level:** Wird nur aktualisiert, wenn LTC-Decoder läuft (`ltc.enabled == true`). Bei deaktiviertem LTC ignorieren.
+
+**Beispiel: PRTG-Script mit allen KPIs**
+
+```bash
+#!/bin/bash
+# prtg_full.sh — alle TRM-KPIs als PRTG HTTP Push Data
+TRM_HOST="raspberrypi.local:8088"
+PRTG_URL="http://prtg.example.com/api/push.htm?psn=TOKEN&content="
+
+d=$(curl -sf "http://$TRM_HOST/api/status") || { echo "API unreachable"; exit 1; }
+P() { echo "$d" | python3 -c "import sys,json; d=json.load(sys.stdin); print($1)"; }
+
+off_ns=$(P   "abs(d['status'].get('offset_ns') or 0)")
+path_ns=$(P  "d['status'].get('mean_path_delay_ns') or 0")
+locked=$(P   "1 if d['status'].get('status')=='locked' else 0")
+gm_chg=$(P   "d['meta']['summaries_rolling'].get('gm_changes_rolling',0)")
+clk_cls=$(P  "d['status'].get('clock_class') or 255")
+ntp_ok=$(P   "1 if d['ntp'].get('status')=='synced' else 0")
+ntp_ms=$(P   "round(abs((d['ntp'].get('system_offset_s') or 0)*1000),3)")
+ntp_ppm=$(P  "abs(d['ntp'].get('frequency_ppm') or 0)")
+ltc_ok=$(P   "1 if d['ltc'].get('present') else 0")
+ltc_db=$(P   "d['ltc'].get('level_dbfs') or -99")
+alarms=$(P   "d['meta']['summaries_rolling'].get('alarms_rolling',0)")
+
+json="{\"prtg\":{\"result\":["
+json+=" {\"channel\":\"PTP Offset ns\",\"value\":$off_ns},"
+json+=" {\"channel\":\"PTP Path Delay ns\",\"value\":$path_ns},"
+json+=" {\"channel\":\"PTP Locked\",\"value\":$locked},"
+json+=" {\"channel\":\"GM Changes Rolling\",\"value\":$gm_chg},"
+json+=" {\"channel\":\"GM Clock Class\",\"value\":$clk_cls},"
+json+=" {\"channel\":\"NTP Synced\",\"value\":$ntp_ok},"
+json+=" {\"channel\":\"NTP Offset ms\",\"value\":$ntp_ms},"
+json+=" {\"channel\":\"NTP Freq Error ppm\",\"value\":$ntp_ppm},"
+json+=" {\"channel\":\"LTC Present\",\"value\":$ltc_ok},"
+json+=" {\"channel\":\"LTC Level dBFS\",\"value\":$ltc_db},"
+json+=" {\"channel\":\"Alarms Rolling\",\"value\":$alarms}"
+json+="]}}"
+
+enc=$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$json")
+curl -sf "${PRTG_URL}${enc}" && echo "OK" || echo "Push fehlgeschlagen"
+```
+
+---
+
 ## Systemvergleich: TRM vs. professionelle Messgeräte
 
 Dieser Abschnitt positioniert den Time Reference Monitor ehrlich gegenüber professionellen Broadcast-Messgeräten wie Phabrix Qx/SxE, Tektronix SPG8000A/TSG200, Leader LV5600, Gennum/Semtech-basierte Timing-Analyzer und Meinberg LANTIME.
