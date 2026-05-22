@@ -1,6 +1,9 @@
 Time Reference Monitor – Studio Bundeshaus
 Bedienungsanleitung (DE)
-Stand: 2026-01-12
+Stand: 2026-05-22
+
+Hinweis: Diese Anleitung entspricht einem älteren Stand. Die aktuelle vollständige
+Dokumentation befindet sich in README.md im Repository-Root.
 
 1. Zweck / Überblick
 -------------------
