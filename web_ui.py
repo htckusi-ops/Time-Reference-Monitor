@@ -144,14 +144,14 @@ def ui_html() -> str:
           <div class="timeStatus alarm" id="ptpStatusBadge">NO PTP SYNC</div>
           <div class="tzBadge" id="ptpTzBadge">—</div>
         </div>
-        <div class="seg-wrap" id="ptpTimeSegs" style="opacity:0.18">00:00:00.00</div>
+        <div class="seg-wrap" id="ptpTimeSegs" style="opacity:0.18">00:00:00.0</div>
 
         <div class="timeLabel">NTP</div>
         <div style="display:flex;flex-direction:column;gap:3px;">
           <div class="timeStatus muted" id="ntpStatusBadge">—</div>
           <div class="tzBadge" id="ntpTzBadge">—</div>
         </div>
-        <div class="seg-wrap" id="ntpTimeSegs" style="opacity:0.18">00:00:00.00</div>
+        <div class="seg-wrap" id="ntpTimeSegs" style="opacity:0.18">00:00:00.0</div>
 
         <div class="timeLabel">LTC</div>
         <div style="display:flex;flex-direction:column;gap:3px;">
@@ -615,7 +615,7 @@ function renderLedMeter(ledPeak){{
     // Use same-width digit-only placeholder so the Seg7 font doesn't resize the
     // grid column when switching between inactive and live state.
     // LTC passes '00:00:00:00' (frame separator); PTP/NTP use '00:00:00.00' (ms).
-    el.textContent = timeStr || placeholder || '00:00:00.00';
+    el.textContent = timeStr || placeholder || '00:00:00.0';
     el.style.opacity = timeStr ? '' : '0.18';
   }}
 
@@ -1009,8 +1009,8 @@ function renderLedMeter(ledPeak){{
       const srvTzOffS = (meta.tz_offset_s != null) ? meta.tz_offset_s : 0;
       const dispNtpLocal = new Date(_smNtpMs + srvTzOffS * 1000);
       const nh = dispNtpLocal.getUTCHours(), nm = dispNtpLocal.getUTCMinutes(), ns2 = dispNtpLocal.getUTCSeconds();
-      const ncs = Math.floor(dispNtpLocal.getUTCMilliseconds() / 10);
-      renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
+      const nt = Math.floor(dispNtpLocal.getUTCMilliseconds() / 100);
+      renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+nt);
       _dateNtp = dispNtpLocal.toISOString().slice(0,10); _updDate();
       const tzOffMin = Math.round(srvTzOffS / 60);
       const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
@@ -1094,8 +1094,8 @@ function renderLedMeter(ledPeak){{
       const srvTzOffS = (meta.tz_offset_s != null) ? meta.tz_offset_s : 0;
       const dispPtpLocal = new Date(_smPtpMs + srvTzOffS * 1000);
       const ph = dispPtpLocal.getUTCHours(), pm = dispPtpLocal.getUTCMinutes(), ps = dispPtpLocal.getUTCSeconds();
-      const pcs = Math.floor(dispPtpLocal.getUTCMilliseconds() / 10);
-      renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
+      const pt = Math.floor(dispPtpLocal.getUTCMilliseconds() / 100);
+      renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pt);
       {{const _pb=els('ptpTzBadge'); if(_pb){{const _to=(meta.tz_offset_s!=null)?meta.tz_offset_s:0; const _tm=Math.round(_to/60),_th=Math.floor(Math.abs(_tm)/60),_tmm=Math.abs(_tm)%60; _pb.textContent='UTC'+(_tm>=0?'+':'-')+pad2(_th)+':'+pad2(_tmm); _pb.className=_to!==0?'tzBadge active':'tzBadge';}}}}
 
       // Δ(NTP-PTP) = NTP_time - PTP_time
