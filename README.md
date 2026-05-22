@@ -1666,6 +1666,226 @@ print(json.dumps({"prtg": {"result": channels}}))
 
 ---
 
+## Analyse: Messdaten deuten und Fehler erkennen
+
+Dieser Abschnitt beschreibt, wie die Messwerte des Time Reference Monitor zu interpretieren sind — von einzelnen Zahlenwerten bis hin zu typischen Fehlerbildern.
+
+### A1 — PTP Offset interpretieren (`status.offset_ns`)
+
+Der PTP-Offset ist der wichtigste Einzelwert: Er gibt an, wie weit die lokale Systemzeit vom Grandmaster abweicht.
+
+| Bereich | Bewertung | Typische Ursache |
+|---------|-----------|-----------------|
+| 0…±500 ns | Exzellent | Hardware-Timestamps, direkter GM-Link (kein Switch) |
+| ±500 ns…±5 µs | Gut | Managed Switch mit Transparent Clock oder Boundary Clock |
+| ±5 µs…±50 µs | Akzeptabel | Software-Timestamps (RPi 4) oder mehrere Switch-Hops |
+| > ±50 µs | Problematisch | Network-Congestion, falscher Timestamp-Modus, schlechter GM |
+
+**Hinweis:** Die erreichbare Genauigkeit hängt stark vom eingesetzten Hardware-Typ ab. Ein Raspberry Pi CM5 mit Hardware-Timestamping erzielt unter optimalen Bedingungen < 500 ns; ein RPi 4 ohne Hardware-PTP liegt typischerweise im Bereich ±10–100 µs.
+
+### A2 — Path Delay interpretieren (`status.mean_path_delay_ns`)
+
+Der mittlere Laufzeitverzögerungswert (Round-Trip/2) zwischen TRM und Grandmaster:
+
+| Verhalten | Bewertung | Mögliche Ursache |
+|-----------|-----------|-----------------|
+| Stabil (geringe Schwankung) | Gesund | Normalbetrieb |
+| Plötzlicher Sprung | Untersuchen | Routing-Änderung, Trunk-Failover, Switch-Reboot |
+| Langsam driftend | Beobachten | Temperaturbedingte Asymmetrie, Lastspitzen |
+
+**Asymmetrie:** TRM misst immer Round-Trip/2. Asymmetrien im Netz (unterschiedliche Laufzeiten in Sende- und Empfangsrichtung) sind nicht direkt sichtbar, deuten sich aber an, wenn Δ(NTP−PTP) konstant einseitig ist (immer positiv oder immer negativ).
+
+### A3 — GM Clock Class (`status.gm_clock_class`)
+
+Die Clock Class gibt Auskunft über die Qualität und Rückverfolgbarkeit des Grandmasters:
+
+| Clock Class | Bedeutung |
+|-------------|-----------|
+| 6 | GPS-gesperrt — höchste Güte, Stratum-1-äquivalent |
+| 52 | Arbiträr — nicht auf eine externe Referenz rückverfolgbar |
+| 135 | Holdover — GM im freien Lauf, GPS-Signal verloren |
+| 140 | Default/unklar — schwaches Signal oder undefinierter Zustand |
+| 187 | Degradierter GM — aktiv aber in degradiertem Zustand |
+
+**Empfehlung:** In Broadcast-Produktionsumgebungen sollte die Clock Class dauerhaft 6 sein. Clock Class 135 (Holdover) bedeutet, dass der GM sein GPS-Signal verloren hat und auf dem internen Oszillator läuft — die Qualität nimmt mit der Zeit ab.
+
+### A4 — Δ(NTP−PTP) deuten
+
+Die Differenz zwischen NTP-Offset (chrony) und PTP-Offset zeigt, wie konsistent beide Zeitquellen sind:
+
+| Bereich | Bewertung | Mögliche Ursache |
+|---------|-----------|-----------------|
+| ~0 ms | Sehr gut | PTP und NTP konsistent, chrony synchronisiert korrekt |
+| ±1…±5 ms | Normal | Typische Streuung bei Internet-NTP-Quellen |
+| > ±10 ms | Ungewöhnlich | Falscher NTP-Server, Netzprobleme, GM-Fehler |
+| Konstant einseitig (immer +X ms) | Systematisch | Falscher UTC-Offset im GM, GPS-Antenne nicht synchronisiert |
+
+### A5 — Δ(LTC−PTP) deuten
+
+Die Differenz zwischen dekodiertem LTC-Timecode und PTP-Zeit (nach ALSA-Delay-Kompensation):
+
+| Bereich | Bewertung | Mögliche Ursache |
+|---------|-----------|-----------------|
+| < ±5 ms | Gut | LTC und PTP konsistent, normales ALSA-Delay bereits kompensiert |
+| ±5…±50 ms | Untersuchen | Falscher ALSA-Delay-Wert oder LTC-Generator-Problem |
+| > ±100 ms | Problematisch | LTC-Generator auf falscher Zeitzone oder manuell gesetzt, Datum/TZ-Mismatch |
+| ~ ±500 ms oder ±1000 ms | Klassischer Fehler | Frame-Slip oder UTC/Lokalzeit-Verwechslung |
+
+**Halbe- und Ganzsekunden-Offset:** Ein Δ von genau ±500 ms deutet auf einen Frame-Slip hin (LTC-Generator hat einen Frame verloren oder gewonnen). Ein Δ von ±1000 ms oder einem Vielfachen davon ist ein starker Hinweis auf eine UTC/Lokalzeit-Verwechslung — der LTC-Generator sendet Lokalzeit statt UTC oder umgekehrt.
+
+### A6 — NTP-Frequenzfehler (`ntp.frequency_ppm`)
+
+Der Frequenzfehler des lokalen Quarzoszillators, gemessen und kompensiert von chrony:
+
+| Bereich | Bewertung |
+|---------|-----------|
+| \|f\| < 5 ppm | Gut — stabiler Oszillator |
+| 5…50 ppm | Akzeptabel — normaler Quarzoszillator |
+| > 100 ppm | Uhr driftet stark — prüfen ob chrony noch reguliert oder NTP-Verbindung unterbrochen |
+
+**Hintergrund:** Jeder Quarzoszillator hat eine inhärente Frequenzabweichung von typischerweise ±20–100 ppm. chrony lernt diesen Wert und kompensiert ihn kontinuierlich. Ein plötzlicher Sprung des Frequenzfehlers deutet auf einen Neustart von chrony oder eine deutliche Temperaturänderung hin.
+
+### A7 — LTC-Audiopegel (`/api/ltc/level`, `dbfs_rms`)
+
+Der RMS-Audiopegel des LTC-Eingangssignals in dBFS (Dezibel relativ zu Full Scale):
+
+| Bereich | Bewertung |
+|---------|-----------|
+| −18…−6 dBFS | Optimaler Arbeitsbereich |
+| < −30 dBFS | Zu leise — erhöhte Dekodierungsfehlerrate |
+| > −3 dBFS | Zu laut — Clipping-Artefakte, mögliche Dekodierungsfehler |
+
+**Spektrum:** LTC bei 25 fps liegt im Frequenzband ca. 600 Hz – 2,4 kHz. Das Spektrum-Tool (unter `/spectrum`) zeigt, ob das Signal in diesem Band konzentriert ist oder ob Störsignale (Netzbrumm, Rauschen) vorhanden sind.
+
+### A8 — Typische Fehlerbilder
+
+| Fehlerbild | Typische Events | Ursache | Massnahme |
+|---|---|---|---|
+| PTP fällt periodisch aus | PTP_LOST, PTP_OK im Wechsel | GM-Instabilität, Switch-Problem, Kabel | PTP Capture → Announce-Pakete untersuchen |
+| GM wechselt unerwartet | GM_CHANGED | Zweiter GM im Netz, Priority-Konflikt | PTP Domain Scanner, tcpdump Announce-Pakete |
+| NTP stale, PTP aktiv | NTP_STALE | NTP-Server nicht erreichbar, Firewall | Einstellungen → NTP-Server prüfen |
+| LTC-Sprünge bei Betrieb | LTC_JUMP | LTC-Generator Frame-Slip, Timecode-Reset | LTC Raw Output beobachten, Pegel prüfen |
+| LTC-Dekodierungsfehler | LTC_DECODE_ERROR | Zu leiser Pegel, Kabeldefekt | Spektrum-Analyse, Pegel auf −18…−6 dBFS |
+| Δ(NTP−PTP) wächst langsam | — | chrony hat NTP verloren, Drift | NTP-Status prüfen, frequency_ppm beobachten |
+| Δ(LTC−PTP) ≈ ±1000 ms | — | UTC/Lokalzeit-Verwechslung | LTC-Generator TZ-Setting prüfen |
+| path_delay springt | — | Routing-Änderung im Switch | PTP Capture, Switch-Logs |
+| GM clock_class = 135 | — | GPS-Signal verloren (Holdover) | GM-Hardware und GPS-Antenne prüfen |
+
+### A9 — API-Abfragebeispiele (Shell / curl)
+
+```bash
+# Vollständiger Status-Snapshot
+curl -s http://raspberrypi.local:8088/api/status | python3 -m json.tool
+
+# Nur PTP-Offset (jq)
+curl -s http://raspberrypi.local:8088/api/status | jq '.status.offset_ns'
+
+# Nur Fehlerzähler (Rolling Window)
+curl -s http://raspberrypi.local:8088/api/status | jq '.meta.summaries_rolling'
+
+# LTC-Audiopegel
+curl -s http://raspberrypi.local:8088/api/ltc/level
+
+# Letzten 10 Events
+curl -s http://raspberrypi.local:8088/api/status | jq '.events[:10]'
+
+# Einfaches Health-Check-Script (exit 0 = OK, exit 1 = Alarm)
+curl -sf http://raspberrypi.local:8088/api/status \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); \
+    sys.exit(0 if d['status']['ptp_valid'] and d['ntp']['status']=='synced' else 1)"
+
+# GM Clock Class überwachen
+curl -s http://raspberrypi.local:8088/api/status | jq '.status.gm_clock_class'
+
+# Δ(NTP-PTP) in ms berechnen
+curl -s http://raspberrypi.local:8088/api/status | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+off_ns = d['status'].get('offset_ns') or 0
+ntp_off_s = d['ntp'].get('system_offset_s') or 0
+print(f'Δ(NTP-PTP): {ntp_off_s*1000 - off_ns/1e6:.3f} ms')
+"
+
+# Kontinuierliches Monitoring (alle 5 s)
+watch -n5 "curl -s http://raspberrypi.local:8088/api/status | jq '{ptp_offset_ns:.status.offset_ns, ntp_status:.ntp.status, ltc_present:.ltc.present, alarms:.meta.summaries_rolling.alarms_rolling}'"
+```
+
+### A10 — PRTG: Erweiterte Konfiguration
+
+**Empfohlene Schwellwerte je nach Umgebung:**
+
+| Umgebung | Beschreibung | PTP Offset Warn | PTP Offset Alarm |
+|----------|-------------|----------------|-----------------|
+| Direktlink zu GPS-GM (HW-TS) | Kein Switch, CM4/CM5 | ±200 ns | ±1 µs |
+| 1 Managed Switch (BC/TC) | CM4/CM5, HW-TS | ±2 µs | ±10 µs |
+| Mehrstufige Switch-Topologie | CM4/CM5 | ±10 µs | ±50 µs |
+| Software-Timestamps (RPi 4) | Kein HW-PTP | ±20 µs | ±100 µs |
+
+**PRTG HTTP Push Data Sensor — Bash-Script:**
+
+```bash
+#!/bin/bash
+# prtg_push.sh – push TRM data to PRTG HTTP Push Data Sensor
+TRM_HOST="raspberrypi.local:8088"
+PRTG_PUSH_URL="http://prtg.example.com/api/push.htm?psn=TOKEN&content="
+
+d=$(curl -sf "http://$TRM_HOST/api/status") || { echo "API unreachable"; exit 1; }
+
+off_ns=$(echo "$d" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'].get('offset_ns') or 0)")
+ntp_ok=$(echo "$d" | python3 -c "import sys,json; d=json.load(sys.stdin); print(1 if d['ntp']['status']=='synced' else 0)")
+
+json="{\"prtg\":{\"result\":[{\"channel\":\"PTP Offset ns\",\"value\":$off_ns},{\"channel\":\"NTP Synced\",\"value\":$ntp_ok}]}}"
+curl -sf "${PRTG_PUSH_URL}$(python3 -c "import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))" "$json")"
+```
+
+Das Script kann per Cron (z.B. alle 60 s) oder als systemd-Timer ausgeführt werden und schickt PTP-Offset und NTP-Status direkt in einen PRTG HTTP Push Data Sensor — ohne PRTG-Agent auf dem RPi.
+
+---
+
+## Systemvergleich: TRM vs. professionelle Messgeräte
+
+Dieser Abschnitt positioniert den Time Reference Monitor ehrlich gegenüber professionellen Broadcast-Messgeräten wie Phabrix Qx/SxE, Tektronix SPG8000A/TSG200, Leader LV5600, Gennum/Semtech-basierte Timing-Analyzer und Meinberg LANTIME.
+
+### B1 — Was professionelle Geräte besser können
+
+| Merkmal | Profi-Gerät (Phabrix/Tektronix) | TRM (Raspberry Pi) |
+|---------|--------------------------------|-------------------|
+| Timestamping-Genauigkeit | < 1 ns (dedizierte Hardware, FPGA) | 5–15 ns (CM5 HW-TS) / 10–100 µs (RPi4 SW-TS) |
+| PTP-Protokoll-Tiefenanalyse | Sync-Jitter, Follow_Up-Differenz, Two-Step-Analyse, TC-Kompensation | Offset und Path-Delay via pmc |
+| SDI/Video-Analyse | H-Phase, SC/H, Black Burst, Tri-Level Sync, AES3, MADI | Nicht vorhanden (reine IT-Schicht) |
+| Mehrkanal / parallele Interfaces | Mehrere simultane PTP-Domains, Redundanzpfade | Eine PTP-Domain, ein Interface |
+| Kalibrierung | NIST-rückverfolgbar, Kalibrier-Zertifikat, normkonform | Kein Kalibrier-Zertifikat |
+| Formfaktor | 19"-Rackmount, 1–2 HE, lüfterlos oder mit Lüfter | Raspberry Pi + Tascam USB, ~170 g |
+| Anschaffungskosten | CHF 20'000–80'000+ | CHF 150–400 (RPi + Tascam) |
+| Laufende Kosten | Wartungsvertrag, Kalibrierung (CHF 500–2000/Jahr) | Keine |
+| Einrichtungsaufwand | Hoch (IT-Integration, SNMP-Config) | Moderat (setup.sh, ~30 min) |
+| Support | Herstellersupport, SLA möglich | Community / self-service |
+
+### B2 — Was TRM besser kann oder einzigartig ist
+
+- **Drei Quellen gleichzeitig und korreliert:** Phabrix und Tektronix sind primär PTP/SDI-orientiert. TRM überwacht PTP, NTP und LTC gleichzeitig und berechnet Delta-Werte zwischen allen drei — ein direkter Systemvergleich in einer Ansicht ist mit Profi-Geräten ohne separate Tools nicht ohne Weiteres möglich.
+- **24/7-Hintergrundmonitoring:** Profi-Geräte werden meist manuell am Messplatz bedient. TRM läuft autonom, sendet Alarme über PRTG/API, protokolliert Ereignisse mit Timestamp und erstellt Rolling-Counter für Trend-Erkennung — ohne Benutzereingriff.
+- **Offene REST-API:** Vollständiger Zugriff auf alle Messwerte via JSON, scriptbar, integrierbar in eigene Dashboards, Grafana, PRTG, Zabbix — ohne proprietäre Protokolle oder Lizenzkosten.
+- **Anpassbarkeit:** GPLv3 Quellcode, vollständig anpassbar. Neue Sensoren, andere Schwellwerte, eigene Auswertungen — kein Hersteller-Lock-in.
+- **LTC-Pegel und Spektrum:** Integrierter dBFS-Pegelmesser und on-demand FFT-Spektrogramm für das LTC-Audiosignal — eine Funktion, die in PTP-Profi-Geräten typischerweise fehlt.
+- **Lehrwert und Transparenz:** Alle Berechnungen sind im offenen Python-Code nachvollziehbar. Ideal für Ausbildung und als Referenz für eigene Implementierungen.
+- **Günstiger Redundanzeinsatz:** Für CHF 400 kann ein TRM pro Studio oder Rack installiert werden — dezentrales Monitoring ohne Kostenexplosion. Ein Phabrix Qx pro Standort wäre wirtschaftlich nicht vertretbar.
+
+### B3 — Empfohlene Kombination
+
+TRM und professionelle Messgeräte schliessen sich nicht aus — sie ergänzen sich. Der Time Reference Monitor eignet sich ideal als **permanentes Hintergrundmonitoring-System**: Er läuft rund um die Uhr, erkennt Anomalien frühzeitig, protokolliert Ereignisse mit Timestamp und löst Alarme aus, bevor ein Problem eskaliert. Wenn TRM ein Problem meldet — etwa einen wiederholten GM-Wechsel, einen ansteigenden PTP-Offset-Trend oder ein periodisches LTC-Dropout — kommt das Profi-Gerät ins Spiel: Phabrix Qx oder Tektronix SPG8000A liefern dann die forensische Tiefenanalyse mit Sub-Nanosekunden-Auflösung, Two-Step-Differenzanalyse und SDI-Videodiagnose. TRM ist das **Frühwarnsystem**, das Probleme auffängt; Phabrix/Tektronix erledigen die Ursachenforschung.
+
+### B4 — Bekannte Grenzen von TRM
+
+- **Software-Timestamps (RPi 4):** ±10–100 µs Genauigkeit, abhängig von Systemlast — nicht geeignet für Nanosekunden-genaue Messungen.
+- **pmc-basierte Messung:** Poll-basiert (500 ms), nicht kontinuierlich wie dediziertes Hardware-Timestamping. Kurze Offset-Spitzen zwischen zwei Polls sind unsichtbar.
+- **Kein SDI/HD-SDI-Interface:** TRM sieht nur die IT-Netzwerkschicht (PTP/NTP) und das LTC-Audiosignal. SDI-Videosignale, Black Burst, H-Phase sind nicht messbar.
+- **Kein Kalibrier-Zertifikat:** TRM ist nicht für messtechnisch rückverfolgbare Dokumentation geeignet (keine NIST-Rückverfolgbarkeit, kein ISO-17025-Kalibrierschein).
+- **Ein Interface, eine Domain gleichzeitig:** Kein Multi-Domain-Simultanvergleich; kein redundantes Pfad-Monitoring.
+- **Keine aktive PTP-Rolle:** TRM ist ein reiner Slave/Observer. Es kann nicht als Grandmaster oder Boundary Clock für Testzwecke konfiguriert werden.
+
+---
+
 ## ALSA-Konfiguration (LTC)
 
 Die Datei `rpi/alsa/asound.conf` definiert zwei ALSA-Geräte:
