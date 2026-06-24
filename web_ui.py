@@ -26,6 +26,10 @@ def ui_html() -> str:
       background:rgba(180,20,20,.28); border:1px solid rgba(255,80,80,.55); border-radius:999px;
       padding:5px 16px; font-family:var(--mono); font-size:12px; color:rgba(255,130,130,1);
       animation:_connPulse 1.4s ease-in-out infinite; pointer-events:none; white-space:nowrap; z-index:20;}}
+    .ltc-jump-alarm{{display:none; padding:4px 12px; border-radius:999px;
+      background:rgba(180,20,20,.32); border:1px solid rgba(255,80,80,.65);
+      font-family:var(--mono); font-size:11px; color:rgba(255,160,160,1);
+      animation:_connPulse 1s ease-in-out infinite; white-space:nowrap; cursor:default;}}
     .title{{font-size:22px; font-weight:700; letter-spacing:.2px;}}
     .subtitle{{color:var(--muted); font-size:13px; margin-top:4px;}}
     .pill{{font-family:var(--mono); font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.03); color:var(--muted);}}
@@ -115,6 +119,7 @@ def ui_html() -> str:
     <div class="row">
       <div class="pill" id="pillMeta">—</div>
       <div class="badge"><span class="dot" id="dotState"></span><span id="txtState">—</span></div>
+      <div id="ltcJumpAlarm" class="ltc-jump-alarm" title="LTC jump exceeded alarm threshold. See event log for details.">&#9888;&nbsp;LTC JUMP</div>
       <div class="nav-wrap">
         <div class="nav-btn">&#9776; Menu</div>
         <div class="nav-drop">
@@ -677,7 +682,7 @@ function renderLedMeter(ledPeak){{
     // rolling counts: reflect recent history in the error window;
     // cleared by Reset → top badge follows dotErr after reset
     const roll = meta.summaries_rolling || {{}};
-    if((roll.alarms_rolling ?? 0) > 0) return 'ALARM';
+    if((roll.alarms_rolling ?? 0) > 0 || (roll.ltc_jump_alarms_rolling ?? 0) > 0) return 'ALARM';
     if((roll.warnings_rolling ?? 0) > 0 || (roll.errors_rolling ?? 0) > 0
        || (roll.ltc_decode_errors_rolling ?? 0) > 0) return 'WARN';
 
@@ -752,6 +757,26 @@ function renderLedMeter(ledPeak){{
     els('txtState').textContent = state;
     els('stateLine').textContent = state;
     setDot(els('dotState'), (state==='STARTING'||state==='PAUSED') ? 'WARN' : state);
+
+    // LTC jump alarm bar: visible when ltc_jump_alarms_rolling > 0
+    {{
+      const _lja = els('ltcJumpAlarm');
+      if(_lja) {{
+        const _jAlarms = roll.ltc_jump_alarms_rolling ?? 0;
+        if(_jAlarms > 0) {{
+          const _lastJump = (data.events || []).find(e => e.type === 'LTC_JUMP' && e.severity === 'ALARM');
+          let _jTxt = '⚠\xA0LTC JUMP\xA0(' + _jAlarms + ')';
+          if(_lastJump) {{
+            const _dm = (_lastJump.message || '').match(/Δ\(LTC[−-]PTP\)=([^\s,]+)/);
+            if(_dm) _jTxt += '\xA0—\xA0Δ(LTC−PTP)=' + _dm[1];
+          }}
+          _lja.textContent = _jTxt;
+          _lja.style.display = '';
+        }} else {{
+          _lja.style.display = 'none';
+        }}
+      }}
+    }}
 
     els('ptpValidLine').textContent = String(!!st.ptp_valid);
     els('gmPresentLine').textContent = String(!!st.gm_present);

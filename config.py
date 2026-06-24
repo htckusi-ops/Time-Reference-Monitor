@@ -33,6 +33,9 @@ DEFAULT_NTP_STALE_THRESHOLD_S = 1200
 # pmc timeout
 PMC_TIMEOUT_S = 1.5
 
+# LTC jump alarm threshold: |Δ(LTC−PTP)| or |Δ(LTC−NTP)| above this → ALARM event
+DEFAULT_LTC_JUMP_ALARM_MS = 500.0
+
 LTC_ALSA_DEVICE = "ltc_left_mono"
 LTC_LEVEL_CHANNELS = 1
 # Spectrum (on-demand) – uses RAM tmp dir to avoid SD writes

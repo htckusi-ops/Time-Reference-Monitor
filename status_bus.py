@@ -16,11 +16,81 @@ def utc_iso_ms() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
+# ── LTC jump delta helpers ────────────────────────────────────────────────────
+
+def _ptp_tod_s(iso: Optional[str]) -> Optional[float]:
+    """Extract seconds-of-day from a UTC ISO timestamp string."""
+    if not iso:
+        return None
+    t = iso.find('T')
+    if t < 0:
+        return None
+    s = iso[t + 1:]
+    try:
+        hh, mm, ss = int(s[0:2]), int(s[3:5]), int(s[6:8])
+    except (ValueError, IndexError):
+        return None
+    frac = 0.0
+    if len(s) > 9 and s[8] == '.':
+        end = 9
+        while end < len(s) and s[end].isdigit():
+            end += 1
+        try:
+            frac = float('0.' + s[9:end])
+        except ValueError:
+            pass
+    return float(hh * 3600 + mm * 60 + ss) + frac
+
+
+def _ltc_tod_s(tc: str, fps: int) -> Optional[float]:
+    """Convert LTC timecode HH:MM:SS:FF to seconds of day."""
+    p = tc.split(':')
+    if len(p) != 4:
+        return None
+    try:
+        return int(p[0]) * 3600 + int(p[1]) * 60 + int(p[2]) + int(p[3]) / max(1, fps)
+    except (ValueError, IndexError):
+        return None
+
+
+def _ltc_tz_s(ltc_tz: Optional[str]) -> float:
+    """Parse '±HHMM' LTC timezone string to signed offset in seconds."""
+    if not ltc_tz or len(ltc_tz) < 5:
+        return 0.0
+    try:
+        sign = 1 if ltc_tz[0] == '+' else -1
+        return float(sign * (int(ltc_tz[1:3]) * 3600 + int(ltc_tz[3:5]) * 60))
+    except (ValueError, IndexError):
+        return 0.0
+
+
+def _wrap_delta_s(ds: float) -> float:
+    """Wrap a TOD delta to ±12 h to handle midnight boundary crossings."""
+    day = 86400.0
+    ds %= day
+    return ds - day if ds > day / 2 else ds
+
+
+def _fmt_delta_ms(ms: float) -> str:
+    """Format a millisecond delta as '±NNN ms' or '±Mm SS.SSSs' for large values."""
+    sign = '+' if ms >= 0 else '-'
+    a = abs(ms)
+    if a < 5000.0:
+        return f"{sign}{a:.0f} ms"
+    mins = int(a // 60000)
+    rem = a - mins * 60000
+    secs = rem / 1000.0
+    if mins > 0:
+        return f"{sign}{mins}m {secs:.3f}s"
+    return f"{sign}{secs:.3f}s"
+
+
 class StatusBus:
     def __init__(self, gm_window_s: int, error_window_s: int, startup_grace_s: float, db_writer: Optional[DBWriter],
                  ntp_offset_jump_threshold_s: float = 0.1,
                  ptp_offset_jump_threshold_ns: int = 50_000,
-                 ptp_drift_warn_ppb: float = 300.0):
+                 ptp_drift_warn_ppb: float = 300.0,
+                 ltc_jump_alarm_ms: float = 500.0):
         self._lock = threading.Lock()
 
         self._ptp = PTPStatus()
@@ -41,12 +111,14 @@ class StatusBus:
         self._roll_ltc_loss = RollingCounter(self._error_window_s)
         self._roll_ltc_decode = RollingCounter(self._error_window_s)
         self._roll_ltc_jump = RollingCounter(self._error_window_s)
+        self._roll_ltc_jump_alarm = RollingCounter(self._error_window_s)
 
         self._sum = Summaries()
 
         self._ntp_offset_jump_threshold_s = float(ntp_offset_jump_threshold_s)
         self._ptp_offset_jump_threshold_ns = int(ptp_offset_jump_threshold_ns)
         self._ptp_drift_warn_ppb = float(ptp_drift_warn_ppb)
+        self._ltc_jump_alarm_ms = float(ltc_jump_alarm_ms)
 
         self._last_gm: Optional[str] = None
         self._last_ptp_valid: Optional[bool] = None
@@ -280,18 +352,57 @@ class StatusBus:
                 self._append_event_locked(Event(ts_utc=utc_iso_ms(), severity="WARN", type="LTC_DECODE_ERROR",
                                               message=f"LTC decode errors increased by {delta} (total={ltc.decode_errors_total}).",
                                               suppressed=self._should_suppress_for_state("WARN")))
-            # jumps (time discontinuities)
+            # jumps (time discontinuities) — emit rich event with Δ(LTC−PTP/NTP)
             if getattr(ltc, "jumps_total", 0) > getattr(self._sum, "ltc_jumps_total", 0):
-                delta = int(getattr(ltc, "jumps_total", 0) - getattr(self._sum, "ltc_jumps_total", 0))
+                n_new = int(getattr(ltc, "jumps_total", 0) - getattr(self._sum, "ltc_jumps_total", 0))
                 self._sum.ltc_jumps_total = int(getattr(ltc, "jumps_total", 0))
-                for _ in range(delta):
+                for _ in range(n_new):
                     self._roll_ltc_jump.add()
+
+                fps = max(1, int(float(ltc.fps or "25") or 25))
+                tc_after  = ltc.last_jump_tc_after  or ltc.timecode or "?"
+                tc_before = ltc.last_jump_tc_before or "?"
+                jump_frames = getattr(ltc, "last_jump_delta_frames", 0)
+                jump_ms = jump_frames * 1000.0 / fps
+
+                # Δ(LTC−PTP): convert LTC to UTC using its embedded tz offset
+                tz_off_s = _ltc_tz_s(ltc.ltc_tz)
+                ltc_tod  = _ltc_tod_s(tc_after, fps)
+                ptp_tod  = _ptp_tod_s(self._ptp.ptp_time_utc_iso)
+
+                d_ptp_str = "—"
+                d_ntp_str = "—"
+                is_alarm  = False
+
+                if ltc_tod is not None and ptp_tod is not None:
+                    d_ptp = _wrap_delta_s(ltc_tod - tz_off_s - ptp_tod) * 1000.0
+                    d_ptp_str = _fmt_delta_ms(d_ptp)
+                    if self._ltc_jump_alarm_ms > 0 and abs(d_ptp) > self._ltc_jump_alarm_ms:
+                        is_alarm = True
+
+                    # Δ(LTC−NTP) ≈ Δ(LTC−PTP) − system_offset (avoids second datetime.now())
+                    ntp_off_s = self._ntp.system_offset_s or 0.0
+                    d_ntp = d_ptp - ntp_off_s * 1000.0
+                    d_ntp_str = _fmt_delta_ms(d_ntp)
+                    if self._ltc_jump_alarm_ms > 0 and abs(d_ntp) > self._ltc_jump_alarm_ms:
+                        is_alarm = True
+
+                sev = "ALARM" if is_alarm else "WARN"
+                if is_alarm:
+                    self._sum.ltc_jump_alarms_total += 1
+                    self._roll_ltc_jump_alarm.add()
+
+                msg = (
+                    f"LTC jump: {_fmt_delta_ms(jump_ms)} "
+                    f"({tc_before} → {tc_after}). "
+                    f"Δ(LTC−PTP)={d_ptp_str}, Δ(LTC−NTP)={d_ntp_str}."
+                )
                 self._append_event_locked(Event(
                     ts_utc=utc_iso_ms(),
-                    severity="WARN",
+                    severity=sev,
                     type="LTC_JUMP",
-                    message=f"LTC time jump detected (+{delta}, total={ltc.jumps_total}).",
-                    suppressed=self._should_suppress_for_state("WARN"),
+                    message=msg,
+                    suppressed=self._should_suppress_for_state(sev),
                 ))
 
             self._ltc = ltc
@@ -301,7 +412,8 @@ class StatusBus:
         with self._lock:
             for rc in (self._roll_err, self._roll_warn, self._roll_alarm,
                        self._roll_gm, self._roll_ptp_loss, self._roll_ntp_flap,
-                       self._roll_ltc_loss, self._roll_ltc_decode, self._roll_ltc_jump):
+                       self._roll_ltc_loss, self._roll_ltc_decode, self._roll_ltc_jump,
+                       self._roll_ltc_jump_alarm):
                 rc._q.clear()
             self._sum = Summaries()
             # Re-seed LTC delta-tracked totals so the very next update_ltc()
@@ -323,10 +435,12 @@ class StatusBus:
             roll.ltc_loss_rolling = self._roll_ltc_loss.count()
             roll.ltc_decode_errors_rolling = self._roll_ltc_decode.count()
             roll.ltc_jumps_rolling = self._roll_ltc_jump.count()
+            roll.ltc_jump_alarms_rolling = self._roll_ltc_jump_alarm.count()
 
             return {
                 "meta": {
                     **meta,
+                    "ltc_jump_alarm_ms": self._ltc_jump_alarm_ms,
                     "ts_utc": utc_iso_ms(),
                     "startup_active": self.startup_active() and not self._first_ptp_ok_seen,
                     "paused": self._paused,
