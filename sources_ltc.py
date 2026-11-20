@@ -268,6 +268,7 @@ class LTCMonitor:
             self._fps_i = 25
 
         self._last_tc_frames: Optional[int] = None
+        self._last_tc_str: Optional[str] = None
         self._last_tc_mono: Optional[float] = None
         self._jump_roll = RollingCounter(rolling_window_s)
         # False until the ALSA delay has been probed at least once from _mark_present().
@@ -507,7 +508,11 @@ class LTCMonitor:
                                     with self._lock:
                                         self._status.jumps_total += 1
                                         self._jump_roll.add()
+                                        self._status.last_jump_delta_frames = diff
+                                        self._status.last_jump_tc_before = self._last_tc_str or ""
+                                        self._status.last_jump_tc_after = tc
                         self._last_tc_frames = _tc_to_frames(tc, self._fps_i) or self._last_tc_frames
+                        self._last_tc_str = tc
                         self._last_tc_mono = now
                         dropout_marked = False
 

@@ -25,7 +25,7 @@ Es fehlte ein Werkzeug, das diese drei Quellen **gleichzeitig und kontinuierlich
 | Ziel | Umsetzung |
 |------|-----------|
 | **Passiv, kein Eingriff** | Nur lesende Zugriffe auf `pmc`, `chronyc`, ALSA. Keine Zeitdisziplinierung. |
-| **Echtzeit-Überblick** | Web-UI pollt `/api/status` alle 250 ms, zeigt PTP-Zeit interpoliert mit 20 ms Refresh. |
+| **Echtzeit-Überblick** | Web-UI pollt `/api/status` alle 1000 ms, zeigt PTP-Zeit interpoliert mit 100 ms Refresh. |
 | **Klare Fehlersignalisierung** | Dreiwertige State Machine: OK / WARN / ALARM mit farblicher Hervorhebung. |
 | **Ereignisprotokoll** | Alle Statusübergänge werden mit UTC-Timestamp, Schweregrad und Typ gespeichert (Memory + SQLite). |
 | **Rollen de Fehler** | Zähler in konfigurierbaren Zeitfenstern (Standard: 1 h Fehler, 48 h GM-Wechsel) für Trend-Erkennung. |
@@ -85,6 +85,8 @@ Das Backend betreibt vier dauerlaufende Threads neben dem Flask-HTTP-Server:
 | `ntp_loop` | `chronyc tracking` parsen, NTP-Status schreiben | `--ntp-refresh-s` (250 ms) |
 | `ltc_snapshot_loop` | Snapshot von `sources_ltc` holen, in `status_bus` schreiben | `--ltc-refresh-s` (250 ms) |
 | `alsaltc` (subprocess) | ALSA-Capture → libltc → `stdout` `YYYY-MM-DD ±HHMM HH:MM:SS:FF AABBCCDD` \| `NO_LTC` | kontinuierlich |
+
+**Hinweis:** Die browser-seitige Poll-Rate für `/api/status` beträgt aktuell **1000 ms** (früher 250 ms, konfigurierbar via `--ui-api-poll-ms`). Der UI-Render-Refresh läuft mit **100 ms** (früher 20 ms), um die interpolierte PTP-Zeitanzeige flüssig darzustellen.
 
 Alle Zugriffe auf gemeinsamen Zustand laufen über `threading.Lock()`.
 
@@ -162,10 +164,10 @@ ALSA hw:X,0
 ### `webapp.py` / `web_ui.py` — Web-Frontend
 
 Bewusstes Design als **Single-Page-Application ohne JavaScript-Framework**:
-- Ein einziger `GET /api/status`-Poll alle 250 ms
+- Ein einziger `GET /api/status`-Poll alle 1000 ms (konfigurierbar via `--ui-api-poll-ms`)
 - PTP-Zeit wird client-seitig **monoton interpoliert** — `performance.now()`-basierte Hochrechnung, Korrektur verhindert Rückläufer bei Netzwerk-Jitter
 - Keine WebSockets, keine langen HTTP-Polls — einfach, robust, cache-freundlich
-- LTC-Audio-Pegel über separaten `/api/ltc/level`-Endpunkt (200 ms, unabhängig vom Status-Poll)
+- LTC-Audio-Pegel über separaten `/api/ltc/level`-Endpunkt (500 ms browser-seitig, unabhängig vom Status-Poll)
 
 Verfügbare Seiten:
 
@@ -195,6 +197,8 @@ Verfügbare Seiten:
 │  └──────────────────────────┘  └────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Hinweis:** Das Dashboard verwendet ab ≥ 1440 px Viewportbreite ein **3-Spalten-Grid**: `634px 518px minmax(260px,1fr)`. Die dritte Spalte enthält ein rechtes Chart-Panel mit historischen Balkendiagrammen (Rolling-Fehlerzähler, Offset-Verlauf). Unterhalb von 1440 px kollabiert das Grid auf 2 Spalten (bisheriges Layout).
 
 **Navigation Dropdown (`.nav-wrap`):**
 - Trigger: `<div class="nav-btn">☰ Menu</div>` — immer sichtbar im Header
@@ -270,14 +274,14 @@ Das Delta-Raster zeigt vier Zeilenpaare ohne ALSA delay:
 
 Zwei EMA-Stufen verhindern nervöse Anzeigen bei schnellen Jitter-Peaks:
 
-| Ziel | α | τ bei 20 ms Refresh | Zweck |
-|------|---|---------------------|-------|
-| Delta-Werte (PTP Offset, Path Delay, Δ-Linien) | 0.05 | ~400 ms | Schnelle PTP-Jitter-Peaks mitteln ohne die Langzeit-Genauigkeit zu beeinflussen |
-| 7-Seg-Zeitstempel (PTP, NTP) | 0.25 | ~60 ms | Flackern beim Sekundenwechsel dämpfen, praktisch kein sichtbarer Lag |
+| Ziel | α | τ bei 100 ms Refresh | Zweck |
+|------|---|----------------------|-------|
+| Delta-Werte (PTP Offset, Path Delay, Δ-Linien) | 0.05 | ~2000 ms | Schnelle PTP-Jitter-Peaks mitteln ohne die Langzeit-Genauigkeit zu beeinflussen |
+| 7-Seg-Zeitstempel (PTP, NTP) | 0.25 | ~300 ms | Flackern beim Sekundenwechsel dämpfen, praktisch kein sichtbarer Lag |
 
 Die **Rohwerte** werden weiterhin unverändert für Zeitberechnungen (`ptpNow`, `ntpNow`, Δ-Formeln) verwendet. Nur die angezeigten Pixelwerte (Zahlentext in den Seg7- und Delta-Feldern) werden geglättet.
 
-Hintergrund: PTP-Offset bei kurzen Polling-Intervallen (250 ms) zeigt starke Burst-Varianz durch Netzwerk-Jitter. Ohne EMA springen die Anzeigen ständig und sind schwer lesbar. α=0.05 entspricht einem ~20-Sample-Fenster (≈ 5 s bei 250 ms Poll), was Kurzzeit-Peaks effektiv dämpft, ohne Langzeittrends zu verschleppen.
+Hintergrund: PTP-Offset bei kurzen Polling-Intervallen zeigt starke Burst-Varianz durch Netzwerk-Jitter. Ohne EMA springen die Anzeigen ständig und sind schwer lesbar. α=0.05 entspricht bei 100 ms Render-Intervall einer Zeitkonstante von ca. 2 s, was Kurzzeit-Peaks effektiv dämpft, ohne Langzeittrends zu verschleppen.
 
 ### LED-Pegel (`.ledMeter`)
 

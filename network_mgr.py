@@ -270,6 +270,84 @@ def set_timezone(tz: str) -> Tuple[bool, str]:
     return True, f"Timezone auf {tz} gesetzt."
 
 
+_battery_cache: dict = {"data": "_unset", "expires": 0.0}
+
+# Sysfs paths to try for CR2032 RTC battery voltage (RPi CM5 / RPi 5).
+# On RPi 4 and non-RPi hardware none of these exist → get_rtc_battery() returns None.
+_BATTERY_CANDIDATES = [
+    "/sys/class/power_supply/rpi-rtc/voltage_now",  # RPi 5 / CM5 rpi-rtc driver
+    "/sys/class/power_supply/BAT0/voltage_now",      # generic Linux
+    "/sys/class/power_supply/BAT1/voltage_now",
+]
+
+
+def _read_rtc_battery():
+    """Read CR2032 voltage from sysfs; return dict or None (not available)."""
+    import glob as _glob
+
+    # Try known fixed paths first, then any power_supply with voltage_now
+    candidates = _BATTERY_CANDIDATES + sorted(
+        _glob.glob("/sys/class/power_supply/*/voltage_now")
+    )
+    seen = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            raw = open(path).read().strip()
+            uv = int(raw)
+            v = uv / 1_000_000.0
+            if not (1.0 <= v <= 4.5):   # sanity: CR2032 range
+                continue
+            if v >= 2.75:
+                status = "ok"
+            elif v >= 2.5:
+                status = "warn"
+            else:
+                status = "alarm"
+            return {"present": True, "voltage_v": round(v, 3), "status": status}
+        except Exception:
+            pass
+
+    # hwmon fallback: look for hwmon device named 'rpi_volt' or 'rtc'
+    for hwmon_dir in sorted(_glob.glob("/sys/class/hwmon/hwmon*/")):
+        try:
+            name = open(os.path.join(hwmon_dir, "name")).read().strip().lower()
+        except Exception:
+            continue
+        if "bat" not in name and "rtc" not in name:
+            continue
+        for inp in sorted(_glob.glob(os.path.join(hwmon_dir, "in*_input"))):
+            try:
+                mv = int(open(inp).read().strip())
+                v = mv / 1000.0
+                if not (1.0 <= v <= 4.5):
+                    continue
+                if v >= 2.75:
+                    status = "ok"
+                elif v >= 2.5:
+                    status = "warn"
+                else:
+                    status = "alarm"
+                return {"present": True, "voltage_v": round(v, 3), "status": status}
+            except Exception:
+                pass
+
+    return None
+
+
+def get_rtc_battery():
+    """Return CR2032 RTC battery info dict or None. Cached for 60 s."""
+    import time as _t
+    now = _t.monotonic()
+    if now < _battery_cache["expires"] and _battery_cache["data"] != "_unset":
+        return _battery_cache["data"]
+    result = _read_rtc_battery()
+    _battery_cache.update({"data": result, "expires": now + 60.0})
+    return result
+
+
 def get_api_allowlist() -> List[str]:
     """Return saved list of allowed CIDRs/IPs; empty list means allow all."""
     try:

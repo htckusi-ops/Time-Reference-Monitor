@@ -79,6 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--ltc-refresh-s", type=float, default=config.DEFAULT_LTC_REFRESH_S, help="LTC snapshot refresh interval (seconds)")
     ap.add_argument("--ltc-dropout-timeout-ms", type=int, default=0, help="Mark LTC absent if no frame received for this long (ms). 0 disables.")
     ap.add_argument("--ltc-jump-tolerance-frames", type=int, default=5, help="Warn on LTC time jumps larger than this many frames. 0 disables. Default 5 suppresses jitter.")
+    ap.add_argument("--ltc-jump-alarm-ms", type=float, default=config.DEFAULT_LTC_JUMP_ALARM_MS,
+                    help="Emit ALARM (not WARN) for an LTC jump when |Δ(LTC−PTP)| or |Δ(LTC−NTP)| exceeds this many ms. 0 disables. Default 500 ms.")
 
     # Mock simulation knobs
     ap.add_argument("--mock-jitter-ns", type=int, default=0)
@@ -110,6 +112,7 @@ def main() -> None:
         error_window_s=int(args.error_window_s),
         startup_grace_s=float(args.startup_grace_s),
         db_writer=dbw,
+        ltc_jump_alarm_ms=float(args.ltc_jump_alarm_ms),
     )
 
     # ── PTP domain – runtime-switchable, optionally persisted ────────────────
@@ -226,12 +229,13 @@ def main() -> None:
     def meta_provider():
         with _src_lock:
             active = "mock" if _src["mock"] else "real"
-        from network_mgr import get_device_location, get_tz_offset_s, get_ptp_timestamping
+        from network_mgr import get_device_location, get_tz_offset_s, get_ptp_timestamping, get_rtc_battery
         # Override static meta["domain"] with the live (possibly user-changed) value.
         # get_tz_offset_s() uses zoneinfo so it reflects timedatectl changes immediately
         # (time.localtime().tm_gmtoff would stay at the startup timezone until restart).
         return {**meta, "tz_offset_s": get_tz_offset_s(),
                 "ptp_timestamping": get_ptp_timestamping(),
+                "rtc_battery": get_rtc_battery(),
                 "source": active,
                 "domain": get_ptp_domain(), "device_location": get_device_location()}
 

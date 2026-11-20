@@ -19,13 +19,31 @@ def ui_html() -> str:
       --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
     }}
     body{{margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);}}
-    .wrap{{max-width:1200px; margin:0 auto; padding:18px;}}
-    .hdr{{display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:14px;}}
+    .wrap{{max-width:1900px; margin:0 auto; padding:18px;}}
+    .hdr{{display:flex; justify-content:space-between; align-items:flex-end; gap:12px; margin-bottom:14px; position:relative;}}
+    @keyframes _connPulse{{0%,100%{{opacity:1;box-shadow:0 0 0 0 rgba(255,80,80,.4);}} 50%{{opacity:.55;box-shadow:0 0 0 6px rgba(255,80,80,0);}}}}
+    .conn-lost{{display:none; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+      background:rgba(180,20,20,.28); border:1px solid rgba(255,80,80,.55); border-radius:999px;
+      padding:5px 16px; font-family:var(--mono); font-size:12px; color:rgba(255,130,130,1);
+      animation:_connPulse 1.4s ease-in-out infinite; pointer-events:none; white-space:nowrap; z-index:20;}}
+    .ltc-jump-alarm{{display:none; padding:4px 12px; border-radius:999px;
+      background:rgba(180,20,20,.32); border:1px solid rgba(255,80,80,.65);
+      font-family:var(--mono); font-size:11px; color:rgba(255,160,160,1);
+      animation:_connPulse 1s ease-in-out infinite; white-space:nowrap; cursor:default;}}
     .title{{font-size:22px; font-weight:700; letter-spacing:.2px;}}
     .subtitle{{color:var(--muted); font-size:13px; margin-top:4px;}}
     .pill{{font-family:var(--mono); font-size:12px; padding:6px 10px; border-radius:999px; border:1px solid var(--line); background:rgba(255,255,255,.03); color:var(--muted);}}
-    .grid{{display:grid; grid-template-columns: 1.1fr .9fr; gap:12px;}}
-    @media (max-width: 980px){{ .grid{{grid-template-columns:1fr;}} }}
+    .grid{{display:grid; grid-template-columns: 634px 518px minmax(260px, 1fr); gap:12px;}}
+    /* On screens too narrow for 3 columns, chart panel wraps to a full-width row below */
+    @media (max-width: 1440px){{ .grid{{grid-template-columns: 1.1fr .9fr;}} .chart-panel{{grid-column:1/-1;}} }}
+    @media (max-width: 980px){{  .grid{{grid-template-columns:1fr;}} }}
+    .chart-panel{{display:flex; flex-direction:column; gap:0;}}
+    .chart-section{{padding:10px 0 6px 0;}}
+    .chart-section:not(:last-child){{border-bottom:1px solid var(--line); margin-bottom:10px;}}
+    .chart-section h4{{margin:0 0 8px 0; font-size:12px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
+    .chart-sub{{font-size:11px; color:var(--muted); font-family:var(--mono); margin:10px 0 3px 0; opacity:.7;}}
+    .chart-hdr{{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:3px;}}
+    .chart-hdr span{{font-size:10px; color:var(--muted); font-family:var(--mono);}}
     .card{{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border:1px solid var(--line); border-radius:16px; padding:14px; box-shadow: 0 10px 24px rgba(0,0,0,.25);}}
     .card h3{{margin:0 0 10px 0; font-size:13px; letter-spacing:.15px; color:var(--muted); font-weight:650; text-transform:uppercase;}}
     @font-face{{font-family:'Seg7';src:url('/font/Segment7Standard.otf') format('opentype');font-weight:400;font-style:normal;}}
@@ -97,9 +115,11 @@ def ui_html() -> str:
       <div class="title">{config.APP_TITLE}</div>
       <div class="subtitle">{config.APP_SUBTITLE}</div>
     </div>
+    <div id="connLost" class="conn-lost">&#9888;&nbsp;CONNECTION LOST</div>
     <div class="row">
       <div class="pill" id="pillMeta">—</div>
       <div class="badge"><span class="dot" id="dotState"></span><span id="txtState">—</span></div>
+      <div id="ltcJumpAlarm" class="ltc-jump-alarm" title="LTC jump exceeded alarm threshold. See event log for details.">&#9888;&nbsp;LTC JUMP</div>
       <div class="nav-wrap">
         <div class="nav-btn">&#9776; Menu</div>
         <div class="nav-drop">
@@ -129,14 +149,14 @@ def ui_html() -> str:
           <div class="timeStatus alarm" id="ptpStatusBadge">NO PTP SYNC</div>
           <div class="tzBadge" id="ptpTzBadge">—</div>
         </div>
-        <div class="seg-wrap" id="ptpTimeSegs" style="opacity:0.18">00:00:00.00</div>
+        <div class="seg-wrap" id="ptpTimeSegs" style="opacity:0.18">00:00:00.0</div>
 
         <div class="timeLabel">NTP</div>
         <div style="display:flex;flex-direction:column;gap:3px;">
           <div class="timeStatus muted" id="ntpStatusBadge">—</div>
           <div class="tzBadge" id="ntpTzBadge">—</div>
         </div>
-        <div class="seg-wrap" id="ntpTimeSegs" style="opacity:0.18">00:00:00.00</div>
+        <div class="seg-wrap" id="ntpTimeSegs" style="opacity:0.18">00:00:00.0</div>
 
         <div class="timeLabel">LTC</div>
         <div style="display:flex;flex-direction:column;gap:3px;">
@@ -230,11 +250,8 @@ def ui_html() -> str:
 
         <div class="smalltime" id="deltaLtcAdjLine">Δ(LTC-PTP) adj: —</div>
         <div class="smalltime" id="deltaLtcRawLine">Δ(LTC-PTP) raw: —</div>
-      </div>
-      <div class="smalltime">LTC Audio Level ({config.LTC_ALSA_DEVICE})</div>
-      <div class="ledWrap">
-        <div id="ltcLedMeter" class="ledMeter"></div>
-        <div id="ltcLevelText" class="ledText">—</div>
+
+        <div class="smalltime" id="battLine" style="grid-column:1/-1">RTC Battery: —</div>
       </div>
       <div class="hr"></div>
       <div class="split">
@@ -283,6 +300,49 @@ def ui_html() -> str:
           style="white-space:pre-wrap;"></span>
       </div>
     </div>
+
+    <!-- ── Charts panel ── -->
+    <div class="card chart-panel">
+
+      <div class="chart-section">
+        <h4>PTP</h4>
+        <div class="chart-sub">Offset (offset_ns)</div>
+        <div class="chart-hdr"><span>ns</span><span id="ptpChartLabel">—</span></div>
+        <canvas id="ptpOffsetChart" style="width:100%;height:100px;display:block;border-radius:6px;"></canvas>
+      </div>
+
+      <div class="chart-section">
+        <h4>NTP</h4>
+        <div class="chart-sub">System Offset <span style="font-size:9px;opacity:.6;">(system_offset_s)</span></div>
+        <div class="chart-hdr"><span>ms</span><span id="ntpOffLabel">—</span></div>
+        <canvas id="ntpOffsetChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
+        <div class="chart-sub">Frequency Error <span style="font-size:9px;opacity:.6;">(frequency_ppm)</span></div>
+        <div class="chart-hdr"><span>ppm</span><span id="ntpFreqLabel">—</span></div>
+        <canvas id="ntpFreqChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
+      </div>
+
+      <div class="chart-section">
+        <h4>Δ Cross-Source</h4>
+        <div class="chart-sub">Δ(NTP − PTP)</div>
+        <div class="chart-hdr"><span>ms</span><span id="deltaChartLabel">—</span></div>
+        <canvas id="deltaNtpPtpChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
+        <div class="chart-sub">Δ(LTC − PTP) adj</div>
+        <div class="chart-hdr"><span>ms</span><span id="ltcDeltaLabel">—</span></div>
+        <canvas id="ltcDeltaChart" style="width:100%;height:90px;display:block;border-radius:6px;"></canvas>
+      </div>
+
+      <div class="chart-section">
+        <h4>LTC <small style="font-size:9px;font-weight:400;text-transform:none;opacity:.55;">({config.LTC_ALSA_DEVICE})</small></h4>
+        <div class="ledWrap">
+          <div id="ltcLedMeter" class="ledMeter"></div>
+          <div id="ltcLevelText" class="ledText">—</div>
+        </div>
+        <div class="chart-sub">Audio Level History (RMS)</div>
+        <div class="chart-hdr"><span>dBFS</span><span id="ltcLevelLabel">—</span></div>
+        <canvas id="ltcLevelChart" style="width:100%;height:45px;display:block;border-radius:6px;"></canvas>
+      </div>
+
+    </div>
   </div>
 
   <div class="foot">
@@ -302,6 +362,8 @@ def ui_html() -> str:
   let srvBaseMs  = null;   // RPi UTC ms at last API receipt
   let srvLocalMs = null;   // browser Date.now() when API was received (monotonic guard)
   let lastApiMs  = null;   // browser Date.now() on every successful API response
+  const _pageLoadMs = Date.now();
+  let _slowN = 0;          // slow-tick counter: delta text DOM writes gated to ~1 Hz
   let ptpCanTick = false;
 
   // EMA smoothing for rapidly-changing display values (α=0.05 ≈ 20-sample window)
@@ -314,10 +376,174 @@ def ui_html() -> str:
   let _emaDeltaLtcAdj = null;
   let _emaDeltaLtcRaw = null;
 
+  // ── Chart system ─────────────────────────────────────────────────────────
+  let _chartIntervalMs = parseInt(localStorage.getItem('ptpChartIntervalMs') || '1000', 10);
+  let _chartMaxSamples = parseInt(localStorage.getItem('ptpChartSamples')    || '60',    10);
+
+  function _makeChart(canvasId, labelId, opts) {{
+    return {{ canvasId, labelId, opts: opts || {{}}, samples: [], lastMs: 0 }};
+  }}
+
+  function _fmtNs(ns) {{
+    const a = Math.abs(ns);
+    if(a >= 1e9) return (ns/1e9).toFixed(2) + ' s';
+    if(a >= 1e6) return (ns/1e6).toFixed(2) + ' ms';
+    if(a >= 1e3) return (ns/1e3).toFixed(1) + ' µs';
+    return ns.toFixed(0) + ' ns';
+  }}
+
+  function _fmtMs(ms) {{
+    const a = Math.abs(ms);
+    if(a >= 1000)  return (ms/1000).toFixed(3) + ' s';
+    if(a >= 1)     return ms.toFixed(3)         + ' ms';
+    if(a >= 0.001) return (ms*1000).toFixed(1)  + ' µs';
+    return (ms*1e6).toFixed(0) + ' ns';
+  }}
+
+  function _niceNs(x) {{
+    if(x === 0) return 1000;
+    const s = [500,1000,2000,5000,10000,20000,50000,100000,200000,500000,1000000,
+               2000000,5000000,10000000,50000000,100000000,500000000,1000000000,5000000000];
+    for(const v of s) if(v >= x) return v; return x;
+  }}
+
+  function _niceMs(x) {{
+    if(x === 0) return 1;
+    const s = [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10,20,50,
+               100,200,500,1000,2000,5000,10000,50000];
+    for(const v of s) if(v >= x) return v; return x;
+  }}
+
+  function _nicePpm(x) {{
+    if(x === 0) return 0.1;
+    const s = [0.001,0.002,0.005,0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10,20,50,100,200,500];
+    for(const v of s) if(v >= x) return v; return x;
+  }}
+
+  const _cPtpOff  = _makeChart('ptpOffsetChart',   'ptpChartLabel',   {{
+    centerZero:true,  niceScaleFn:_niceNs,  fmtScale:_fmtNs }});
+  const _cNtpOff  = _makeChart('ntpOffsetChart',   'ntpOffLabel',     {{
+    centerZero:true,  niceScaleFn:_niceMs,  fmtScale:_fmtMs }});
+  const _cNtpFreq = _makeChart('ntpFreqChart',     'ntpFreqLabel',    {{
+    centerZero:true,  niceScaleFn:_nicePpm,
+    fmtScale: v => v.toFixed(2) + 'p',
+    colorFn:  v => v >= 0 ? 'rgba(80,160,255,.85)' : 'rgba(255,160,40,.85)' }});
+  const _cDelta   = _makeChart('deltaNtpPtpChart', 'deltaChartLabel', {{
+    centerZero:true,  niceScaleFn:_niceMs,  fmtScale:_fmtMs }});
+  const _cLtcDb   = _makeChart('ltcLevelChart',    'ltcLevelLabel',   {{
+    centerZero:false, fixedMin:-60, fixedMax:0, gridN:2,
+    fmtScale: v => v.toFixed(0),
+    colorFn:  v => v >= -6 ? 'rgba(255,80,80,.85)' : v >= -18 ? 'rgba(255,200,50,.85)' : 'rgba(80,200,120,.85)' }});
+  const _cLtcDelta = _makeChart('ltcDeltaChart',   'ltcDeltaLabel',   {{
+    centerZero:true,  niceScaleFn:_niceMs,  fmtScale:_fmtMs }});
+
+  function _sampleChart(chart, value) {{
+    if(value == null || !isFinite(value)) return false;
+    const now = Date.now();
+    if(now - chart.lastMs < _chartIntervalMs) return false;
+    chart.lastMs = now;
+    chart.samples.push(value);
+    if(chart.samples.length > _chartMaxSamples * 2)
+      chart.samples = chart.samples.slice(-_chartMaxSamples);
+    _drawBarChart(chart);
+    return true;
+  }}
+
+  function _drawBarChart(chart) {{
+    const o = chart.opts;
+    const canvas = document.getElementById(chart.canvasId);
+    if(!canvas) return;
+    const dpr  = window.devicePixelRatio || 1;
+    const cssW = canvas.offsetWidth  || 300;
+    const cssH = canvas.offsetHeight || 80;
+    canvas.width  = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const ML = 46, MT = 7, MB = 5;
+    const plotW = cssW - ML, plotH = cssH - MT - MB;
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(0, 0, cssW, cssH);
+    // compute Y range
+    const valid = chart.samples.filter(v => v != null);
+    let rMin, rMax;
+    if(o.fixedMin != null && o.fixedMax != null) {{
+      rMin = o.fixedMin; rMax = o.fixedMax;
+    }} else if(o.centerZero) {{
+      const rawMax = valid.length ? Math.max(...valid.map(v => Math.abs(v))) : 0;
+      const ma = o.niceScaleFn ? o.niceScaleFn(rawMax) : rawMax || 1;
+      rMin = -ma; rMax = ma;
+    }} else {{ rMin = 0; rMax = 1; }}
+    const range = rMax - rMin || 1;
+    const yFor  = v => MT + plotH * (1 - (v - rMin) / range);
+    // grid lines + Y-axis labels
+    const gN = o.gridN ?? 4;
+    ctx.save();
+    ctx.setLineDash([2, 3]);
+    ctx.lineWidth = 0.75;
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'right';
+    for(let i = 0; i <= gN; i++) {{
+      const gv = rMin + range * i / gN;
+      const gy = yFor(gv);
+      const z  = Math.abs(gv) < range * 1e-4;
+      ctx.strokeStyle = z ? 'rgba(255,255,255,0.32)' : 'rgba(255,255,255,0.11)';
+      ctx.beginPath(); ctx.moveTo(ML, gy); ctx.lineTo(cssW, gy); ctx.stroke();
+      if(o.fmtScale) {{
+        ctx.fillStyle = z ? 'rgba(255,255,255,0.62)' : 'rgba(255,255,255,0.40)';
+        ctx.textBaseline = i === 0 ? 'bottom' : (i === gN ? 'top' : 'middle');
+        ctx.fillText(o.fmtScale(gv), ML - 3, gy);
+      }}
+    }}
+    ctx.restore();
+    // "no data" text
+    if(valid.length === 0) {{
+      ctx.fillStyle = 'rgba(255,255,255,0.22)';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('no data', ML + plotW / 2, cssH / 2);
+      return;
+    }}
+    // bars (newest on right, oldest scrolls off left)
+    const n     = Math.min(chart.samples.length, _chartMaxSamples);
+    const segs  = chart.samples.slice(-n);
+    const slotW = plotW / _chartMaxSamples;
+    const barW  = Math.max(1, slotW - 1);
+    const sx    = ML + plotW - segs.length * slotW;
+    const zeroY = yFor(0);
+    for(let i = 0; i < segs.length; i++) {{
+      const v = segs[i]; if(v == null) continue;
+      const vY = yFor(v);
+      const x  = sx + i * slotW + (slotW - barW) / 2;
+      let barY, barH;
+      if(o.centerZero) {{
+        barY = v >= 0 ? vY : zeroY; barH = v >= 0 ? zeroY - vY : vY - zeroY;
+      }} else {{
+        const bY = yFor(rMin); barY = Math.min(vY, bY); barH = Math.abs(vY - bY);
+      }}
+      barH = Math.max(1, barH);
+      ctx.fillStyle = o.colorFn ? o.colorFn(v) : (v >= 0 ? 'rgba(80,200,120,.85)' : 'rgba(255,110,80,.85)');
+      ctx.fillRect(x, barY, barW, barH);
+    }}
+    // scale label (top-right span)
+    const lEl = chart.labelId ? document.getElementById(chart.labelId) : null;
+    if(lEl && o.fmtScale) lEl.textContent = o.fixedMin != null
+      ? o.fmtScale(o.fixedMax) + '/' + o.fmtScale(o.fixedMin) + ' dB'
+      : '±' + o.fmtScale(rMax);
+  }}
+
+  function _redrawAllCharts() {{
+    _drawBarChart(_cPtpOff); _drawBarChart(_cNtpOff);  _drawBarChart(_cNtpFreq);
+    _drawBarChart(_cDelta);  _drawBarChart(_cLtcDb);   _drawBarChart(_cLtcDelta);
+  }}
+
   // Very light EMA on 7-seg display timestamps to damp second-boundary flicker.
   // α=0.25 at 20 ms refresh → time constant ≈ 60 ms; visually imperceptible lag.
   let _smPtpMs = null;
   let _smNtpMs = null;
+  let ltcBaseFrames = null;  // total frames since midnight from last received LTC timecode
+  let ltcBaseLocal  = null;  // browser Date.now() when ltcBaseFrames was stored
 
   // LTC timezone inferred from ltc_date vs PTP UTC (ms offset, null = unknown).
   // Rounded to nearest 15 min. When set, 7-seg shows UTC = LTC_local - TZ.
@@ -394,7 +620,7 @@ function renderLedMeter(ledPeak){{
     // Use same-width digit-only placeholder so the Seg7 font doesn't resize the
     // grid column when switching between inactive and live state.
     // LTC passes '00:00:00:00' (frame separator); PTP/NTP use '00:00:00.00' (ms).
-    el.textContent = timeStr || placeholder || '00:00:00.00';
+    el.textContent = timeStr || placeholder || '00:00:00.0';
     el.style.opacity = timeStr ? '' : '0.18';
   }}
 
@@ -456,9 +682,13 @@ function renderLedMeter(ledPeak){{
     // rolling counts: reflect recent history in the error window;
     // cleared by Reset → top badge follows dotErr after reset
     const roll = meta.summaries_rolling || {{}};
-    if((roll.alarms_rolling ?? 0) > 0) return 'ALARM';
+    if((roll.alarms_rolling ?? 0) > 0 || (roll.ltc_jump_alarms_rolling ?? 0) > 0) return 'ALARM';
     if((roll.warnings_rolling ?? 0) > 0 || (roll.errors_rolling ?? 0) > 0
        || (roll.ltc_decode_errors_rolling ?? 0) > 0) return 'WARN';
+
+    // RTC battery: alarm or warn → WARN in top badge (maintenance, not timing)
+    const bat = meta.rtc_battery;
+    if(bat && (bat.status === 'alarm' || bat.status === 'warn')) return 'WARN';
 
     return 'OK';
   }}
@@ -528,6 +758,26 @@ function renderLedMeter(ledPeak){{
     els('stateLine').textContent = state;
     setDot(els('dotState'), (state==='STARTING'||state==='PAUSED') ? 'WARN' : state);
 
+    // LTC jump alarm bar: visible when ltc_jump_alarms_rolling > 0
+    {{
+      const _lja = els('ltcJumpAlarm');
+      if(_lja) {{
+        const _jAlarms = roll.ltc_jump_alarms_rolling ?? 0;
+        if(_jAlarms > 0) {{
+          const _lastJump = (data.events || []).find(e => e.type === 'LTC_JUMP' && e.severity === 'ALARM');
+          let _jTxt = '⚠\xA0LTC JUMP\xA0(' + _jAlarms + ')';
+          if(_lastJump) {{
+            const _dm = (_lastJump.message || '').match(/Δ\(LTC[−-]PTP\)=([^\s,]+)/);
+            if(_dm) _jTxt += '\xA0—\xA0Δ(LTC−PTP)=' + _dm[1];
+          }}
+          _lja.textContent = _jTxt;
+          _lja.style.display = '';
+        }} else {{
+          _lja.style.display = 'none';
+        }}
+      }}
+    }}
+
     els('ptpValidLine').textContent = String(!!st.ptp_valid);
     els('gmPresentLine').textContent = String(!!st.gm_present);
     els('portStateLine').textContent = st.port_state || '—';
@@ -536,6 +786,7 @@ function renderLedMeter(ledPeak){{
     _emaPtpDelayNs = (st.mean_path_delay_ns  != null) ? _ema(_emaPtpDelayNs, st.mean_path_delay_ns)  : null;
     els('offLine').textContent   = (_emaPtpOffNs   != null) ? _emaPtpOffNs.toFixed(0)   + ' ns' : '—';
     els('delayLine').textContent = (_emaPtpDelayNs != null) ? _emaPtpDelayNs.toFixed(0) + ' ns' : '—';
+    _sampleChart(_cPtpOff, st.offset_ns ?? null);
     els('ageLine').textContent = (st.poll_age_ms != null) ? String(st.poll_age_ms) : '—';
     els('noPtpLine').textContent = st.no_ptp_since_utc || '—';
     els('gmChgLine').textContent = String(roll.gm_changes_rolling ?? '—');
@@ -561,6 +812,26 @@ function renderLedMeter(ledPeak){{
     els('ntpSysOffLine').textContent  = (ntp.system_offset_s != null) ? (ntp.system_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpRmsOffLine').textContent  = (ntp.rms_offset_s != null) ? (ntp.rms_offset_s*1000).toFixed(3)+' ms' : '—';
     els('ntpFreqLine').textContent    = (ntp.frequency_ppm != null) ? ntp.frequency_ppm.toFixed(3)+' ppm' : '—';
+    _sampleChart(_cNtpOff,  ntp.system_offset_s != null ? ntp.system_offset_s * 1000 : null);
+    _sampleChart(_cNtpFreq, ntp.frequency_ppm ?? null);
+
+    // RTC battery (CR2032) — null when not available (e.g. RPi 4 without battery)
+    {{
+      const bat = meta.rtc_battery;
+      const battEl = els('battLine');
+      if(battEl) {{
+        if(!bat) {{
+          battEl.textContent = 'RTC Battery: not available';
+          battEl.style.color = 'var(--muted)';
+        }} else {{
+          const vStr = bat.voltage_v != null ? bat.voltage_v.toFixed(2) + ' V' : '—';
+          const labels = {{ok:'OK', warn:'LOW — replace soon', alarm:'CRITICAL — replace now'}};
+          const cols   = {{ok:'var(--ok)', warn:'var(--warn)', alarm:'var(--alarm)'}};
+          battEl.textContent = 'RTC Battery: ' + vStr + ' ' + (labels[bat.status] || bat.status);
+          battEl.style.color = cols[bat.status] || 'var(--muted)';
+        }}
+      }}
+    }}
 
     // System TZ — always visible regardless of PTP/NTP state
     {{
@@ -647,16 +918,18 @@ function renderLedMeter(ledPeak){{
       {{const _lb=els('ltcTzBadge'); if(_lb){{_lb.textContent='—'; _lb.className='tzBadge';}}}}
     }}
 
-    // LTC 7-segment: raw timecode from stream (HH:MM:SS:FF).
-    // LTC encodes local time by convention — display as-is.
-    // PTP and NTP also display local time now, so all three are directly comparable.
+    // LTC 7-segment: store base as a frame count for interpolation in uiTick().
+    // Frame-count avoids ms rounding errors at non-integer fps (e.g. 30 fps:
+    // round(1/30*1000)=33 ms, then floor(33*30/1000)=0 — frame 1 is lost).
     if(ltc.enabled && ltc.present && tc && tc !== '—') {{
-      const tcm = tc.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}}):(\d{{2}})$/);
-      if(tcm) {{
-        renderSevenSeg(els('ltcTimeSegs'),
-          tcm[1]+':'+tcm[2]+':'+tcm[3]+':'+pad2(parseInt(tcm[4], 10)), '00:00:00:00');
-      }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
-    }} else {{ renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00'); }}
+      const _m = tc.match(/^(\d{{2}}):(\d{{2}}):(\d{{2}}):(\d{{2}})$/);
+      if(_m) {{
+        const _fpsN = Math.max(1, parseInt(ltc.fps || '25', 10) || 25);
+        ltcBaseFrames = (parseInt(_m[1],10)*3600 + parseInt(_m[2],10)*60 + parseInt(_m[3],10)) * _fpsN
+                        + parseInt(_m[4],10);
+        ltcBaseLocal  = Date.now();
+      }}
+    }} else {{ ltcBaseFrames = null; ltcBaseLocal = null; }}
 
     // rolling summary
     const eR = Number(roll.errors_rolling ?? 0);
@@ -712,15 +985,28 @@ function renderLedMeter(ledPeak){{
   }}
 
   async function pollApi(){{
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), 3000);
     try{{
-      const r = await fetch('/api/status', {{cache:'no-store'}});
+      const r = await fetch('/api/status', {{cache:'no-store', signal:ctrl.signal}});
       if(!r.ok) throw new Error('http '+r.status);
       const data = await r.json();
       applyApi(data);
     }}catch(e){{}}
+    finally{{ clearTimeout(tid); }}
   }}
 
   function uiTick(){{
+    // Slow gate: delta text DOM writes fire ~1 Hz regardless of uiRefreshMs
+    _slowN++;
+    const _slowTick = (_slowN % Math.max(1, Math.round(1000 / uiRefreshMs)) === 0);
+    if(_slowTick) _slowN = 0;
+    // Connection-lost badge: show when no successful API response for >4 s
+    {{
+      const elapsed = Date.now() - (lastApiMs ?? _pageLoadMs);
+      const cl = document.getElementById('connLost');
+      if(cl) cl.style.display = elapsed > 4000 ? '' : 'none';
+    }}
     // RPi system clock interpolated from last API response.
     // If the backend has been unreachable longer than the stale threshold,
     // treat srvNow as null so all time displays grey out (not just PTP badge).
@@ -748,8 +1034,8 @@ function renderLedMeter(ledPeak){{
       const srvTzOffS = (meta.tz_offset_s != null) ? meta.tz_offset_s : 0;
       const dispNtpLocal = new Date(_smNtpMs + srvTzOffS * 1000);
       const nh = dispNtpLocal.getUTCHours(), nm = dispNtpLocal.getUTCMinutes(), ns2 = dispNtpLocal.getUTCSeconds();
-      const ncs = Math.floor(dispNtpLocal.getUTCMilliseconds() / 10);
-      renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+pad2(ncs));
+      const nt = Math.floor(dispNtpLocal.getUTCMilliseconds() / 100);
+      renderSevenSeg(els('ntpTimeSegs'), pad2(nh)+':'+pad2(nm)+':'+pad2(ns2)+'.'+nt);
       _dateNtp = dispNtpLocal.toISOString().slice(0,10); _updDate();
       const tzOffMin = Math.round(srvTzOffS / 60);
       const tzH = Math.floor(Math.abs(tzOffMin)/60), tzM = Math.abs(tzOffMin)%60;
@@ -763,6 +1049,26 @@ function renderLedMeter(ledPeak){{
 
     const ltc = lastApi ? (lastApi.ltc || {{}}) : {{}};
     const alsaDelayMs = (ltc.alsa_delay_ms != null) ? Number(ltc.alsa_delay_ms) : 0;
+
+    // ── LTC time (interpolated) ───────────────────────────────────────────────
+    // ltcBaseToD / ltcBaseLocal are set in applyApi(); interpolating here makes
+    // the LTC clock tick at uiRefreshMs rate instead of jumping once per API poll.
+    {{
+      const _ltcOk = ltcBaseFrames != null && ltcBaseLocal != null && apiAgeMs <= staleTh + 1000;
+      if(_ltcOk) {{
+        const _fpsN  = Math.max(1, parseInt(ltc.fps || '25', 10) || 25);
+        const _elF   = Math.floor((Date.now() - ltcBaseLocal) * _fpsN / 1000);
+        const _totF  = (ltcBaseFrames + _elF) % (24 * 3600 * _fpsN);
+        const _ff    = _totF % _fpsN;
+        const _totS  = Math.floor(_totF / _fpsN);
+        const _ss    = _totS % 60;
+        const _mm    = Math.floor(_totS / 60) % 60;
+        const _hh    = Math.floor(_totS / 3600) % 24;
+        renderSevenSeg(els('ltcTimeSegs'), pad2(_hh)+':'+pad2(_mm)+':'+pad2(_ss)+':'+pad2(_ff), '00:00:00:00');
+      }} else {{
+        renderSevenSeg(els('ltcTimeSegs'), null, '00:00:00:00');
+      }}
+    }}
 
     // Δ(LTC-NTP): LTC corrected for ALSA delay vs pure NTP time
     if(ntpNow && ltc.enabled && ltc.present && ltc.timecode) {{
@@ -813,8 +1119,8 @@ function renderLedMeter(ledPeak){{
       const srvTzOffS = (meta.tz_offset_s != null) ? meta.tz_offset_s : 0;
       const dispPtpLocal = new Date(_smPtpMs + srvTzOffS * 1000);
       const ph = dispPtpLocal.getUTCHours(), pm = dispPtpLocal.getUTCMinutes(), ps = dispPtpLocal.getUTCSeconds();
-      const pcs = Math.floor(dispPtpLocal.getUTCMilliseconds() / 10);
-      renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pad2(pcs));
+      const pt = Math.floor(dispPtpLocal.getUTCMilliseconds() / 100);
+      renderSevenSeg(els('ptpTimeSegs'), pad2(ph)+':'+pad2(pm)+':'+pad2(ps)+'.'+pt);
       {{const _pb=els('ptpTzBadge'); if(_pb){{const _to=(meta.tz_offset_s!=null)?meta.tz_offset_s:0; const _tm=Math.round(_to/60),_th=Math.floor(Math.abs(_tm)/60),_tmm=Math.abs(_tm)%60; _pb.textContent='UTC'+(_tm>=0?'+':'-')+pad2(_th)+':'+pad2(_tmm); _pb.className=_to!==0?'tzBadge active':'tzBadge';}}}}
 
       // Δ(NTP-PTP) = NTP_time - PTP_time
@@ -829,8 +1135,9 @@ function renderLedMeter(ledPeak){{
       }} else {{
         _emaDeltaNtpPtp = null;
       }}
-      els('deltaLine').textContent = _emaDeltaNtpPtp != null
+      if(_slowTick) els('deltaLine').textContent = _emaDeltaNtpPtp != null
         ? 'Δ(NTP-PTP): ' + _emaDeltaNtpPtp.toFixed(3) + ' ms' : 'Δ(NTP-PTP): —';
+      if(st.ptp_valid) _sampleChart(_cDelta, _emaDeltaNtpPtp);
 
       if(ltc.enabled && ltc.present && ltc.timecode) {{
         const fps = ltc.fps || meta.ltc_fps || 25;
@@ -846,26 +1153,35 @@ function renderLedMeter(ledPeak){{
           const ltcCorr = ltcTod - alsaDelayMs;
           _emaDeltaLtcAdj = _ema(_emaDeltaLtcAdj, wrapDeltaMs(ltcCorr - ptpTodLocal));
           _emaDeltaLtcRaw = _ema(_emaDeltaLtcRaw, wrapDeltaMs(ltcCorr - ptpTodUtc));
-          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + _emaDeltaLtcAdj.toFixed(3) + ' ms';
-          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + _emaDeltaLtcRaw.toFixed(3) + ' ms';
+          if(_slowTick) {{
+            els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: ' + _emaDeltaLtcAdj.toFixed(3) + ' ms';
+            els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: ' + _emaDeltaLtcRaw.toFixed(3) + ' ms';
+          }}
+          if(st.ptp_valid) _sampleChart(_cLtcDelta, _emaDeltaLtcAdj);
         }} else {{
           _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
-          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+          if(_slowTick) {{
+            els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
+            els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+          }}
         }}
       }} else {{
         _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
-        els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-        els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+        if(_slowTick) {{
+          els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
+          els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+        }}
       }}
     }} else {{
       _smPtpMs = null;
       _emaDeltaNtpPtp = null; _emaDeltaLtcAdj = null; _emaDeltaLtcRaw = null;
       renderSevenSeg(els('ptpTimeSegs'), null);
       {{const _pb=els('ptpTzBadge'); if(_pb){{_pb.textContent='—'; _pb.className='tzBadge';}}}}
-      els('deltaLine').textContent = 'Δ(NTP-PTP): —';
-      els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
-      els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+      if(_slowTick) {{
+        els('deltaLine').textContent = 'Δ(NTP-PTP): —';
+        els('deltaLtcAdjLine').textContent = 'Δ(LTC-PTP) adj: —';
+        els('deltaLtcRawLine').textContent = 'Δ(LTC-PTP) raw: —';
+      }}
     }}
   }}
 
@@ -909,8 +1225,10 @@ function renderLedMeter(ledPeak){{
       if (!txt) return;
 
       const dbPeak = (typeof j.dbfs_peak === 'number') ? j.dbfs_peak : -120;
+      const dbRms  = (typeof j.dbfs_rms  === 'number') ? j.dbfs_rms  : null;
       renderLedMeter(dbToLedCountCeil(dbPeak));
       txt.textContent = (typeof j.dbfs_peak === 'number') ? dbPeak.toFixed(1) + ' dBFS' : '—';
+      _sampleChart(_cLtcDb, dbRms);
     }} catch (e) {{
       // ignore
     }}
@@ -918,7 +1236,13 @@ function renderLedMeter(ledPeak){{
 
   setInterval(uiTick, uiRefreshMs);
   setInterval(pollApi, apiPollMs);
-  setInterval(pollLtcLevel, 200);
+  setInterval(pollLtcLevel, 500);
+
+  if(window.ResizeObserver) {{
+    const _ro = new ResizeObserver(() => _redrawAllCharts());
+    ['ptpOffsetChart','ntpOffsetChart','ntpFreqChart','deltaNtpPtpChart','ltcLevelChart','ltcDeltaChart']
+      .forEach(id => {{ const el = document.getElementById(id); if(el) _ro.observe(el); }});
+  }}
 
 initLedMeter();
 pollApi();

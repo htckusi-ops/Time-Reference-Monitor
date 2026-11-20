@@ -71,6 +71,10 @@ class LTCStatus:
     user_bits: Optional[str] = None         # raw user bits as "AB CD EF GH" (4 bytes hex)
     ltc_date: Optional[str] = None          # SMPTE 309M decoded date as "YYYY-MM-DD", or None
     ltc_tz: Optional[str] = None            # timezone from ltcdump -F as "±HHMM", e.g. "+0100", or None
+    # jump details (updated on each detected jump)
+    last_jump_delta_frames: int = 0         # signed frame delta of the most recent jump
+    last_jump_tc_before: str = ""           # LTC timecode immediately before the jump
+    last_jump_tc_after: str = ""            # LTC timecode immediately after the jump
     raw: Optional[str] = None
 
 
@@ -97,3 +101,5 @@ class Summaries:
     ltc_loss_rolling: int = 0
     ltc_decode_errors_rolling: int = 0
     ltc_jumps_rolling: int = 0
+    ltc_jump_alarms_total: int = 0
+    ltc_jump_alarms_rolling: int = 0
