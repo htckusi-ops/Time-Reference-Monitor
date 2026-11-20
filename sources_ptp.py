@@ -109,7 +109,7 @@ def poll_ptp_real(domain: int, trace: bool = False) -> Tuple[PTPStatus, str]:
     ptp_valid = (
         offset_ns is not None
         and delay_ns is not None
-        and port_state in {"SLAVE", "MASTER", "PASSIVE", "LISTENING"}
+        and port_state in {"SLAVE", "UNCALIBRATED", "MASTER", "PASSIVE", "LISTENING"}
     )
     gm_present = bool(gm_identity)
 
@@ -119,10 +119,12 @@ def poll_ptp_real(domain: int, trace: bool = False) -> Tuple[PTPStatus, str]:
     gm_clock_class = _parse_int(
         kv_pds.get("grandmasterclockquality.clockclass")
         or kv_pds.get("grandmasterclock quality.clockclass")
+        or kv_pds.get("gm.clockclass")
     )
     gm_clock_acc_raw = (
         kv_pds.get("grandmasterclockquality.clockaccuracy")
         or kv_pds.get("grandmasterclock quality.clockaccuracy")
+        or kv_pds.get("gm.clockaccuracy")
         or ""
     ).strip() or None
     parent_port = (kv_pds.get("parentportidentity") or kv_pds.get("parent port identity") or "").strip() or None

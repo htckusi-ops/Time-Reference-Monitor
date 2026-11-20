@@ -27,7 +27,7 @@ Jede der drei Zeitreihen zeigt die **direkte Messung ihrer eigenen Referenz**, n
 
 Das setzt voraus, dass:
 - **chrony** den Systemclock ausschliesslich über NTP diszipliniert (keine PTP-Refclock — siehe `rpi/chrony/chrony.conf`)
-- **ptp4l** im Monitor-Modus (`free_running 1`) läuft — misst Offset, greift aber **nicht** in den Systemclock ein (siehe `rpi/ptp4l/ptp4l.conf`)
+- **ptp4l** im Monitor-Modus (`ptp4l@<iface>.service`, Konfiguration über `Einstellungen > PTP-Empfang`) läuft — misst Offset, greift aber **nicht** in den Systemclock ein
 
 Beide Bedingungen werden durch `setup.sh` / `update.sh` automatisch konfiguriert.
 
@@ -169,7 +169,7 @@ Das Web-Interface ist unter `http://<host>:8088/` erreichbar und besteht aus fü
 | **LTC Spektrum** | `/spectrum` | On-Demand-WAV-Aufnahme (arecord) + FFT-Spektrogramm (sox), PNG- und WAV-Download |
 | **LTC Raw Output** | `/ltc-raw` | Live-Ausgabe des LTC-Decoder-Prozesses (`ltcdump`/`alsaltc`), Ring-Buffer 500 Zeilen, Pause-Button, Diagnosewerkzeug |
 | **PTP Capture** | `/tcpdump` | Echtzeit-tcpdump von PTP-Paketen (UDP 319/320 + EtherType 0x88F7), Live-Terminal mit Colorierung, PCAP-Download |
-| **Einstellungen** | `/settings` | Netzwerk (DHCP/statisch), NTP-Server, WLAN, PTP-Domain-Scanner, PTP/NTP-Simulation, Gerät/Standort |
+| **Einstellungen** | `/settings` | Netzwerk (DHCP/statisch), NTP-Server, WLAN, PTP-Empfang (Multicast/Unicast, Domain, Scanner), PTP/NTP-Simulation, Gerät/Standort |
 
 ### Haupt-Dashboard (`/`)
 
@@ -295,7 +295,7 @@ Die Einstellungsseite bündelt alle Konfigurationsoptionen, die zur Laufzeit ge�
 | Karte | Funktion |
 |-------|----------|
 | **Gerät / Standort** | Freitext-Bezeichnung des Geräts (erscheint im Dashboard) |
-| **PTP Domain** | PTP-Domain scannen und zur Laufzeit wechseln (siehe unten) |
+| **PTP-Empfang** | Multicast/Unicast, Domain, Master-IP, Intervalle und Timestamping einstellen; Domain-Scan (siehe unten) |
 | **Netzwerk** | DHCP / statische IP, Subnetzmaske, Gateway, DNS |
 | **NTP-Server** | Exklusiven NTP-Server zur Laufzeit setzen — ersetzt alle pool/server-Einträge in `chrony.conf`; persistiert in `/var/lib/time-reference-monitor/ntp_server` |
 | **Zeitzone** | System-Zeitzone via `timedatectl set-timezone` setzen; Offset im Dashboard erscheint nach ≤ 30 s |
@@ -314,26 +314,31 @@ Im Mock-Modus (`--source mock`) können synthetische Fehler gezielt ausgelöst w
 
 Verfügbare Fault-Typen: **Dropout** (PTP-Signal fällt weg), **GM-Flap** (Grandmaster wechselt), **Step Jump** (Offset-Sprung), **Wander** (langsames Offset-Driften), **Drift** (kontinuierliches Wegdriften).
 
-### PTP-Domain-Scanner
+### PTP-Empfang (Multicast / Unicast, Domain)
 
-Der Domain-Scanner in `Einstellungen > PTP Domain` ermittelt automatisch alle aktiven PTP-Domains im Netzwerk:
+`Einstellungen > PTP-Empfang` steuert die lokale `ptp4l`-Instanz (`ptp4l@<iface>.service`), mit der der Monitor den Grandmaster misst. «Übernehmen» speichert die Werte in `/var/lib/time-reference-monitor/ptp_config.json`, erzeugt `/etc/linuxptp/ptp4l.conf` neu (`ptp_config.py`) und startet `ptp4l` neu. Die Datei `ptp4l.conf` wird also **nicht von Hand gepflegt**.
 
-**Funktionsweise:**
-1. `tcpdump` erfasst 500 PTP-Pakete (L2 EtherType 0x88F7, UDP 319/320)
-2. Ein reiner Python-PCAP-Parser extrahiert das Feld `domainNumber` (Byte 4 des PTP-Headers) — ohne externe Abhängigkeiten
-3. Unterstützt L2 (Ethernet), IPv4, IPv6 und VLAN-getaggte Frames
-4. Ergebnis: Liste aller gefundenen Domain-Nummern mit Vorkommen-Zähler
+| Feld | Bedeutung |
+|------|-----------|
+| **Nachrichtenmodus** | `Multicast` (Gruppe 224.0.1.129) oder `Unicast` (feste Master-IP, Unicast-Negotiation nach IEEE 1588) |
+| **Domain** | PTP-Domain 0–127; bestimmt die Domain von `ptp4l` **und** der `pmc`-Abfragen |
+| **Master-/GM-IP** | Nur Unicast: IPv4 des Grandmasters; der Monitor fragt Announce, Sync und Delay-Resp per Signaling an |
+| **Delay-Mechanismus** | Nur Multicast: E2E oder P2P (Unicast ist immer E2E) |
+| **Timestamping** | Automatisch (Hardware, wenn `ethtool -T` eine PHC meldet), Software oder Hardware |
+| **Intervalle** | Announce / Sync / Delay-Request (log₂ s), Announce-Timeout, Unicast: Grant-Dauer und Abfrageintervall |
 
-**Domain zur Laufzeit wechseln:**
+**Unicast:** Der Grandmaster muss Unicast-Negotiation annehmen (linuxptp: `unicast_listen 1`). Der Monitor wählt den Master erst, wenn Announce-Pakete ankommen; danach fordert er Sync und Delay-Resp an. Mit Multicast-Announce-Intervall 2 s wurde der Master im Test nicht gewählt, mit 1 s (`log_announce_interval 0`) und Timeout 10 funktionierte es.
 
-| Aktion | Wirkung |
-|--------|---------|
-| **Aktiv (bis Reboot)** | Wechselt die Domain sofort für die aktuelle Sitzung; kein Schreibzugriff |
-| **Aktiv & Speichern** | Wechselt die Domain und schreibt sie in die Persistenz-Datei |
+**Monitor-Modus:** Der Monitor misst nur. Mit Software-Timestamping begrenzt `max_frequency 1` den Servo auf 1 ppb und `step_threshold`/`first_step_threshold 0` verbieten Zeitsprünge; die Systemuhr bleibt bei chrony. Der Port steht dabei auf `UNCALIBRATED` (der Servo konvergiert nicht), Offset und Pfadverzögerung werden trotzdem gemessen und angezeigt. Mit Hardware-Timestamping stellt `ptp4l` nur die PHC. Die Priorität 255 verhindert, dass der Monitor selbst Master wird (Meldung «master state recommended in slave only mode»).
 
-**Persistenz:** `/var/lib/time-reference-monitor/ptp_domain`
-- Beim Dienststart wird diese Datei gelesen und überschreibt den `--domain`-CLI-Parameter
-- Damit sind Domain-Änderungen über Neustarts hinweg wirksam, ohne die systemd-Unit-Datei zu editieren
+**Wichtig – Bedingungen für den Lock:**
+- `domainNumber` muss zur Domain des Grandmasters passen, sonst ignoriert `ptp4l` alle Pakete (der Domain-Scan zeigt die vorhandenen Domains).
+- Der Grandmaster muss Delay-Requests beantworten. Ohne Delay-Resp bleibt der Offset 0.
+- Mehrere NICs im selben Subnetz (am Master) führen zu ARP-Flux und verlorenen Rückantworten (`arp_ignore=1`, `arp_announce=2` oder eigenes PTP-Subnetz).
+
+**Domain-Scan:** `tcpdump` erfasst 500 PTP-Pakete (L2 EtherType 0x88F7, UDP 319/320); ein reiner Python-PCAP-Parser liest `domainNumber` (Byte 4 des PTP-Headers). Unterstützt L2, IPv4, IPv6 und VLAN-Frames. «Übernehmen» in der Ergebnisliste setzt die Domain und startet `ptp4l` neu.
+
+**Persistenz:** `/var/lib/time-reference-monitor/ptp_config.json`. Beim ersten Start übernimmt der Monitor eine ältere `ptp_domain`-Datei oder das `--domain`-CLI-Argument.
 
 **pmc-Aufruf:** Der Monitor ruft `pmc` mit `-d N` auf (Domain-Nummer), **nicht** `-b N` (Boundary Hops — ein anderer Parameter, der die Hop-Tiefe bei pmc-Abfragen steuert).
 
@@ -365,7 +370,7 @@ PTP-Genauigkeit hängt direkt davon ab, ob das Netzwerk-Interface **Hardware-Tim
 | **RPi CM4** | Ja (PHY-Level, BCM54210PE) | Stabil, ~5–15 ns auf direktem Link, ~5–6 µs über Switches |
 | **RPi CM5** | Ja (PHY + MAC) | Beste Option; vollständige Unterstützung ab Kernel 6.12; `setup.sh` erkennt HW-Timestamping automatisch via `ethtool -T` |
 
-**RPi 4 Model B:** ptp4l muss im Software-Timestamp-Modus betrieben werden. In `rpi/ptp4l/ptp4l.conf` ist bereits `time_stamping software` gesetzt — das passt für den RPi 4. Kein `-S`-Flag auf der Kommandozeile nötig. Für ein reines Monitoring-Tool (kein Grandmaster) ist die resultierende Genauigkeit von ~10–50 µs oft ausreichend.
+**RPi 4 Model B:** ptp4l muss im Software-Timestamp-Modus betrieben werden. Die generierte `ptp4l.conf` setzt bei fehlender PHC `time_stamping software` — das passt für den RPi 4. Kein `-S`-Flag auf der Kommandozeile nötig. Für ein reines Monitoring-Tool (kein Grandmaster) ist die resultierende Genauigkeit von ~10–50 µs oft ausreichend.
 
 **RPi 5:** Hardware-Timestamping ist im Kernel vorhanden (MAC-Level via RP1-Chip), aber seit 2024 gibt es wiederholte Regressionen. **Raspberry Pi OS Bookworm (Stand Anfang 2026) ist betroffen** — Kernel 6.12.25–6.12.35 funktioniert nicht. Kernel 6.12.10 und 6.15 sind stabil. Workaround bis ein Fix landet: `sudo rpi-update` für einen neueren Pre-Release-Kernel, oder Software-Timestamps mit `-S`.
 
@@ -374,7 +379,7 @@ Hardware-Timestamping auf RPi 5 / CM5 erfordert zwei Einträge in `ptp4l.conf` (
 time_stamping  hardware
 hwts_filter    full
 ```
-`setup.sh` setzt diese Einträge bei der Installation **automatisch**, sofern `ethtool -T eth0` Hardware-Timestamping meldet. Für manuelle Anpassung: `/etc/linuxptp/ptp4l.conf` bearbeiten und `ptp4l` neu starten.
+Die Konfiguration erzeugt diese Einträge **automatisch** (`Timestamping: Automatisch`), sofern `ethtool -T eth0` Hardware-Timestamping und eine PHC meldet. Anpassung über `Einstellungen > PTP-Empfang`; die Datei `/etc/linuxptp/ptp4l.conf` wird dabei überschrieben.
 
 **Prüfen ob Hardware-Timestamping verfügbar ist:**
 ```bash
@@ -436,7 +441,7 @@ Falls der Wert beim Start `—` zeigt (Gerät war beim Booten noch nicht bereit)
 | `--gm-window-s` | 172800 s | Zeitfenster für GM-Wechsel-Zähler (48 h) |
 | `--stale-threshold-ms` | 2000 ms | Wie lange ohne frische API-Antwort bis Dashboard-Status auf ALARM wechselt |
 | `--startup-grace-s` | 6 s | Startphase: WARN/ALARM-Events werden als `suppressed` markiert bis erster PTP-Lock |
-| `--domain` | 0 | PTP-Domain-Nummer; überschrieben durch Persistenz-Datei falls vorhanden |
+| `--domain` | 0 | Start-Domain, solange keine `ptp_config.json` existiert (danach gilt die Einstellung aus «PTP-Empfang») |
 
 ---
 
@@ -554,7 +559,7 @@ Das Skript erledigt vollautomatisch:
 | 4 | `/opt/time-reference-monitor/` anlegen, Python-venv erstellen, Abhängigkeiten installieren |
 | 5 | `/etc/asound.conf` installieren (dsnoop-Config für LTC-Capture) |
 | 6 | `/etc/chrony/chrony.conf` installieren (NTP-only, kein PTP-Refclock) |
-| 7 | `/etc/linuxptp/ptp4l.conf` installieren; **Hardware-Timestamping automatisch erkennen** via `ethtool -T eth0` — CM5/RPi5: `time_stamping hardware` + `hwts_filter full`; RPi4: `time_stamping software` |
+| 7 | `/etc/linuxptp/ptp4l.conf` aus den PTP-Einstellungen erzeugen (`ptp_config.py render`); **Hardware-Timestamping automatisch erkennen** via `ethtool -T eth0` — CM5/RPi5: `time_stamping hardware` + `hwts_filter full`; RPi4: `time_stamping software`; `ptp4l@<iface>.service` aktivieren |
 | 8 | `/etc/X11/Xwrapper.config` schreiben (`needs_root_rights=yes` für rootless Xorg auf VT7) |
 | 9 | systemd-Dienste installieren und aktivieren |
 | 10 | sudoers-Regeln für `ptp` (reboot, poweroff, nmcli, timedatectl, …) |
@@ -599,7 +604,7 @@ sudo bash rpi/update.sh   # aktualisiert config.txt und startet Dienste neu
 sudo nano /etc/systemd/system/time-reference-monitor.service
 # --domain 0  →  anpassen
 ```
-Oder zur Laufzeit: **Settings → PTP Domain → Aktiv & Speichern** (kein Neustart nötig).
+Oder zur Laufzeit: **Settings → PTP-Empfang → Übernehmen** (kein Neustart des Monitors nötig).
 
 #### Schritt 6 — SSH-Key für `ptp`-User hinterlegen
 
@@ -661,7 +666,7 @@ sudo systemctl daemon-reload
 sudo systemctl restart ptp4l time-reference-monitor
 ```
 
-`ptp4l.service` und `time-reference-monitor.service` lesen `PTP_IFACE` via `EnvironmentFile`. Damit ist die Interface-Konfiguration nur an **einer** Stelle notwendig.
+`time-reference-monitor.service` liest `PTP_IFACE` via `EnvironmentFile`; `setup.sh`/`update.sh` aktivieren damit `ptp4l@${PTP_IFACE}.service` (Debian-Template-Unit) und tragen die Schnittstelle in die sudoers-Regel ein.
 
 ### Konfiguration des Monitor-Dienstes
 
@@ -684,7 +689,7 @@ sudo systemctl restart time-reference-monitor
 |-----------|---------|-----------|
 | `--source` | `real` | `mock` nur für Tests ohne PTP-Hardware |
 | `--iface` | `${PTP_IFACE:-eth0}` | Wird aus `/etc/time-reference-monitor.conf` gelesen |
-| `--domain` | `0` | PTP-Domain-Nummer; kann zur Laufzeit über `Einstellungen > PTP Domain` geändert und in `/var/lib/time-reference-monitor/ptp_domain` gespeichert werden |
+| `--domain` | `0` | Start-Domain; danach gilt die Einstellung unter `Einstellungen > PTP-Empfang` (`/var/lib/time-reference-monitor/ptp_config.json`) |
 | `--poll` | `0.25` s | PTP-Abfrageintervall |
 | `--http-host` | `0.0.0.0` | von allen Interfaces erreichbar |
 | `--http-port` | `8088` | |
@@ -715,7 +720,7 @@ Auf einem Raspberry Pi 4 kann ein zu niedriges `--ui-refresh-ms` (< 50 ms) den K
 
 | Dienst | Beschreibung |
 |--------|-------------|
-| `ptp4l.service` | PTP-Slave (Monitor-Modus: `free_running 1`, misst Offset, keine Clockdisziplinierung) |
+| `ptp4l@<iface>.service` | PTP-Client (Monitor-Modus: misst Offset, keine Clockdisziplinierung; Konfiguration aus «PTP-Empfang») |
 | `chrony.service` | NTP-Synchronisation des Systemclocks (NTP-only, kein PTP-Refclock) |
 | `time-reference-monitor.service` | Python-Backend (PTP/NTP/LTC), Port 8088 |
 | `chromium-kiosk.service` | X11 auf VT7 + Chromium im Kiosk-Modus |
@@ -888,7 +893,7 @@ Das Script führt folgende Schritte aus (kein vollständiges Re-Setup nötig):
 4. `alsaltc` neu kompilieren — **nur wenn der C-Source neuer als das installierte Binary ist**
 5. Systemd-Service-Dateien aktualisieren + `daemon-reload` (Kiosk-Restart nur bei Änderung)
 6. ptp4l Drop-Ins aktualisieren (`uds-permissions.conf`, `time-reference-monitor.conf`)
-7. `/etc/linuxptp/ptp4l.conf` aktualisieren — Monitor-Modus (`free_running 1`, `slaveOnly 1`); Backup nach `.bak`
+7. ptp4l: alte Drop-ins von `ptp4l.service` entfernen, Socket-Drop-in für `ptp4l@.service` installieren, `ptp4l.conf` aus den gespeicherten PTP-Einstellungen erzeugen (nur bei Erstinstallation oder altem `free_running`-Stand); sudoers ergänzen
 8. `/etc/chrony/chrony.conf` aktualisieren — NTP-only; Backup nach `.bak`; anschliessend Custom-NTP-Server aus Persistenz-Datei wiederherstellen (alle pool/server-Einträge werden ersetzt); chrony neu starten
 9. ALSA-Konfiguration aktualisieren (Backup nach `/etc/asound.conf.bak`)
 10. `/etc/X11/Xwrapper.config` aktualisieren (idempotent — nur bei Abweichung)
@@ -1352,6 +1357,21 @@ Liefert das Ereignisarray aus dem letzten `/api/status`-Snapshot (identisches Fo
 
 ---
 
+### `GET /api/ptp-config` / `POST /api/ptp-config` — PTP-Empfangskonfiguration
+
+`GET` liefert die aktive Konfiguration, `POST` ändert die übergebenen Felder (Validierung, Speichern, `ptp4l.conf` neu schreiben, `ptp4l` neu starten).
+
+```json
+{ "mode": "unicast", "domain": 127, "master_ip": "192.168.26.243", "delay_mechanism": "E2E",
+  "time_stamping": "auto", "log_announce_interval": 0, "log_sync_interval": -3,
+  "log_min_delay_req_interval": -3, "announce_receipt_timeout": 10,
+  "unicast_req_duration": 60, "log_query_interval": 2 }
+```
+
+Fehler (`HTTP 400`): `{"ok": false, "message": "…"}`, z. B. Unicast ohne gültige Master-IP.
+
+---
+
 ### `GET /api/domain/current` — Aktive PTP-Domain
 
 ```json
@@ -1417,7 +1437,9 @@ Alle Schreiboperationen (`POST`) rufen `nmcli`, `timedatectl` bzw. `tee` über `
 | Methode | Endpunkt | Body / Params | Beschreibung |
 |---------|---------|--------------|-------------|
 | GET | `/api/domain/current` | — | `{"domain":0}` |
-| POST | `/api/domain/apply` | `{"domain":4,"persist":true}` | Wechselt PTP-Domain sofort; `persist:true` schreibt nach `/var/lib/time-reference-monitor/ptp_domain` |
+| GET | `/api/ptp-config` | — | `{"ok":true,"config":{"mode":"unicast","domain":127,"master_ip":"192.168.26.243",…}}` |
+| POST | `/api/ptp-config` | `{"mode":"unicast","master_ip":"192.168.26.243","domain":127}` | Validiert, speichert, schreibt `ptp4l.conf`, startet `ptp4l` neu; nur angegebene Felder ändern sich |
+| POST | `/api/domain/apply` | `{"domain":4}` | Setzt nur die Domain (wie `/api/ptp-config`), `ptp4l` wird neu gestartet |
 | POST | `/api/domain-scan/start` | `{"iface":"eth0","duration_s":10}` | Startet Scan nach PTP-Paketen (tcpdump) |
 | GET | `/api/domain-scan/status` | — | `{"state":"scanning","elapsed_s":3,"duration_s":10,"domains":{"0":42}}` |
 | POST | `/api/domain-scan/stop` | — | Bricht laufenden Scan ab |

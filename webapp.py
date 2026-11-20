@@ -58,7 +58,8 @@ def create_app(
     mock_presets: Dict = None,
     ptp_domain: int = 0,
     get_ptp_domain: Callable = None,
-    set_ptp_domain: Callable = None,
+    get_ptp_config: Callable = None,
+    update_ptp_config: Callable = None,
     get_ntp_source: Callable = None,
     set_ntp_source: Callable = None,
     ntp_mock_presets: Dict = None,
@@ -521,7 +522,8 @@ def create_app(
 
     @app.post("/api/domain/apply")
     def api_domain_apply() -> Response:
-        if not callable(set_ptp_domain):
+        # Used by the domain scan: only the domain changes, other PTP settings stay.
+        if not callable(update_ptp_config):
             return jsonify({"ok": False, "message": "Domain switching not available."}), 400
         body = request.get_json(silent=True) or {}
         try:
@@ -530,8 +532,23 @@ def create_app(
             return jsonify({"ok": False, "message": "Ungültige Domain-Nummer."}), 400
         if not (0 <= domain <= 127):
             return jsonify({"ok": False, "message": "Domain muss zwischen 0 und 127 liegen."}), 400
-        persist = bool(body.get("persist", False))
-        ok, msg = set_ptp_domain(domain, persist=persist)
+        ok, msg, _cfg = update_ptp_config({"domain": domain})
         return jsonify({"ok": ok, "message": msg})
+
+    @app.get("/api/ptp-config")
+    def api_ptp_config_get() -> Response:
+        if not callable(get_ptp_config):
+            return jsonify({"ok": False, "message": "PTP config not available."}), 400
+        return jsonify({"ok": True, "config": get_ptp_config()})
+
+    @app.post("/api/ptp-config")
+    def api_ptp_config_set() -> Response:
+        if not callable(update_ptp_config):
+            return jsonify({"ok": False, "message": "PTP config not available."}), 400
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "message": "JSON-Objekt erwartet."}), 400
+        ok, msg, cfg = update_ptp_config(body)
+        return jsonify({"ok": ok, "message": msg, "config": cfg}), (200 if ok else 400)
 
     return app

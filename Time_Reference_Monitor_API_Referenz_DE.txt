@@ -59,3 +59,13 @@ Empfohlene Doku-Routen:
 - GET /docs/api    -> text/plain (API-Referenz)
 
 Markus Gerber <dev@npn.ch>
+
+PTP-Konfiguration
+-----------------
+GET  /api/ptp-config   -> {"ok": true, "config": {...}}
+POST /api/ptp-config   -> Body: JSON mit den zu aendernden Feldern; speichert, schreibt ptp4l.conf,
+                          startet ptp4l neu. Antwort: {"ok", "message", "config"}; HTTP 400 bei Fehlern.
+Felder: mode (multicast|unicast), domain (0-127), master_ip (Unicast), delay_mechanism (E2E|P2P),
+time_stamping (auto|software|hardware), log_announce_interval, log_sync_interval,
+log_min_delay_req_interval, announce_receipt_timeout, unicast_req_duration, log_query_interval.
+POST /api/domain/apply  {"domain": N} setzt nur die Domain (wie /api/ptp-config).

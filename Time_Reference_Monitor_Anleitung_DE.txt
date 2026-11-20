@@ -83,7 +83,7 @@ Für Dauerbetrieb:
 Grundparameter
 - --source mock|real
 - --iface IFACE
-- --domain DOMAIN
+- --domain DOMAIN   (Start-Domain; danach gilt Einstellungen > PTP-Empfang)
 - --poll SECONDS
 
 HTTP / Web
@@ -193,3 +193,15 @@ C) UI-Link (öffnet neues Fenster/Tab):
 - <a href="/docs/api" target="_blank">API</a>
 
 Markus Gerber <dev@npn.ch>
+
+
+PTP-Empfang (Einstellungen > PTP-Empfang)
+-----------------------------------------
+- Nachrichtenmodus: Multicast oder Unicast (feste Master-IP, Unicast-Negotiation)
+- Domain 0-127, Master-/GM-IP (nur Unicast), Delay-Mechanismus (nur Multicast),
+  Timestamping, Intervalle (Announce/Sync/Delay-Request) und Zeitlimits
+- "Uebernehmen" speichert die Werte, schreibt /etc/linuxptp/ptp4l.conf neu und startet
+  ptp4l@<iface>.service neu. Die Systemuhr bleibt bei chrony.
+- Voraussetzungen fuer den Lock: gleiche Domain wie der Grandmaster, der Grandmaster
+  beantwortet Delay-Requests, im Unicast-Betrieb nimmt er Unicast-Anfragen an.
+- Port-Status UNCALIBRATED ist im Monitor-Modus normal (nur messen, nicht stellen).

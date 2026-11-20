@@ -178,7 +178,7 @@ Verfügbare Seiten:
 | `/ltc-raw` | LTC Raw Output (Live-Decoder-Ausgabe, Ring-Buffer 500 Zeilen, Pause/Clear) |
 | `/spectrum` | LTC Spektrum (On-Demand-Aufnahme + FFT-PNG + WAV-Download) |
 | `/tcpdump` | PTP Capture (Live-tcpdump, Ring-Buffer, PCAP-Download) |
-| `/settings` | Einstellungen (Netzwerk, NTP, WLAN, PTP Domain, Simulation) |
+| `/settings` | Einstellungen (Netzwerk, NTP, WLAN, PTP-Empfang, Simulation) |
 
 ---
 
@@ -343,7 +343,7 @@ Die Ausgabe wird über SSE (Server-Sent Events) an den Browser gestreamt — kei
 
 ---
 
-### `domain_scanner.py` — PTP-Domain-Scanner (`/settings > PTP Domain`)
+### `domain_scanner.py` — PTP-Domain-Scanner (`/settings > PTP-Empfang`)
 
 **Klasse:** `DomainScanner`
 
@@ -357,14 +357,7 @@ Kurzlebiger Scan-Thread auf Anfrage (startet, scannt, beendet sich):
 
 **Wichtig:** Der Monitor ruft `pmc` mit `-d N` auf (Domain-Nummer, steuert auf welcher Domain pmc lauscht), **nicht** `-b N` (`-b` ist `boundaryHops` — die Hop-Tiefe bei pmc-UDS-Abfragen, ein anderer Parameter).
 
-**Domain zur Laufzeit wechseln:**
-
-| Aktion | Wirkung |
-|--------|---------|
-| **Aktiv (bis Reboot)** | Setzt die Domain im laufenden Prozess; kein Schreibzugriff auf Disk |
-| **Aktiv & Speichern** | Wie oben, zusätzlich Persistenz-Datei `/var/lib/time-reference-monitor/ptp_domain` schreiben |
-
-Beim Dienststart: Falls die Persistenz-Datei existiert, wird ihr Wert gegenüber dem `--domain`-CLI-Argument bevorzugt — Domain-Änderungen bleiben über Neustarts hinweg wirksam ohne die systemd-Unit-Datei zu editieren.
+**PTP-Konfiguration (`ptp_config.py`):** «Übernehmen» in `/settings > PTP-Empfang` validiert die Werte (Modus Multicast/Unicast, Domain, Master-IP, Intervalle), speichert sie in `/var/lib/time-reference-monitor/ptp_config.json`, schreibt `/etc/linuxptp/ptp4l.conf` (`sudo tee`) und startet `ptp4l@<iface>.service` neu (`sudo systemctl restart`). Die Domain des Monitors (`pmc -d`) kommt aus derselben Konfiguration. Im Unicast-Modus enthält die Konfig `[unicast_master_table]` mit der Master-IP. Der Scan-Button «Übernehmen» setzt nur die Domain.
 
 ---
 

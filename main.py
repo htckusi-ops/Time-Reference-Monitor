@@ -18,25 +18,7 @@ from mock_sim import MockParams, MockPTP, MockNTPParams, MockNTP
 from status_bus import StatusBus
 from webapp import create_app
 from spectrum import SpectrumManager
-
-
-_DOMAIN_PERSIST_PATH = "/var/lib/time-reference-monitor/ptp_domain"
-
-
-def _read_persisted_domain(default: int) -> int:
-    """Return domain from persistence file, or default if absent/invalid."""
-    try:
-        with open(_DOMAIN_PERSIST_PATH) as f:
-            return int(f.read().strip())
-    except Exception:
-        return default
-
-
-def _write_persisted_domain(domain: int) -> None:
-    """Write domain number to persistence file (survives reboots)."""
-    os.makedirs(os.path.dirname(_DOMAIN_PERSIST_PATH), exist_ok=True)
-    with open(_DOMAIN_PERSIST_PATH, "w") as f:
-        f.write(str(domain) + "\n")
+from ptp_config import PtpConfigStore
 
 
 def utc_now() -> datetime:
@@ -115,27 +97,24 @@ def main() -> None:
         ltc_jump_alarm_ms=float(args.ltc_jump_alarm_ms),
     )
 
-    # ── PTP domain – runtime-switchable, optionally persisted ────────────────
-    # Load from persistence file first; --domain CLI arg is the fallback.
-    _initial_domain = _read_persisted_domain(int(args.domain))
-    _domain_lock = threading.Lock()
-    _cur_domain  = {"value": _initial_domain}
+    # ── PTP client config (domain, multicast/unicast, master IP) ─────────────
+    # Persisted in /var/lib/time-reference-monitor/ptp_config.json; changing it
+    # rewrites /etc/linuxptp/ptp4l.conf and restarts ptp4l (see ptp_config.py).
+    ptp_cfg = PtpConfigStore(iface=args.iface, default_domain=int(args.domain),
+                             system_changes=(args.source == "real"))
+    _initial_domain = ptp_cfg.domain()
 
     def get_ptp_domain() -> int:
-        with _domain_lock:
-            return _cur_domain["value"]
+        return ptp_cfg.domain()
 
-    def set_ptp_domain(domain: int, persist: bool = False) -> Tuple[bool, str]:
-        with _domain_lock:
-            _cur_domain["value"] = domain
-        bus.add_event("INFO", "DOMAIN_CHANGED", f"PTP domain changed to {domain}")
-        if persist:
-            try:
-                _write_persisted_domain(domain)
-            except Exception as exc:
-                return True, f"Domain {domain} aktiv (Persist fehlgeschlagen: {exc})"
-        label = "gespeichert" if persist else "temporär gesetzt"
-        return True, f"PTP Domain {domain} {label}."
+    def update_ptp_config(changes: dict) -> Tuple[bool, str, dict]:
+        old = ptp_cfg.get()
+        ok, msg, cfg = ptp_cfg.update(changes)
+        if ok and cfg != old:
+            bus.add_event("INFO", "PTP_CONFIG_CHANGED",
+                          f"PTP config: mode={cfg['mode']} domain={cfg['domain']}"
+                          + (f" master={cfg['master_ip']}" if cfg["mode"] == "unicast" else ""))
+        return ok, msg, cfg
 
     meta = {
         "iface": args.iface,
@@ -354,7 +333,8 @@ def main() -> None:
             mock_presets=MOCK_PRESETS,
             ptp_domain=_initial_domain,
             get_ptp_domain=get_ptp_domain,
-            set_ptp_domain=set_ptp_domain,
+            get_ptp_config=ptp_cfg.get,
+            update_ptp_config=update_ptp_config,
             get_ntp_source=get_ntp_source,
             set_ntp_source=set_ntp_source,
             ntp_mock_presets=NTP_MOCK_PRESETS,

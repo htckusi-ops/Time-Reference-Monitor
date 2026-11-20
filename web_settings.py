@@ -36,6 +36,7 @@ h1 { font-size: 20px; margin: 0 0 4px; }
 .field input:disabled { opacity: 0.4; cursor: not-allowed; }
 .field input:focus, .field textarea:focus { outline: none; border-color: var(--accent); }
 .row-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 480px) { .row-fields { grid-template-columns: 1fr; } }
 .btn { display: inline-flex; align-items: center; justify-content: center;
        padding: 10px 20px; border-radius: 12px; border: 1px solid var(--border);
        background: rgba(255,255,255,0.07); color: var(--text);
@@ -64,6 +65,8 @@ h1 { font-size: 20px; margin: 0 0 4px; }
 .warn-box { background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.3);
              border-radius: 10px; padding: 10px 14px; font-size: 12px; color: var(--warn);
              margin-top: 10px; }
+.adv { margin: 0 0 14px; }
+.adv summary { cursor: pointer; font-size: 13px; color: var(--accent); }
 .hr { height: 1px; background: rgba(38,50,71,.7); margin: 14px 0; }
 .domain-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
               padding: 7px 10px; border-radius: 10px; margin-bottom: 6px;
@@ -90,7 +93,7 @@ _HTML = """<!doctype html>
 <div class="wrap">
   <a class="back" href="/">&#8592; Zurück zum Monitor</a>
   <h1>Settings</h1>
-  <p class="sub">PTP Domain · Netzwerk · NTP · WiFi</p>
+  <p class="sub">PTP-Empfang · Netzwerk · NTP · WiFi</p>
 
   <!-- ── Gerät / Standort ── -->
   <div class="card">
@@ -109,12 +112,89 @@ _HTML = """<!doctype html>
     <div class="msg" id="msgLocation"></div>
   </div>
 
-  <!-- ── PTP Domain ── -->
+  <!-- ── PTP-Empfang ── -->
   <div class="card">
-    <h2>PTP Domain</h2>
-    <div class="current" id="domainCurrent">Lade…</div>
+    <h2>PTP-Empfang</h2>
+    <div class="current" id="ptpCfgCurrent">Lade…</div>
 
-    <!-- Scan controls -->
+    <div class="row-fields">
+      <div class="field">
+        <label for="ptpMode">Nachrichtenmodus</label>
+        <select id="ptpMode">
+          <option value="multicast">Multicast</option>
+          <option value="unicast">Unicast (feste Master-IP)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="ptpDomain">Domain (0–127)</label>
+        <input id="ptpDomain" type="number" min="0" max="127" placeholder="0"/>
+      </div>
+    </div>
+
+    <div class="field" id="ptpMasterField" style="display:none;">
+      <label for="ptpMasterIp">Master-/GM-IP (Unicast)</label>
+      <input id="ptpMasterIp" type="text" inputmode="decimal" placeholder="z.B. 192.168.26.243"/>
+    </div>
+
+    <div class="row-fields">
+      <div class="field" id="ptpDelayField">
+        <label for="ptpDelay">Delay-Mechanismus</label>
+        <select id="ptpDelay">
+          <option value="E2E">E2E (Delay-Request)</option>
+          <option value="P2P">P2P (Peer-Delay)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="ptpStamping">Timestamping</label>
+        <select id="ptpStamping">
+          <option value="auto">Automatisch</option>
+          <option value="software">Software</option>
+          <option value="hardware">Hardware (PHC nötig)</option>
+        </select>
+      </div>
+    </div>
+
+    <details class="adv">
+      <summary>Intervalle und Zeitlimits</summary>
+      <div class="row-fields" style="margin-top:12px;">
+        <div class="field"><label for="ptpAnnounce">Announce (log₂ s)</label>
+          <input id="ptpAnnounce" type="number" min="-3" max="4"/></div>
+        <div class="field"><label for="ptpSync">Sync (log₂ s)</label>
+          <input id="ptpSync" type="number" min="-7" max="4"/></div>
+      </div>
+      <div class="row-fields">
+        <div class="field"><label for="ptpDelayReq">Delay-Request (log₂ s)</label>
+          <input id="ptpDelayReq" type="number" min="-7" max="4"/></div>
+        <div class="field"><label for="ptpTimeout">Announce-Timeout (Intervalle)</label>
+          <input id="ptpTimeout" type="number" min="2" max="255"/></div>
+      </div>
+      <div class="row-fields" id="ptpUniFields">
+        <div class="field"><label for="ptpGrant">Grant-Dauer Unicast (s)</label>
+          <input id="ptpGrant" type="number" min="10" max="1000"/></div>
+        <div class="field"><label for="ptpQuery">Master-Abfrage (log₂ s)</label>
+          <input id="ptpQuery" type="number" min="0" max="8"/></div>
+      </div>
+      <p class="hint">
+        log₂ s: 0 = 1/s, −3 = 8/s, 1 = alle 2 s. Die Werte müssen zum Grandmaster passen
+        (SMPTE ST 2059-2: Announce −2, Sync −3, Delay-Req −3).
+      </p>
+    </details>
+
+    <button class="btn btn-primary" id="btnSavePtpCfg">Übernehmen</button>
+    <div class="msg" id="msgPtpCfg"></div>
+    <p class="hint">
+      «Übernehmen» speichert die Einstellung, schreibt <code>/etc/linuxptp/ptp4l.conf</code> neu und
+      startet <code>ptp4l</code> neu (wenige Sekunden ohne Messwerte). Die Systemuhr bleibt bei chrony;
+      PTP wird nur gemessen. Im Unicast-Modus fragt der Monitor beim Master Announce, Sync und
+      Delay-Resp per Signaling an (der Master muss Unicast-Negotiation erlauben).
+    </p>
+
+    <div class="hr"></div>
+
+    <!-- Domain scan -->
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">
+      Domain-Scan (zeigt die PTP-Pakete, die dieses Interface empfängt – Multicast und Unicast an diese IP)
+    </div>
     <div class="row-fields" style="margin-bottom:10px;">
       <div class="field">
         <label>Interface</label>
@@ -141,31 +221,10 @@ _HTML = """<!doctype html>
       <div class="scan-bar" id="scanBar"></div>
     </div>
 
-    <!-- Scan results -->
     <div id="scanResults" style="display:none;">
       <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">Gefundene Domains:</div>
       <div id="domainList"></div>
     </div>
-
-    <div class="hr"></div>
-
-    <!-- Manual entry -->
-    <div class="row-fields" style="align-items:flex-end;">
-      <div class="field">
-        <label>Domain manuell eingeben (0–127)</label>
-        <input id="domainManual" type="number" min="0" max="127" placeholder="0"/>
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
-      <button class="btn" id="btnApplyTemp">Aktiv (bis Reboot)</button>
-      <button class="btn btn-primary" id="btnApplySave">Aktiv &amp; Speichern</button>
-    </div>
-    <div class="msg" id="msgDomain"></div>
-    <p class="hint">
-      Beide Buttons aktivieren die Domain <strong>sofort</strong>.<br>
-      <strong>Aktiv &amp; Speichern</strong> schreibt die Domain zusätzlich nach
-      <code>/var/lib/time-reference-monitor/ptp_domain</code> und lädt sie bei jedem Start.
-    </p>
   </div>
 
   <!-- ── Network ── -->
@@ -425,22 +484,19 @@ _HTML = """<!doctype html>
       Rückkehr zu «Real» stellt sofort die echte ptp4l-Abfrage wieder her.
     </p>
   </div>
-</div>
-
-<!-- ── PTP Offset-Grafik ── -->
-<div class="card">
-  <div class="card-body">
+  <!-- ── PTP Offset-Grafik ── -->
+  <div class="card">
     <h2>PTP Offset-Grafik</h2>
-    <p class="hint" style="margin-bottom:10px;">
+    <p class="hint" style="margin-bottom:14px;">
       Konfiguration der Verlaufsanzeige im Dashboard (offset_ns von ptp4l).
-      Werte werden im Browser gespeichert.
+      Die Werte werden im Browser gespeichert.
     </p>
-    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:flex-end;">
-      <div>
-        <label class="label" for="chartIntervalSel">Abtastintervall</label>
-        <select id="chartIntervalSel" class="input" style="width:140px;">
+    <div class="row-fields">
+      <div class="field">
+        <label for="chartIntervalSel">Abtastintervall</label>
+        <select id="chartIntervalSel">
           <option value="500">0.5 Sekunden</option>
-          <option value="1000" selected>1 Sekunde</option>
+          <option value="1000">1 Sekunde</option>
           <option value="2000">2 Sekunden</option>
           <option value="5000">5 Sekunden</option>
           <option value="10000">10 Sekunden</option>
@@ -448,19 +504,17 @@ _HTML = """<!doctype html>
           <option value="60000">1 Minute</option>
         </select>
       </div>
-      <div>
-        <label class="label" for="chartSamplesSel">Anzahl Balken</label>
-        <select id="chartSamplesSel" class="input" style="width:120px;">
+      <div class="field">
+        <label for="chartSamplesSel">Anzahl Balken</label>
+        <select id="chartSamplesSel">
           <option value="30">30</option>
-          <option value="60" selected>60</option>
+          <option value="60">60</option>
           <option value="120">120</option>
         </select>
       </div>
-      <div>
-        <button class="btn btn-primary" id="btnSaveChart">Speichern</button>
-        <div class="msg" id="msgChart"></div>
-      </div>
     </div>
+    <button class="btn btn-primary" id="btnSaveChart">Speichern</button>
+    <div class="msg" id="msgChart"></div>
   </div>
 </div>
 
@@ -840,28 +894,60 @@ _HTML = """<!doctype html>
   }});
 
   // ── PTP Domain ───────────────────────────────────────────────────────────
-  async function loadDomainCurrent() {{
-    try {{
-      const r = await fetch('/api/domain/current', {{cache:'no-store'}});
-      const d = await r.json();
-      $('domainCurrent').textContent = 'Aktive Domain: ' + d.domain;
-      $('domainManual').value = d.domain;
-    }} catch(e) {{ $('domainCurrent').textContent = 'Fehler beim Laden.'; }}
+  const _ptpFields = {{
+    mode: 'ptpMode', domain: 'ptpDomain', master_ip: 'ptpMasterIp', delay_mechanism: 'ptpDelay',
+    time_stamping: 'ptpStamping', log_announce_interval: 'ptpAnnounce', log_sync_interval: 'ptpSync',
+    log_min_delay_req_interval: 'ptpDelayReq', announce_receipt_timeout: 'ptpTimeout',
+    unicast_req_duration: 'ptpGrant', log_query_interval: 'ptpQuery',
+  }};
+
+  function updatePtpModeVisibility() {{
+    const uni = $('ptpMode').value === 'unicast';
+    $('ptpMasterField').style.display = uni ? '' : 'none';
+    $('ptpUniFields').style.display   = uni ? '' : 'none';
+    $('ptpDelayField').style.display  = uni ? 'none' : '';
   }}
 
-  async function applyDomain(domain, persist) {{
+  function fillPtpConfig(c) {{
+    for (const [k, id] of Object.entries(_ptpFields)) {{ if (c[k] !== undefined) $(id).value = c[k]; }}
+    updatePtpModeVisibility();
+    $('ptpCfgCurrent').textContent = 'Aktiv: ' + (c.mode === 'unicast'
+      ? 'Unicast von ' + c.master_ip : 'Multicast') + ' · Domain ' + c.domain;
+  }}
+
+  async function loadPtpConfig() {{
     try {{
-      const r = await fetch('/api/domain/apply', {{
-        method: 'POST',
-        headers: {{'Content-Type': 'application/json'}},
-        body: JSON.stringify({{domain, persist}}),
+      const r = await fetch('/api/ptp-config', {{cache:'no-store'}});
+      const d = await r.json();
+      if (d.ok) fillPtpConfig(d.config); else $('ptpCfgCurrent').textContent = d.message || 'Fehler beim Laden.';
+    }} catch(e) {{ $('ptpCfgCurrent').textContent = 'Fehler beim Laden.'; }}
+  }}
+
+  async function savePtpConfig(extra) {{
+    const body = {{}};
+    for (const [k, id] of Object.entries(_ptpFields)) {{ body[k] = $(id).value; }}
+    Object.assign(body, extra || {{}});
+    $('btnSavePtpCfg').disabled = true;
+    try {{
+      const r = await fetch('/api/ptp-config', {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify(body),
       }});
       const d = await r.json();
-      showMsg('msgDomain', d.ok, d.message || (d.ok ? 'OK' : 'Fehler'));
-      if (d.ok) {{ loadDomainCurrent(); $('domainManual').value = domain; }}
+      showMsg('msgPtpCfg', !!d.ok, d.message || (d.ok ? 'OK' : 'Fehler'));
+      if (d.config) fillPtpConfig(d.config);
     }} catch(e) {{
-      showMsg('msgDomain', false, 'Fehler: ' + e.message);
+      showMsg('msgPtpCfg', false, 'Fehler: ' + e.message);
+    }} finally {{
+      $('btnSavePtpCfg').disabled = false;
     }}
+  }}
+
+  $('ptpMode').addEventListener('change', updatePtpModeVisibility);
+  $('btnSavePtpCfg').addEventListener('click', () => savePtpConfig());
+
+  function applyDomain(domain) {{
+    $('ptpDomain').value = domain;
+    return savePtpConfig({{domain}});
   }}
 
   function renderDomainList(domains) {{
@@ -874,8 +960,7 @@ _HTML = """<!doctype html>
         `<div class="domain-row">
           <span class="domain-num">Domain ${{dom}}</span>
           <span class="domain-cnt">${{cnt}}&nbsp;Pkts</span>
-          <button class="btn" data-domain="${{dom}}" data-persist="false">Aktiv (bis Reboot)</button>
-          <button class="btn btn-primary" data-domain="${{dom}}" data-persist="true">Aktiv &amp; Speichern</button>
+          <button class="btn btn-primary" data-domain="${{dom}}">Übernehmen</button>
         </div>`
       ).join('');
     }}
@@ -886,9 +971,7 @@ _HTML = """<!doctype html>
   $('domainList').addEventListener('click', (e) => {{
     const btn = e.target.closest('button[data-domain]');
     if (!btn) return;
-    const domain  = parseInt(btn.dataset.domain, 10);
-    const persist = btn.dataset.persist === 'true';
-    applyDomain(domain, persist);
+    applyDomain(parseInt(btn.dataset.domain, 10));
   }});
 
   let _scanTimer = null;
@@ -956,24 +1039,6 @@ _HTML = """<!doctype html>
     $('scanProgress').textContent = 'Abgebrochen.';
   }});
 
-  $('btnApplyTemp').addEventListener('click', () => {{
-    const v = parseInt($('domainManual').value);
-    if (isNaN(v) || v < 0 || v > 127) {{
-      showMsg('msgDomain', false, 'Domain muss zwischen 0 und 127 liegen.');
-      return;
-    }}
-    applyDomain(v, false);
-  }});
-
-  $('btnApplySave').addEventListener('click', () => {{
-    const v = parseInt($('domainManual').value);
-    if (isNaN(v) || v < 0 || v > 127) {{
-      showMsg('msgDomain', false, 'Domain muss zwischen 0 und 127 liegen.');
-      return;
-    }}
-    applyDomain(v, true);
-  }});
-
   // ── API-Zugriff ──────────────────────────────────────────────────────────
   async function loadApiAccess() {{
     try {{
@@ -1034,7 +1099,7 @@ _HTML = """<!doctype html>
   loadWifi();
   loadPtpSource();
   loadNtpSource();
-  loadDomainCurrent();
+  loadPtpConfig();
   loadApiAccess();
   loadChartSettings();
 }})();

@@ -1,7 +1,7 @@
 [Unit]
 Description=Time Reference Monitor (PTP/NTP/LTC)
-After=network-online.target chrony.service ptp4l.service
-Wants=network-online.target ptp4l.service
+After=network-online.target chrony.service
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -16,7 +16,7 @@ WorkingDirectory=/opt/time-reference-monitor
 # NOTE: systemd does NOT support bash ${VAR:-default} syntax in ExecStart.
 # Set the default here; EnvironmentFile overrides it when the conf exists.
 Environment=PTP_IFACE=eth0
-# PTP_IFACE is read from /etc/time-reference-monitor.conf (shared with ptp4l service)
+# PTP_IFACE is read from /etc/time-reference-monitor.conf (ptp4l runs as ptp4l@<iface>.service)
 EnvironmentFile=-/etc/time-reference-monitor.conf
 
 # --- Core: PTP polling via pmc, NTP via chronyc ---

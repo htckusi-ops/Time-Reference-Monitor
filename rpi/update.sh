@@ -123,35 +123,52 @@ if [ -f "$ASOUNDRC" ]; then
     warn "~/.asoundrc deaktiviert (→ .asoundrc.disabled) – /etc/asound.conf gilt."
 fi
 
-# ── ptp4l service drop-ins ────────────────────────────────────────────────────
-mkdir -p /etc/systemd/system/ptp4l.service.d
+# ── ptp4l (template unit ptp4l@<iface>) ───────────────────────────────────────
+# /etc/linuxptp/ptp4l.conf is generated from the settings stored by the Settings page
+# (ptp_config.py).  update.sh only installs the socket-permission drop-in and migrates
+# old installs; the generated config itself is never overwritten here.
+PTP_IFACE_CUR=$(grep "^PTP_IFACE=" /etc/time-reference-monitor.conf 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')
+PTP_IFACE_CUR="${PTP_IFACE_CUR:-eth0}"
 PTP4L_RESTART=false
 
-for dropin in uds-permissions.conf time-reference-monitor.conf; do
-    src="${REPO_DIR}/rpi/systemd/ptp4l.service.d/${dropin}"
-    dst="/etc/systemd/system/ptp4l.service.d/${dropin}"
-    if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
-        cp "$src" "$dst"
-        PTP4L_RESTART=true
-        info "ptp4l drop-in aktualisiert: ${dropin}"
-    fi
-done
-
-# ── ptp4l.conf (free_running monitor-only config) ───────────────────────────
-mkdir -p /etc/linuxptp
-if ! diff -q "${REPO_DIR}/rpi/ptp4l/ptp4l.conf" /etc/linuxptp/ptp4l.conf &>/dev/null 2>&1; then
-    [ -f /etc/linuxptp/ptp4l.conf ] && cp /etc/linuxptp/ptp4l.conf /etc/linuxptp/ptp4l.conf.bak
-    cp "${REPO_DIR}/rpi/ptp4l/ptp4l.conf" /etc/linuxptp/ptp4l.conf
+if [ -d /etc/systemd/system/ptp4l.service.d ]; then
+    rm -rf /etc/systemd/system/ptp4l.service.d
     PTP4L_RESTART=true
-    info "ptp4l.conf aktualisiert (free_running=1, slaveOnly=1)."
+    info "Alte Drop-ins von ptp4l.service entfernt (Debian nutzt ptp4l@.service)."
 fi
 
-if [ "$PTP4L_RESTART" = true ]; then
-    systemctl daemon-reload
-    if systemctl is-active --quiet ptp4l.service 2>/dev/null; then
-        systemctl restart ptp4l.service
-        info "ptp4l neu gestartet."
-    fi
+mkdir -p /etc/systemd/system/ptp4l@.service.d /etc/linuxptp /var/lib/time-reference-monitor
+chown "${APP_USER}:${APP_USER}" /var/lib/time-reference-monitor
+src="${REPO_DIR}/rpi/systemd/ptp4l@.service.d/uds-permissions.conf"
+dst="/etc/systemd/system/ptp4l@.service.d/uds-permissions.conf"
+if ! diff -q "$src" "$dst" &>/dev/null 2>&1; then
+    cp "$src" "$dst"
+    PTP4L_RESTART=true
+    info "ptp4l drop-in aktualisiert: uds-permissions.conf"
+fi
+
+if [ ! -f /var/lib/time-reference-monitor/ptp_config.json ] \
+   || grep -q "^free_running" /etc/linuxptp/ptp4l.conf 2>/dev/null; then
+    [ -f /etc/linuxptp/ptp4l.conf ] && cp /etc/linuxptp/ptp4l.conf /etc/linuxptp/ptp4l.conf.bak
+    python3 "${REPO_DIR}/ptp_config.py" render --iface "$PTP_IFACE_CUR" > /etc/linuxptp/ptp4l.conf
+    PTP4L_RESTART=true
+    info "ptp4l.conf aus den gespeicherten PTP-Einstellungen erzeugt."
+fi
+
+# sudoers: let the app rewrite ptp4l.conf and restart ptp4l from the Settings page
+SUDO_FILE=/etc/sudoers.d/time-reference-monitor
+if [ -f "$SUDO_FILE" ] && ! grep -q "ptp4l.conf" "$SUDO_FILE"; then
+    cat >> "$SUDO_FILE" <<SUDOEOF
+${APP_USER} ALL=(ALL) NOPASSWD: /usr/bin/tee /etc/linuxptp/ptp4l.conf
+${APP_USER} ALL=(ALL) NOPASSWD: /bin/systemctl restart ptp4l@${PTP_IFACE_CUR}.service
+SUDOEOF
+    visudo -cf "$SUDO_FILE" >/dev/null && info "sudoers um ptp4l-Rechte ergänzt." || warn "sudoers-Datei ungültig – bitte prüfen."
+fi
+
+systemctl daemon-reload
+systemctl enable "ptp4l@${PTP_IFACE_CUR}.service" 2>/dev/null || true
+if [ "$PTP4L_RESTART" = true ] || ! systemctl is-active --quiet "ptp4l@${PTP_IFACE_CUR}.service" 2>/dev/null; then
+    systemctl restart "ptp4l@${PTP_IFACE_CUR}.service" && info "ptp4l@${PTP_IFACE_CUR} (neu) gestartet."
 fi
 
 # ── chrony.conf (NTP-only) ────────────────────────────────────────────────────
